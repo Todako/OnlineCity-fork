@@ -1,6 +1,7 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using OCUnion;
 using RimWorld.Planet;
+using RimWorldOnlineCity;
 using System;
 using System.Collections;
 using UnityEngine;
@@ -8,15 +9,11 @@ using Verse;
 
 namespace MapRenderer
 {
-    // Autor AaronCRobinson https://github.com/AaronCRobinson/MapRenderer
-    // https://forum.unity3d.com/threads/render-texture-to-png-arbg32-no-opaque-pixels.317451/
-
-    // NOTE: creating a new camera would be a better solution (how?)
     public class RenderMap : MonoBehaviour
     {
         private const int defaultPixelOnCell = 15;
         private const int defaultQuality = 80;
-        
+
         public int SettingsPixelOnCell = defaultPixelOnCell;
         public int SettingsQuality = defaultQuality;
         public bool SettingsShowWeather = true;
@@ -45,20 +42,56 @@ namespace MapRenderer
         private RenderTexture rt;
         private Texture2D tempTexture;
 
-        public static bool IsRendering { get => isRendering; set => isRendering = value; }
+        public static bool IsRendering
+        {
+            get => isRendering;
+            set => isRendering = value;
+        }
 
-        // NOTE: unity is not calling the constructor, so we manually call it
         public RenderMap() { }
 
         public void Initialize(Map bymap)
         {
-            if (bymap == null) bymap = Find.CurrentMap;
+            if (bymap == null)
+            {
+                bymap = Find.CurrentMap;
+            }
+
             map = bymap;
+
+            if (map == null)
+            {
+                viewWidth = 0;
+                viewHeight = 0;
+                return;
+            }
+
             viewWidth = map.Size.x * SettingsPixelOnCell;
             viewHeight = map.Size.z * SettingsPixelOnCell;
         }
 
-        public void Render() => Find.CameraDriver.StartCoroutine(Renderer());
+        public void Render()
+        {
+            if (map == null)
+            {
+                Log.Warning("RenderMap: map is null.");
+                return;
+            }
+
+            if (viewWidth <= 0 || viewHeight <= 0)
+            {
+                Log.Warning("RenderMap: недійсний розмір рендеру " + viewWidth + "x" + viewHeight);
+                return;
+            }
+
+            if (IsRendering)
+            {
+                Log.Warning("RenderMap: інший процес рендерингу вже виконується.");
+                return;
+            }
+
+            Find.CameraDriver.StartCoroutine(Renderer());
+        }
 
         private IEnumerator Renderer()
         {
@@ -66,19 +99,26 @@ namespace MapRenderer
 
             IsRendering = true;
 
-            /// {
+            Camera localCamera = null;
+            CameraDriver camDriver = null;
+            float rememberedFarClipPlane = 0f;
+
+            // Запам'ятовуємо стан гри та камери
             switchedMap = false;
             rememberedMap = Find.CurrentMap;
+
             if (map != rememberedMap)
             {
                 switchedMap = true;
                 Current.Game.CurrentMap = map;
             }
+
             rememberedWorldRendered = WorldRendererUtility.WorldRenderedNow;
             if (rememberedWorldRendered)
             {
                 CameraJumper.TryHideWorld();
             }
+
             var settings = Find.PlaySettings;
             rememberedShowZones = settings.showZones;
             rememberedShowRoofOverlay = settings.showRoofOverlay;
@@ -86,122 +126,288 @@ namespace MapRenderer
             rememberedShowTerrainAffordanceOverlay = settings.showTerrainAffordanceOverlay;
             rememberedShowPollutionOverlay = settings.showPollutionOverlay;
             rememberedShowTemperatureOverlay = settings.showTemperatureOverlay;
+
             settings.showZones = false;
             settings.showRoofOverlay = false;
             settings.showFertilityOverlay = false;
             settings.showTerrainAffordanceOverlay = false;
             settings.showPollutionOverlay = false;
             settings.showTemperatureOverlay = false;
+
             rememberedRootPos = map.rememberedCameraPos.rootPos;
             rememberedRootSize = map.rememberedCameraPos.rootSize;
-            /// }
 
             rt = RenderTexture.GetTemporary(viewWidth, viewHeight, 24);
             tempTexture = new Texture2D(viewWidth, viewHeight, TextureFormat.RGB24, false);
-            camera = Find.Camera;
-            var camDriver = camera.GetComponent<CameraDriver>();
-            camDriver.enabled = false;
-            var rememberedFarClipPlane = camera.farClipPlane;
 
-            var camViewRect = camDriver.CurrentViewRect;
-            var camRectMinX = Math.Min(0, camViewRect.minX);
-            var camRectMinZ = Math.Min(0, camViewRect.minZ);
-            var camRectMaxX = Math.Max(map.Size.x, camViewRect.maxX);
-            var camRectMaxZ = Math.Max(map.Size.z, camViewRect.maxZ);
-            var camDriverTraverse = Traverse.Create(camDriver);
-            camDriverTraverse.Field("lastViewRect").SetValue(CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ));
-            camDriverTraverse.Field("lastViewRectGetFrame").SetValue(Time.frameCount);
+            localCamera = Find.Camera;
+            camera = localCamera;
 
-            yield return RenderCurrentView();
+            if (localCamera != null)
+            {
+                camDriver = localCamera.GetComponent<CameraDriver>();
+                if (camDriver != null)
+                {
+                    camDriver.enabled = false;
+                    rememberedFarClipPlane = localCamera.farClipPlane;
 
-            /// {
-            camera.farClipPlane = rememberedFarClipPlane;
-            camDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
-            camDriver.enabled = true;
-            RenderTexture.ReleaseTemporary(rt);
-            Find.PlaySettings.showZones = rememberedShowZones;
-            Find.PlaySettings.showRoofOverlay = rememberedShowRoofOverlay;
-            Find.PlaySettings.showFertilityOverlay = rememberedShowFertilityOverlay;
-            Find.PlaySettings.showTerrainAffordanceOverlay = rememberedShowTerrainAffordanceOverlay;
-            Find.PlaySettings.showPollutionOverlay = rememberedShowPollutionOverlay;
-            Find.PlaySettings.showTemperatureOverlay = rememberedShowTemperatureOverlay;
-            if (rememberedWorldRendered)
-            {
-                CameraJumper.TryShowWorld();
-            }
-            if (switchedMap)
-            {
-                Current.Game.CurrentMap = rememberedMap;
-            }
-            /// }
+                    var camViewRect = camDriver.CurrentViewRect;
+                    var camRectMinX = Math.Min(0, camViewRect.minX);
+                    var camRectMinZ = Math.Min(0, camViewRect.minZ);
+                    var camRectMaxX = Math.Max(map.Size.x, camViewRect.maxX);
+                    var camRectMaxZ = Math.Max(map.Size.z, camViewRect.maxZ);
 
-            Func<byte[]> getImage = () =>
-            {
-                var encodedImage = tempTexture.EncodeToJPG(SettingsQuality);
-                Destroy(this.tempTexture);
-                return encodedImage;
-            };
-            if (ImageReady != null)
-            {
-                ImageReady(getImage);
-            }
-            else
-            {
-                Destroy(this.tempTexture);
+                    var camDriverTraverse = Traverse.Create(camDriver);
+                    camDriverTraverse.Field("lastViewRect")
+                        .SetValue(CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ));
+                    camDriverTraverse.Field("lastViewRectGetFrame")
+                        .SetValue(Time.frameCount);
+                }
             }
 
-            Destroy(this.rt);
+            // try-finally без секції catch дозволяє використання yield return у C#
+            try
+            {
+                yield return RenderCurrentView();
+            }
+            finally
+            {
+                // Відновлення стану гри та налаштувань камери
+                try
+                {
+                    if (localCamera != null)
+                    {
+                        localCamera.farClipPlane = rememberedFarClipPlane;
+                    }
 
-            IsRendering = false;
+                    if (camDriver != null)
+                    {
+                        camDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
+                        camDriver.enabled = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("RenderMap: помилка відновлення камери: " + ex);
+                }
+
+                try
+                {
+                    var playSettings = Find.PlaySettings;
+                    if (playSettings != null)
+                    {
+                        playSettings.showZones = rememberedShowZones;
+                        playSettings.showRoofOverlay = rememberedShowRoofOverlay;
+                        playSettings.showFertilityOverlay = rememberedShowFertilityOverlay;
+                        playSettings.showTerrainAffordanceOverlay = rememberedShowTerrainAffordanceOverlay;
+                        playSettings.showPollutionOverlay = rememberedShowPollutionOverlay;
+                        playSettings.showTemperatureOverlay = rememberedShowTemperatureOverlay;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("RenderMap: помилка відновлення PlaySettings: " + ex);
+                }
+
+                try
+                {
+                    if (rememberedWorldRendered)
+                    {
+                        CameraJumper.TryShowWorld();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("RenderMap: помилка відновлення світу: " + ex);
+                }
+
+                try
+                {
+                    if (switchedMap && rememberedMap != null)
+                    {
+                        Current.Game.CurrentMap = rememberedMap;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("RenderMap: помилка відновлення карти: " + ex);
+                }
+
+                ReleaseRenderTexture();
+                IsRendering = false;
+            }
+
+            // Формування зворотного виклику зображення
+            if (tempTexture != null)
+            {
+                Texture2D textureForEncoding = tempTexture;
+                tempTexture = null;
+
+                Func<byte[]> getImage = () =>
+                {
+                    if (textureForEncoding == null)
+                    {
+                        Loger.Log("RenderMap: текстура null під час JPG-кодування.");
+                        return null;
+                    }
+
+                    try
+                    {
+                        var encodeStart = DateTime.UtcNow;
+                        byte[] encodedImage = textureForEncoding.EncodeToJPG(SettingsQuality);
+                        var encodeTime = (DateTime.UtcNow - encodeStart).TotalMilliseconds;
+
+                        Loger.Log(
+                            "RenderMap: EncodeToJPG " +
+                            viewWidth + "x" + viewHeight +
+                            ", quality=" + SettingsQuality +
+                            ", " + encodeTime.ToString("F2") + " ms, " +
+                            (encodedImage != null ? encodedImage.Length : 0) + " bytes"
+                        );
+
+                        return encodedImage;
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("RenderMap: помилка EncodeToJPG: " + ex);
+                        return null;
+                    }
+                    finally
+                    {
+                        var tex = textureForEncoding;
+                        textureForEncoding = null;
+                        ModBaseData.RunMainThread(() => DestroyTexture(tex));
+                    }
+                };
+
+                try
+                {
+                    if (ImageReady != null)
+                    {
+                        ImageReady(getImage);
+                    }
+                    else
+                    {
+                        DestroyTexture(textureForEncoding);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("RenderMap: помилка ImageReady: " + ex);
+                    DestroyTexture(textureForEncoding);
+                }
+            }
 
             yield return null;
         }
 
-        private void RestoreCamera() => RenderTexture.active = this.camera.targetTexture = null;
+        private void RestoreCamera()
+        {
+            RenderTexture.active = null;
+            if (camera != null)
+            {
+                camera.targetTexture = null;
+            }
+        }
 
-        private void SetCamera() => RenderTexture.active = this.camera.targetTexture = this.rt;
+        private void SetCamera()
+        {
+            if (camera != null)
+            {
+                camera.targetTexture = rt;
+            }
+            RenderTexture.active = rt;
+        }
 
         private IEnumerator RenderCurrentView()
         {
-#if DEBUG
-            Log.Message("Start of RenderCurrentView");
-#endif
             yield return new WaitForEndOfFrame();
-#if DEBUG
-            Log.Message("After WaitForEndOfFrame");
-#endif
+
             try
             {
                 var cameraPosX = map.Size.x / 2;
                 var cameraPosZ = map.Size.z / 2;
                 var orthographicSize = cameraPosZ;
-                var cameraBasePos = new Vector3(cameraPosX, 15f + (orthographicSize - 11f) / 49f * 50f, cameraPosZ);
+
+                var cameraBasePos = new Vector3(
+                    cameraPosX,
+                    15f + (orthographicSize - 11f) / 49f * 50f,
+                    cameraPosZ
+                );
+
                 camera.orthographicSize = orthographicSize;
                 camera.farClipPlane = cameraBasePos.y + 6.5f;
+
                 SetCamera();
-                RenderTexture.active = rt;
+
                 if (SettingsShowWeather)
                 {
                     map.weatherManager.DrawAllWeather();
                 }
-                camera.transform.position = new Vector3(cameraBasePos.x, cameraBasePos.y, cameraBasePos.z);
-                camera.Render();
-#if DEBUG
-            Log.Message("After Render");
-#endif
-                tempTexture.ReadPixels(new Rect(0, 0, viewWidth, viewHeight), 0, 0, false);
 
-                RenderTexture.active = null;
-                RestoreCamera();
-#if DEBUG
-            Log.Message("End of RenderCurrentView");
-#endif
+                camera.transform.position = new Vector3(
+                    cameraBasePos.x,
+                    cameraBasePos.y,
+                    cameraBasePos.z
+                );
+
+                var renderStart = DateTime.UtcNow;
+                camera.Render();
+                var renderTime = (DateTime.UtcNow - renderStart).TotalMilliseconds;
+
+                var readPixelsStart = DateTime.UtcNow;
+                tempTexture.ReadPixels(new Rect(0, 0, viewWidth, viewHeight), 0, 0, false);
+                var readPixelsTime = (DateTime.UtcNow - readPixelsStart).TotalMilliseconds;
+
+                Loger.Log(
+                    "RenderMap: " + viewWidth + "x" + viewHeight +
+                    ", Camera.Render=" + renderTime.ToString("F2") +
+                    " ms, ReadPixels=" + readPixelsTime.ToString("F2") + " ms"
+                );
             }
             catch (Exception exp)
             {
-                Log.Error(exp.Message);
+                Loger.Log("RenderMap: помилка RenderCurrentView: " + exp);
+            }
+            finally
+            {
+                RestoreCamera();
+            }
+
+            yield return null;
+        }
+
+        private void ReleaseRenderTexture()
+        {
+            if (rt == null) return;
+
+            try
+            {
+                RenderTexture.active = null;
+                RenderTexture.ReleaseTemporary(rt);
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("RenderMap: помилка ReleaseRenderTexture: " + ex);
+            }
+            finally
+            {
+                rt = null;
+            }
+        }
+
+        private static void DestroyTexture(Texture2D texture)
+        {
+            if (texture == null) return;
+
+            try
+            {
+                UnityEngine.Object.Destroy(texture);
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("RenderMap: помилка знищення текстури: " + ex);
             }
         }
     }
 }
-
