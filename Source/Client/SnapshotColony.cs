@@ -1,4 +1,4 @@
-﻿using Model;
+using Model;
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
@@ -6,13 +6,13 @@ using RimWorldOnlineCity.Services;
 using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 using MapRenderer;
-using System.IO;
 using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
@@ -24,23 +24,37 @@ namespace RimWorldOnlineCity
 
         public void Exec(Settlement settlement)
         {
-            var serverId = UpdateWorldController.GetMyByLocalId(settlement?.ID ?? 0)?.PlaceServerId ?? 0;
+            if (settlement == null || settlement.Map == null) return;
+
+            var serverId = UpdateWorldController.GetMyByLocalId(settlement.ID)?.PlaceServerId ?? 0;
             Loger.Log($"SnapshotColony serverId={serverId}");
 
             if (serverId == 0) return;
 
-            //RenderMap0 renderMap = GameObject.Find("GameRoot").AddComponent<RenderMap0>() as RenderMap0;
             var renderMap = new RenderMap();
+
             if (HighQuality)
             {
                 renderMap.SettingsPixelOnCell = 30;
                 renderMap.SettingsQuality = 86;
             }
+            else
+            {
+                renderMap.SettingsPixelOnCell = 16;
+                renderMap.SettingsQuality = 80;
+            }
 
             renderMap.ImageReady = (image) => SendToServer(image, serverId, Background);
 
-            renderMap.Initialize(settlement.Map);
-            renderMap.Render();
+            try
+            {
+                renderMap.Initialize(settlement.Map);
+                renderMap.Render();
+            }
+            catch (Exception ex)
+            {
+                Loger.Log($"SnapshotColony Render Exception: {ex}");
+            }
         }
 
         private static void SendToServer(Func<byte[]> getImage, long serverId, bool background)
@@ -49,32 +63,53 @@ namespace RimWorldOnlineCity
             {
                 try
                 {
-                    Loger.Log($"SnapshotColony EncodeToJPG");
-                    var data = getImage();
-                    Loger.Log($"SnapshotColony Send serverId={serverId} data.Len=" + (data?.Length ?? 0));
+                    Loger.Log("SnapshotColony EncodeToJPG start");
+                    var data = getImage?.Invoke();
+
+                    if (data == null || data.Length == 0)
+                    {
+                        Loger.Log("SnapshotColony: data is empty, aborting upload.");
+                        return;
+                    }
+
+                    Loger.Log($"SnapshotColony Send serverId={serverId} data.Len={data.Length}");
+
                     SessionClientController.Command((connect) =>
                     {
                         try
                         {
+                            // Відправляємо скріншот на сервер
                             connect.FileSharingUpload(FileSharingCategory.ColonyScreen, SessionClientController.My.Login + "@" + serverId, data);
+
+                            // Без повторного зворотного завантаження для економії мережі та пам'яті
                             if (!background)
                             {
-                                var p = connect.FileSharingDownload(FileSharingCategory.ColonyScreen, SessionClientController.My.Login + "@" + serverId);
-
-                                GeneralTexture.Clear();
-
-                                var msg = data?.Length > 0 && p?.Data?.Length > 0
-                                    ? "OCity_Successfully".Translate() : "OCity_Error".Translate();
-                                Find.WindowStack.Add(new Dialog_MessageBox(msg));
+                                ModBaseData.RunMainThread(() =>
+                                {
+                                    GeneralTexture.Clear();
+                                    Find.WindowStack.Add(new Dialog_MessageBox("OCity_Successfully".Translate()));
+                                });
                             }
                         }
-                        catch
-                        { }
+                        catch (Exception ex)
+                        {
+                            Loger.Log($"SnapshotColony FileSharingUpload error: {ex.Message}");
+                            if (!background)
+                            {
+                                ModBaseData.RunMainThread(() =>
+                                {
+                                    Find.WindowStack.Add(new Dialog_MessageBox("OCity_Error".Translate()));
+                                });
+                            }
+                        }
                     });
                 }
-                catch
-                { }
-                Loger.Log($"SnapshotColony Send end");
+                catch (Exception ex)
+                {
+                    Loger.Log($"SnapshotColony task error: {ex}");
+                }
+
+                Loger.Log("SnapshotColony Send end");
             });
         }
     }
