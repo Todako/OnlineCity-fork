@@ -1,31 +1,61 @@
-﻿using RimWorld;
+using RimWorld;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Verse;
 
 namespace OCUnion.Transfer.Model
 {
+    /// <summary>
+    /// Контейнер для збереження та передачі мережею поточного фізичного стану об'єкта карти
+    /// </summary>
     [Serializable]
     public class AttackThingState
     {
+        /// <summary>
+        /// Стан здоров'я та дієздатності пішака
+        /// </summary>
+        [Serializable]
         public enum PawnHealthState : byte
         {
+            /// <summary>
+            /// Мертвий
+            /// </summary>
             Dead = 0,
+
+            /// <summary>
+            /// Знерухомлений / без тями
+            /// </summary>
             Down = 1,
+
+            /// <summary>
+            /// Дієздатний / на ногах
+            /// </summary>
             Mobile = 2
         }
 
-        public int HostThingID { get; set; }
+        /// <summary>
+        /// Ідентифікатор об'єкта на карті хоста
+        /// </summary>
+        public int HostThingID;
 
-        public IntVec3S Position { get; set; }
+        /// <summary>
+        /// Поточна позиція на карті
+        /// </summary>
+        public IntVec3S Position;
 
-        public int StackCount { get; set; }
+        /// <summary>
+        /// Кількість предметів у стаку
+        /// </summary>
+        public int StackCount;
 
-        public int HitPoints { get; set; }
+        /// <summary>
+        /// Очки міцності (HitPoints) або масштаб полум'я для вогню
+        /// </summary>
+        public int HitPoints;
 
-        public PawnHealthState DownState { get; set; }
+        /// <summary>
+        /// Поточний стан мобільності пішака
+        /// </summary>
+        public PawnHealthState DownState;
 
         public AttackThingState()
         {
@@ -33,33 +63,52 @@ namespace OCUnion.Transfer.Model
 
         public AttackThingState(Thing mp)
         {
-            //А применяется созданый здесь контейнер в GameUtils.ApplyState
+            if (mp == null) return;
+
+            // Створений тут стан застосовується у GameUtils.ApplyState
             HostThingID = mp.thingIDNumber;
             StackCount = mp.stackCount;
             Position = new IntVec3S(mp.Position);
-            var fire = mp as Fire;
-            HitPoints = fire != null ? (int)(fire.fireSize * 10000f) : mp.HitPoints;
-            var pawn = mp as Pawn;
-            if (pawn != null)
+
+            if (mp is Fire fire)
             {
-                //Loger.Log("Client AttackThingState " + pawn.health.State.ToString() + " thing=" + pawn.Label + " ID=" + pawn.thingIDNumber);
-                DownState = (AttackThingState.PawnHealthState)(int)pawn.health.State;
+                HitPoints = (int)(fire.fireSize * 10000f);
             }
             else
+            {
+                HitPoints = mp.HitPoints;
+            }
+
+            if (mp is Pawn pawn)
+            {
+                DownState = (PawnHealthState)(int)pawn.health.State;
+            }
+            else
+            {
                 DownState = PawnHealthState.Mobile;
+            }
         }
 
+        /// <summary>
+        /// Швидкий розрахунок просторового хешу для виявлення змін об'єкта
+        /// </summary>
         public static int GetHash(Thing mp)
         {
-            return ((mp.Position.x % 50) * 50 + mp.Position.z % 50)
-                + (mp.stackCount + (mp is Pawn ? (int)(mp as Pawn).health.State : 0)) * 10000
-                + mp.HitPoints * 100000;
+            if (mp == null) return 0;
+
+            unchecked
+            {
+                int pawnState = (mp is Pawn pawn) ? (int)pawn.health.State : 0;
+
+                return ((mp.Position.x % 50) * 50 + mp.Position.z % 50)
+                    + (mp.stackCount + pawnState) * 10000
+                    + mp.HitPoints * 100000;
+            }
         }
 
         public override string ToString()
         {
-            return $"(hostId={HostThingID}, Pos=({Position.x},{Position.z}), HitP={HitPoints}, Cnt={StackCount} {DownState.ToString()})";
+            return $"(hostId={HostThingID}, Pos=({Position.x},{Position.z}), HitP={HitPoints}, Cnt={StackCount} {DownState})";
         }
     }
-
 }
