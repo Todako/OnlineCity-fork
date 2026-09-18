@@ -1,7 +1,6 @@
-﻿using OCUnion;
+using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Transfer;
 using Util;
@@ -15,21 +14,24 @@ namespace Transfer
     {
         public const int DefaultPort = 19019; // :) https://www.random.org/integers/?num=1&min=5001&max=49151&col=5&base=10&format=html&rnd=new
         public const bool UseCryptoKeys = false;
-        private Object LockObj = new Object();
+        private readonly object LockObj = new object();
+
+        // Статичні буфери для усунення зайвих алокацій щосекунди
+        private static readonly byte[] KeepAlivePayload = new byte[1] { 0x00 };
+        private static readonly byte[] ServiceCheckPayload = new byte[1] { 0x01 };
 
         public Action<int, string, ModelStatus> OnPostingChatAfter;
         public Func<int, string, ModelStatus> OnPostingChatBefore;
 
-        #region
-
+        #region Session State
         /// <summary>
-        /// Поддерживаем статус открытого соединения пока пытаемся переподключиться, чтобы не разблокировать уязвимости обычной игры
+        /// Підтримуємо статус відкритого з'єднання, поки намагаємося перепідключитися, щоб не розблокувати вразливості звичайної гри
         /// </summary>
         public static bool IsRelogin = false;
         public bool IsLogined
         {
-            get { return IsLogined_ || IsRelogin; }
-            private set { IsLogined_ = value; }
+            get => IsLogined_ || IsRelogin;
+            private set => IsLogined_ = value;
         }
         private volatile bool IsLogined_ = false;
         public static DateTime LoginTime;
@@ -44,13 +46,13 @@ namespace Transfer
             try
             {
                 IsLogined = false;
-                if (Client != null) Client.Dispose();
+                Client?.Dispose();
             }
-            catch
+            catch { }
+            finally
             {
+                Client = null;
             }
-
-            Client = null;
         }
 
         public bool Connect(string addr, int port = 0)
@@ -58,48 +60,38 @@ namespace Transfer
             ErrorMessage = null;
             ErrorCode = 0;
             if (port == 0) port = DefaultPort;
+
             try
             {
                 IsLogined = false;
-                if (Client != null) Client.Dispose();
+                Client?.Dispose();
             }
-            catch
-            { }
+            catch { }
 
             try
             {
-                //Loger.Log("Client Connect1");
-                // Generate open-close keys  KClose-KOpen
-                //Генерим рандомную пару КЗакр-КОткр
+                // Генеруємо випадкову пару ключів: KClose-KOpen (КЗакр-КВідкр)
                 var crypto = new CryptoProvider();
                 if (UseCryptoKeys) crypto.GenerateKeys();
 
-                //Loger.Log("Client Connect2");
                 Client = new ConnectClient(addr, port);
 
-                //Loger.Log("Client Connect3");//Строго первый пакет: Передаем серверу КОткр
+                // Суворо перший пакет: передаємо серверу відкритий ключ (КВідкр)
                 if (UseCryptoKeys)
                     Client.SendMessage(Encoding.UTF8.GetBytes(crypto.OpenKey));
                 else
-                    Client.SendMessage(new byte[1] { 0x00 });
+                    Client.SendMessage(KeepAlivePayload);
 
-                //Loger.Log("Client Connect4");
-                //Строго первый ответ: Передаем клиенту КОткр(Сессия)
+                // Суворо перша відповідь: передаємо клієнту КВідкр(Сесія)
                 var rc = Client.ReceiveBytes();
-                if (UseCryptoKeys)
-                    Key = crypto.Decrypt(rc);
-                else
-                    Key = rc;
+                Key = UseCryptoKeys ? crypto.Decrypt(rc) : rc;
 
-                //Loger.Log("Client Connect5");
-                //Обмен по протоколу ниже: Передаем серверу Сессия(Логин - Пароль или запрос на создание)
-
-                //Запускаем таймер фоново поддерживающий открытое соединение при простое
+                // Запускаємо таймер, який фоново підтримує відкрите з'єднання під час простою
                 ConnectSaver.AddClient(Client, (cl) =>
                 {
                     lock (LockObj)
                     {
-                        cl.SendMessage(new byte[1] { 0x00 });
+                        cl.SendMessage(KeepAlivePayload);
                         cl.ReceiveBytes();
                     }
                 });
@@ -109,165 +101,153 @@ namespace Transfer
             catch (Exception e)
             {
                 ErrorCode = -1;
-                ErrorMessage = e.Message
-                    + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
+                ErrorMessage = e.Message + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
                 ExceptionUtil.ExceptionLog(e, "Client");
                 return false;
             }
         }
 
         /// <summary>
-        /// Пинг
+        /// Пінг
         /// </summary>
-        /// <returns></returns>
         public bool ServicePing()
         {
             try
             {
+                byte[] rec;
                 lock (LockObj)
                 {
                     ErrorCode = 0;
                     ErrorMessage = null;
-                    Client.SendMessage(new byte[1] { 0x00 });
-
-                    var rec = Client.ReceiveBytes();
-
-                    return rec.Length == 1 && rec[0] == 0x00;
+                    Client.SendMessage(KeepAlivePayload);
+                    rec = Client.ReceiveBytes();
                 }
+                return rec != null && rec.Length == 1 && rec[0] == 0x00;
             }
             catch (Exception e)
             {
                 ErrorCode = -1;
-                ErrorMessage = e.Message
-                    + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
+                ErrorMessage = e.Message + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
                 ExceptionUtil.ExceptionLog(e, "Client ServicePing ");
                 return false;
             }
         }
 
         /// <summary>
-        /// Проверка есть ли новое на сервере, используется только для чата 
+        /// Перевірка наявності нових даних на сервері, використовується лише для чату
         /// </summary>
-        /// <returns></returns>
         public bool? ServiceCheck()
         {
             try
             {
+                byte[] rec;
                 lock (LockObj)
                 {
                     ErrorCode = 0;
                     ErrorMessage = null;
-                    Client.SendMessage(new byte[1] { 0x01 });
-
-                    var rec = Client.ReceiveBytes();
-
-                    return rec.Length == 1 && rec[0] == 0x01;
+                    Client.SendMessage(ServiceCheckPayload);
+                    rec = Client.ReceiveBytes();
                 }
+                return rec != null && rec.Length == 1 && rec[0] == 0x01;
             }
             catch (Exception e)
             {
                 ErrorCode = -1;
-                ErrorMessage = e.Message
-                    + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
+                ErrorMessage = e.Message + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
                 ExceptionUtil.ExceptionLog(e, "Client ServiceCheck ");
                 return null;
             }
         }
 
         /// <summary>
-        /// Передаем и принимаем объект ModelContainer
+        /// Оптимізована передача контейнера: стиснення та розпакування винесені з блокування сокета
         /// </summary>
         private ModelContainer Trans(ModelContainer sendObj)
         {
+            ErrorCode = 0;
+            ErrorMessage = null;
+
+            var time1 = DateTime.UtcNow;
+
+            // 1. Серіалізація та шифрування у викликаючому потоці без блокування інших
+            var ob = GZip.ZipObjByte(sendObj);
+            var send = CryptoProvider.SymmetricEncrypt(ob, Key);
+
+            var time2 = DateTime.UtcNow;
+            byte[] rec;
+
+            // 2. Блокування утримується виключно на час передачі байтів через сокет
             lock (LockObj)
             {
-                ErrorCode = 0;
-                ErrorMessage = null;
-
-                var time1 = DateTime.UtcNow;
-
-                var ob = GZip.ZipObjByte(sendObj); //Serialize
-                var send = CryptoProvider.SymmetricEncrypt(ob, Key);
-
-                if (send.Length > 1024 * 512) Loger.Log($"Client Network toS {send.Length} unzip {GZip.LastSizeObj} ");
-                var time2 = DateTime.UtcNow;
-
                 Client.SendMessage(send);
-
-                var time3 = DateTime.UtcNow;
-
-                var rec = Client.ReceiveBytes();
-
-                var time4 = DateTime.UtcNow;
-
-                var rec2 = CryptoProvider.SymmetricDecrypt(rec, Key);
-
-                var time5 = DateTime.UtcNow;
-
-                var res = (ModelContainer)GZip.UnzipObjByte(rec2); //Deserialize
-
-                var time6 = DateTime.UtcNow;
-                if (rec.Length > 1024 * 512) Loger.Log($"Client Network fromS {rec.Length} unzip {GZip.LastSizeObj} ");
-
-                if ((time5 - time1).TotalMilliseconds > 900)
-                {
-                    Loger.Log($"Client Network timeSerialize {(time2 - time1).TotalMilliseconds}" +
-                        $" timeSend {(time3 - time2).TotalMilliseconds}" +
-                        $" timeReceive {(time4 - time3).TotalMilliseconds}" +
-                        $" timeDecrypt {(time5 - time4).TotalMilliseconds}" +
-                        $" timeDeserialize {(time6 - time5).TotalMilliseconds}");
-                }
-
-                return res;
+                rec = Client.ReceiveBytes();
             }
+
+            var time4 = DateTime.UtcNow;
+
+            // 3. Дешифрування та десеріалізація виконуються паралельно поза блокуванням
+            var rec2 = CryptoProvider.SymmetricDecrypt(rec, Key);
+            var time5 = DateTime.UtcNow;
+
+            var res = (ModelContainer)GZip.UnzipObjByte(rec2);
+            var time6 = DateTime.UtcNow;
+
+            if ((time6 - time1).TotalMilliseconds > 900)
+            {
+                Loger.Log(string.Concat(
+                    "Client Network timeSerialize ", (time2 - time1).TotalMilliseconds.ToString("F1"),
+                    " timeNet ", (time4 - time2).TotalMilliseconds.ToString("F1"),
+                    " timeDecrypt ", (time5 - time4).TotalMilliseconds.ToString("F1"),
+                    " timeDeserialize ", (time6 - time5).TotalMilliseconds.ToString("F1")
+                ));
+            }
+
+            return res;
         }
 
         /// <summary>
-        /// Передаем объект с указанием номера типа.
+        /// Передаємо об'єкт із зазначенням номера типу
         /// </summary>
-        protected T TransObject<T>(object objOut, int typeOut, int typeIn)
-            where T : class
+        protected T TransObject<T>(object objOut, int typeOut, int typeIn) where T : class
         {
-            //Loger.Log("Client T2");
             try
             {
-                var pack = new ModelContainer()
+                var pack = new ModelContainer
                 {
                     TypePacket = typeOut,
                     Packet = objOut
                 };
                 var res = Trans(pack);
-                var stat = res.Packet as T;
-                if (res.TypePacket != typeIn
-                    || stat == null)
-                    throw new ApplicationException($"Unknow server error TransObject({typeOut} -> {typeIn}) responce: {res.TypePacket} "
+                if (res == null) return null;
+
+                if (res.TypePacket != typeIn || !(res.Packet is T stat))
+                {
+                    throw new ApplicationException($"Unknown server error TransObject({typeOut} -> {typeIn}) response: {res.TypePacket} "
                         + (res.Packet == null ? "null" : res.Packet.GetType().Name));
+                }
                 return stat;
             }
             catch (Exception e)
             {
                 ErrorCode = -1;
-                ErrorMessage = e.Message
-                    + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
+                ErrorMessage = e.Message + (e.InnerException == null ? "" : " -> " + e.InnerException.Message);
                 ExceptionUtil.ExceptionLog(e, "Client");
                 return null;
             }
         }
 
-        public T TransObject2<T>(object objOut, PackageType typeOut, PackageType typeIn)
-            where T : class
+        public T TransObject2<T>(object objOut, PackageType typeOut, PackageType typeIn) where T : class
         {
             return TransObject<T>(objOut, (int)typeOut, (int)typeIn);
         }
 
         /// <summary>
-        /// Передаем объект с указанием номера типа.
-        /// Ответ должен придти как ModelStatus со статусов == 0 и указанным номером типа.
+        /// Передаємо об'єкт із зазначенням номера типу.
+        /// Відповідь має надійти як ModelStatus зі статусом == 0 і вказаним номером типу.
         /// </summary>
         private bool TransStatus(object objOut, int typeOut, int typeIn)
         {
             var stat = TransObject<ModelStatus>(objOut, typeOut, typeIn);
-
             if (stat != null && stat.Status != 0)
             {
                 ErrorCode = stat.Status;
@@ -280,9 +260,8 @@ namespace Transfer
 
         public bool Registration(string login, string pass, string email, string discord)
         {
-            var packet = new ModelLogin() { Login = login, Pass = pass, Email = email, DiscordUserName = discord, Version = MainHelper.VersionNum };
+            var packet = new ModelLogin { Login = login, Pass = pass, Email = email, DiscordUserName = discord, Version = MainHelper.VersionNum };
             var good = TransStatus(packet, (int)PackageType.Request1Register, (int)PackageType.Response2Register);
-
             if (good)
             {
                 IsLogined = true;
@@ -293,9 +272,8 @@ namespace Transfer
 
         public bool Login(string login, string pass, string email, string discord = null)
         {
-            var packet = new ModelLogin() { Login = login, Pass = pass, Email = email, DiscordUserName = discord, Version = MainHelper.VersionNum };
+            var packet = new ModelLogin { Login = login, Pass = pass, Email = email, DiscordUserName = discord, Version = MainHelper.VersionNum };
             var good = TransStatus(packet, (int)PackageType.Request3Login, (int)PackageType.Response4Login);
-
             if (good)
             {
                 IsLogined = true;
@@ -306,48 +284,37 @@ namespace Transfer
 
         public bool Reconnect(string login, string key, string email)
         {
-            var packet = new ModelLogin() { Login = login, KeyReconnect = key, Email = email };
+            var packet = new ModelLogin { Login = login, KeyReconnect = key, Email = email };
             var good = TransStatus(packet, (int)PackageType.Request3Login, (int)PackageType.Response4Login);
-
             if (good) IsLogined = true;
             return good;
         }
 
         public ModelInfo GetInfo(ServerInfoType serverInfoType)
         {
-            Loger.Log("Client GetInfo " + serverInfoType.ToString());
-            var packet = new ModelInt() { Value = (int)serverInfoType };
-            var stat = TransObject<ModelInfo>(packet, (int)PackageType.Request5UserInfo, (int)PackageType.Response6UserInfo);
-            return stat;
+            var packet = new ModelInt { Value = (int)serverInfoType };
+            return TransObject<ModelInfo>(packet, (int)PackageType.Request5UserInfo, (int)PackageType.Response6UserInfo);
         }
 
         public ModelPlayToClient PlayInfo(ModelPlayToServer info)
         {
-            //Loger.Log("Client PlayInfo "/* + info.TypeInfo.ToString()*/);
-            var stat = TransObject<ModelPlayToClient>(info, (int)PackageType.Request11, (int)PackageType.Response12);
-            return stat;
+            return TransObject<ModelPlayToClient>(info, (int)PackageType.Request11, (int)PackageType.Response12);
         }
 
         public ModelUpdateChat UpdateChat(ModelUpdateTime modelUpdate)
         {
-            Loger.Log("Client UpdateChat " + modelUpdate.Time.ToGoodUtcString());
-            var packet = modelUpdate;
-            var stat = TransObject<ModelUpdateChat>(packet, (int)PackageType.Request17, (int)PackageType.Response18);
-    
-            return stat;
+            return TransObject<ModelUpdateChat>(modelUpdate, (int)PackageType.Request17, (int)PackageType.Response18);
         }
 
         public ModelStatus PostingChat(int chatId, string msg, bool raw = false)
         {
-            Loger.Log("Client PostingChat " + chatId.ToString() + ", " + msg);
-
             if (!raw && OnPostingChatBefore != null)
             {
                 var cancel = OnPostingChatBefore(chatId, msg);
                 if (cancel != null) return cancel;
             }
 
-            var packet = new ModelPostingChat() { IdChat = chatId, Message = msg };
+            var packet = new ModelPostingChat { IdChat = chatId, Message = msg };
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request19PostingChat, (int)PackageType.Response20PostingChat);
 
             ErrorCode = stat?.Status ?? 0;
@@ -360,66 +327,55 @@ namespace Transfer
 
         public Player GetPlayerByToken(Guid guidToken)
         {
-            var stat = TransObject2<Player>(guidToken, PackageType.RequestPlayerByToken, PackageType.ResponsePlayerByToken);
-
-            return stat;
+            return TransObject2<Player>(guidToken, PackageType.RequestPlayerByToken, PackageType.ResponsePlayerByToken);
         }
 
-        //WIP World Object
+        // Об'єкти світу (WIP)
         public ModelGameServerInfo GetGameServerInfo()
         {
-            Loger.Log("Client Get WorldObject From Server");
-            var packet = new ModelInt() { Value = 1 };
-            var stat = TransObject<ModelGameServerInfo>(packet, (int)PackageType.Request43WObjectUpdate, (int)PackageType.Response44WObjectUpdate);
-            return stat;
+            var packet = new ModelInt { Value = 1 };
+            return TransObject<ModelGameServerInfo>(packet, (int)PackageType.Request43WObjectUpdate, (int)PackageType.Response44WObjectUpdate);
         }
 
         public List<string> AnyLoad(List<long> hashs)
         {
-            var packet = new ModelAnyLoad() { Hashs = hashs };
+            var packet = new ModelAnyLoad { Hashs = hashs };
             var stat = TransObject<ModelAnyLoad>(packet, (int)PackageType.Request45AnyLoad, (int)PackageType.Response46AnyLoad);
             return (stat as ModelAnyLoad)?.Datas;
         }
 
         public ModelFileSharing FileSharingDownload(FileSharingCategory category, string name)
         {
-            var packet = new ModelFileSharing() { Category = category, Name = name };
-            var stat = TransObject<ModelFileSharing>(packet, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
-            return stat;
+            var packet = new ModelFileSharing { Category = category, Name = name };
+            return TransObject<ModelFileSharing>(packet, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
         }
 
         /// <summary>
-        /// Обновляет данные в fileSharing, если по указанному Name изменился Hash. Иначе возвращает fileSharing.
-        /// Поле Data в fileSharing игнорируется.
+        /// Оновлює дані у fileSharing, якщо за вказаним Name змінився Hash. Інакше повертає fileSharing.
+        /// Поле Data у fileSharing ігнорується.
         /// </summary>
-        /// <param name="fileSharing"></param>
-        /// <returns></returns>
         public ModelFileSharing FileSharingDownload(ModelFileSharing fileSharing)
         {
-            var packet = new ModelFileSharing() { Category = fileSharing.Category, Name = fileSharing.Name, Hash = fileSharing.Hash };
+            var packet = new ModelFileSharing { Category = fileSharing.Category, Name = fileSharing.Name, Hash = fileSharing.Hash };
             var stat = TransObject<ModelFileSharing>(packet, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
             return (stat?.Data == null ? fileSharing : stat);
         }
+
         public List<ModelFileSharing> FileSharingDownloadOnlyCheck(List<ModelFileSharing> fileSharing)
         {
-            var stat = TransObject<List<ModelFileSharing>>(fileSharing, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
-            return stat;
+            return TransObject<List<ModelFileSharing>>(fileSharing, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
         }
 
         public ModelFileSharing FileSharingUpload(FileSharingCategory category, string name, byte[] data)
         {
-            var packet = new ModelFileSharing() { Category = category, Name = name, Data = data };
-            var stat = TransObject<ModelFileSharing>(packet, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
-            return stat;
+            var packet = new ModelFileSharing { Category = category, Name = name, Data = data };
+            return TransObject<ModelFileSharing>(packet, (int)PackageType.Request49FileSharing, (int)PackageType.Response50FileSharing);
         }
 
         public ModelPlayerInfoExtended GetPlayerInfoExtended(string playerName)
         {
-            Loger.Log("Client GetPlayerInfoExtended " + playerName);
-            var packet = new ModelName() { Value = playerName };
-            var stat = TransObject<ModelPlayerInfoExtended>(packet, (int)PackageType.Request55PlayerInfoExtended, (int)PackageType.Response56PlayerInfoExtended);
-            return stat;
+            var packet = new ModelName { Value = playerName };
+            return TransObject<ModelPlayerInfoExtended>(packet, (int)PackageType.Request55PlayerInfoExtended, (int)PackageType.Response56PlayerInfoExtended);
         }
-
     }
 }
