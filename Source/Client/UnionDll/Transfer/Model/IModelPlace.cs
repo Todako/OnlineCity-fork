@@ -1,18 +1,17 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
 namespace Model
 {
-
+    /// <summary>
+    /// Інтерфейс для моделей та пакетів, прив'язаних до конкретної точки або об'єкта глобальної карти
+    /// </summary>
     public interface IModelPlace
     {
+        /// <summary>
+        /// Номер тайла глобальної карти світу
+        /// </summary>
         int Tile { get; set; }
 
         /// <summary>
-        /// Id с сервера, соответствующий определенному игровому объекту WorldObject
+        /// Серверний ідентифікатор, що відповідає певному ігровому об'єкту карти (WorldObject)
         /// </summary>
         long PlaceServerId { get; set; }
     }
