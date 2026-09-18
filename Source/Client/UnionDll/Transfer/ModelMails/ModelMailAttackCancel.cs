@@ -1,18 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System;
 
 namespace Transfer.ModelMails
 {
-
+    /// <summary>
+    /// Лист-сповіщення про скасування онлайн-атаки
+    /// </summary>
     [Serializable]
     public class ModelMailAttackCancel : ModelMail
     {
-        public override string GetHash()
-        {
-            return "NotContent";
-        }
+        public override string GetHash() => "NotContent";
     }
 }
