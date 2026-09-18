@@ -1,17 +1,31 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System;
 
 namespace Model
 {
+    /// <summary>
+    /// Модель даних онлайн-фракції для синхронізації між клієнтом та сервером
+    /// </summary>
     [Serializable]
     public class FactionOnline
     {
-        public string Name { get; set; }
-        public string LabelCap { get; set; }
-        public string DefName { get; set; }
-        public int loadID { get; set; }
+        /// <summary>
+        /// Власна назва фракції
+        /// </summary>
+        public string Name;
+
+        /// <summary>
+        /// Назва фракції з великої літери (для інтерфейсу)
+        /// </summary>
+        public string LabelCap;
+
+        /// <summary>
+        /// Назва Def-а типу фракції
+        /// </summary>
+        public string DefName;
+
+        /// <summary>
+        /// Унікальний числовий ідентифікатор фракції у збереженні світу
+        /// </summary>
+        public int loadID;
     }
 }
