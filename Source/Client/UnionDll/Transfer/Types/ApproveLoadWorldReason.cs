@@ -1,33 +1,33 @@
-﻿using System;
+using System;
 
 namespace OCUnion.Transfer.Types
 {
     /*
     /// <summary>
-    /// Флаги проверки перед загрузкой мира клиенту
+    /// Прапорці перевірки перед завантаженням світу клієнту
     /// </summary>
     [Serializable]
     [Flags]
     public enum ApproveLoadWorldReason : byte
     {
         /// <summary>
-        /// Прошел аутентификацию (значение по умолчанию)
+        /// Автентифікацію пройдено успішно (значення за замовчуванням)
         /// </summary>
         LoginOk = 0,
         /// <summary>
-        /// Папка Mods проверена
+        /// Помилка перевірки локальної папки Mods (невідповідність файлів)
         /// </summary>
         ModsFilesFail = 1,
         /// <summary>
-        /// Папка модов steamWorkShop проверена
+        /// Помилка перевірки папки модів Steam Workshop
         /// </summary>
         ModsSteamWorkShopFail = 2,
         /// <summary>
-        /// Не все файлы есть у клиента, необходимо догрузить
+        /// Не всі необхідні файли є у клієнта (потрібно довантажити)
         /// </summary>
         NotAllFilesOnClient = 4,
         /// <summary>
-        /// Not all configs are been approved
+        /// Не всі конфігураційні файли були схвалені сервером
         /// </summary>
         NotAllConfigsOnClient = 8,
     }
