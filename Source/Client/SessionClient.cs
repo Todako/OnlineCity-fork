@@ -1,7 +1,8 @@
-﻿using Model;
+using Model;
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
+using System;
 using System.Collections.Generic;
 using Transfer;
 using Transfer.ModelMails;
@@ -9,30 +10,35 @@ using Transfer.ModelMails;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Специфический для игры класс SessionClient
+    /// Специфічний для гри клієнт сесії, фасад над базовим сокетним клієнтом
     /// </summary>
     public class SessionClient : Transfer.SessionClient
     {
-        private static SessionClient Single = new SessionClient();
+        private static readonly object SyncLock = new object();
+        private static volatile SessionClient Single = new SessionClient();
 
         public static SessionClient Get => Single;
 
         public static void Recreate(SessionClient newClient)
         {
-            Single.Disconnect();
-            Single = newClient;
+            lock (SyncLock)
+            {
+                Single?.Disconnect();
+                Single = newClient ?? new SessionClient();
+            }
         }
 
         public ModelInfo WorldLoad()
         {
             Loger.Log("Client WorldLoad (GetInfo 3)");
-            var packet = new ModelInt() { Value = (long)ServerInfoType.SendSave };
-            var stat = TransObject<ModelInfo>(packet, (int)PackageType.Request5UserInfo, (int)PackageType.Response6UserInfo);
-            return stat;
+            var packet = new ModelInt { Value = (long)ServerInfoType.SendSave };
+            return TransObject<ModelInfo>(packet, (int)PackageType.Request5UserInfo, (int)PackageType.Response6UserInfo);
         }
 
         public bool CreateWorld(ModelCreateWorld packet)
         {
+            if (packet == null) return false;
+
             Loger.Log("Client CreateWorld");
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request7CreateWorld, (int)PackageType.Response8WorldCreated);
 
@@ -46,19 +52,25 @@ namespace RimWorldOnlineCity
 
         public bool SendThings(List<ThingEntry> sendThings, string myLogin, string onlinePlayerLogin, long serverId, int tile)
         {
-            Loger.Log("Client SendThings " + (sendThings?.ToStringLabel() ?? "null"));
-            if ((sendThings?.Count ?? 0) == 0)
+            if (sendThings == null || sendThings.Count == 0)
             {
                 return false;
             }
-            var packet = new ModelMailTrade()
+
+            if (!MainHelper.OffAllLog)
             {
-                From = new Player() { Login = myLogin },
-                To = new Player() { Login = onlinePlayerLogin },
+                Loger.Log($"Client SendThings {sendThings.ToStringLabel()}");
+            }
+
+            var packet = new ModelMailTrade
+            {
+                From = new Player { Login = myLogin },
+                To = new Player { Login = onlinePlayerLogin },
                 Tile = tile,
                 PlaceServerId = serverId,
                 Things = sendThings
             };
+
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request15, (int)PackageType.Response16);
 
             if (stat != null && stat.Status != 0)
@@ -72,7 +84,13 @@ namespace RimWorldOnlineCity
 
         public bool ExchengeEdit(TradeOrder order)
         {
-            Loger.Log("Client ExchengeEdit " + order.ToString(), Loger.LogLevel.EXCHANGE);
+            if (order == null) return false;
+
+            if (!MainHelper.OffAllLog)
+            {
+                Loger.Log($"Client ExchengeEdit {order}", Loger.LogLevel.EXCHANGE);
+            }
+
             var stat = TransObject<ModelStatus>(order, (int)PackageType.Request21, (int)PackageType.Response22);
 
             if (stat != null && stat.Status != 0)
@@ -86,9 +104,15 @@ namespace RimWorldOnlineCity
 
         public bool ExchengeBuy(long orderId, int count)
         {
-            Loger.Log("Client ExchengeBuy id=" + orderId.ToString() + " count=" + count.ToString(), Loger.LogLevel.EXCHANGE);
-            var stat = TransObject<ModelStatus>(new ModelOrderBuy() { OrderId = orderId, Count = count }
-                , (int)PackageType.Request23, (int)PackageType.Response24);
+            if (orderId <= 0 || count <= 0) return false;
+
+            if (!MainHelper.OffAllLog)
+            {
+                Loger.Log($"Client ExchengeBuy id={orderId} count={count}", Loger.LogLevel.EXCHANGE);
+            }
+
+            var stat = TransObject<ModelStatus>(new ModelOrderBuy { OrderId = orderId, Count = count },
+                (int)PackageType.Request23, (int)PackageType.Response24);
 
             if (stat != null && stat.Status != 0)
             {
@@ -102,9 +126,9 @@ namespace RimWorldOnlineCity
         public List<TradeOrder> ExchengeLoad(List<int> tiles, string filterBuy, string filterSell)
         {
             Loger.Log("Client ExchengeLoad", Loger.LogLevel.EXCHANGE);
-            var packet = new ModelOrderLoadRequest()
+            var packet = new ModelOrderLoadRequest
             {
-                Tiles = tiles, 
+                Tiles = tiles,
                 FilterBuy = filterBuy,
                 FilterSell = filterSell
             };
@@ -117,39 +141,34 @@ namespace RimWorldOnlineCity
                 return null;
             }
 
-            return stat.Orders;
+            return stat?.Orders;
         }
 
         public AttackInitiatorFromSrv AttackOnlineInitiator(AttackInitiatorToSrv fromClient)
         {
-            //Loger.Log("Client AttackOnlineInitiator " + fromClient.State);
-            var stat = TransObject<AttackInitiatorFromSrv>(fromClient, (int)PackageType.Request27, (int)PackageType.Response28);
-
-            return stat;
+            return TransObject<AttackInitiatorFromSrv>(fromClient, (int)PackageType.Request27, (int)PackageType.Response28);
         }
 
         public AttackHostFromSrv AttackOnlineHost(AttackHostToSrv fromClient)
         {
-            //Loger.Log("Client AttackOnlineHost " + fromClient.State);
-            var stat = TransObject<AttackHostFromSrv>(fromClient, (int)PackageType.Request29, (int)PackageType.Response30);
-
-            return stat;
+            return TransObject<AttackHostFromSrv>(fromClient, (int)PackageType.Request29, (int)PackageType.Response30);
         }
 
         public bool ExchengeStorage(List<ThingTrade> addThings, List<ThingTrade> deleteThings, int tile, int tileTo = 0, int cost = 0, int dist = 0)
         {
             Loger.Log("Client ExchengeStorage", Loger.LogLevel.EXCHANGE);
-            var packet = new ModelExchengeStorage()
+            var packet = new ModelExchengeStorage
             {
                 AddThings = addThings,
                 DeleteThings = deleteThings,
                 Tile = tile,
                 TileTo = tileTo,
                 Cost = cost,
-                Dist = dist,
+                Dist = dist
             };
+
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request47Storage, (int)PackageType.Response48Storage);
-            
+
             if (stat != null && stat.Status != 0)
             {
                 ErrorMessage = stat.Message;
@@ -161,11 +180,14 @@ namespace RimWorldOnlineCity
 
         public int ExchengeInfo_GetCountThing(ThingTrade thing)
         {
-            var packet = new ModelExchengeInfo()
+            if (thing == null) return -1;
+
+            var packet = new ModelExchengeInfo
             {
                 Request = ModelExchengeInfoRequest.GetCountThing,
-                Thing = thing,
+                Thing = thing
             };
+
             var stat = TransObject<ModelExchengeInfo>(packet, (int)PackageType.Request53ExchengeInfo, (int)PackageType.Response54ExchengeInfo);
 
             if (stat != null && stat.Status != 0)
@@ -174,8 +196,7 @@ namespace RimWorldOnlineCity
                 return -1;
             }
 
-            return stat == null ? -1 : stat.Result;
+            return stat?.Result ?? -1;
         }
-
     }
 }
