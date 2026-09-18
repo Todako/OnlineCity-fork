@@ -1,40 +1,108 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System;
 
 namespace OCUnion.Transfer.Model
 {
+    /// <summary>
+    /// Команда та параметри цілі для конкретного пішака під час онлайн-битви
+    /// </summary>
     [Serializable]
     public class AttackPawnCommand
     {
+        /// <summary>
+        /// Тип наказу пішаку (базовий тип byte для мінімізації трафіку)
+        /// </summary>
+        [Serializable]
         public enum PawnCommand : byte
         {
+            /// <summary>
+            /// Очікування в бойовому режимі
+            /// </summary>
             Wait_Combat = 0,
-            Goto, //идти
-            Attack, //стрелять
-            AttackMelee, //бить вплотную
-            Equip, //взять как оружие
-            TakeInventory, //взять
-            Wear, //надеть
-            DropEquipment, //бросить оружие
-            RemoveApparel, //снять одежду
-            Ingest, //сьесть
-            Strip, //раздеть труп
-            TendPatient, //самолечение?
-            OC_InventoryDrop, //это не job, а простая команда на дроп из инвентаря
-            //Deconstruct, //разобрать стену (не работает без боевого режима)
-            //Mine, //добывать скалу (не работает без боевого режима)
-            //HarvestDesignated, //срубить дерево (не работает без боевого режима)
 
-            //HaulToCell, //перенести на склад
+            /// <summary>
+            /// Йти в точку
+            /// </summary>
+            Goto = 1,
+
+            /// <summary>
+            /// Стріляти / дистанційна атака
+            /// </summary>
+            Attack = 2,
+
+            /// <summary>
+            /// Атакувати в ближньому бою
+            /// </summary>
+            AttackMelee = 3,
+
+            /// <summary>
+            /// Екіпірувати предмет як зброю
+            /// </summary>
+            Equip = 4,
+
+            /// <summary>
+            /// Взяти предмет до інвентарю
+            /// </summary>
+            TakeInventory = 5,
+
+            /// <summary>
+            /// Одягнути елемент одягу чи броню
+            /// </summary>
+            Wear = 6,
+
+            /// <summary>
+            /// Кинути поточну зброю
+            /// </summary>
+            DropEquipment = 7,
+
+            /// <summary>
+            /// Зняти елемент одягу
+            /// </summary>
+            RemoveApparel = 8,
+
+            /// <summary>
+            /// З'їсти або спожити речовину/ліки
+            /// </summary>
+            Ingest = 9,
+
+            /// <summary>
+            /// Роздягнути труп або знерухомленого ворога
+            /// </summary>
+            Strip = 10,
+
+            /// <summary>
+            /// Надання медичної допомоги / самолікування
+            /// </summary>
+            TendPatient = 11,
+
+            /// <summary>
+            /// Команда скидання предмета з інвентарю на землю (пряма дія без постановки Job)
+            /// </summary>
+            OC_InventoryDrop = 12,
         }
 
-        public int HostPawnID { get; set; }
-        public PawnCommand Command { get; set; }
-        public IntVec3S TargetPos { get; set; }
-        public int TargetID { get; set; }
-        public string TargetDefName { get; set; }
+        /// <summary>
+        /// Ідентифікатор пішака хоста (карти), якому призначено команду
+        /// </summary>
+        public int HostPawnID;
 
+        /// <summary>
+        /// Команда, яку необхідно виконати
+        /// </summary>
+        public PawnCommand Command;
+
+        /// <summary>
+        /// Координати цільової клітинки на карті бою
+        /// </summary>
+        public IntVec3S TargetPos;
+
+        /// <summary>
+        /// Ідентифікатор цільового об'єкта (пішака, предмета, будівлі)
+        /// </summary>
+        public int TargetID;
+
+        /// <summary>
+        /// Назва Def-а цільового об'єкта
+        /// </summary>
+        public string TargetDefName;
     }
 }
