@@ -1,28 +1,42 @@
-﻿using System;
+using System;
 
 namespace Model
 {
+    /// <summary>
+    /// Окреме повідомлення в каналі чату
+    /// </summary>
     [Serializable]
     public class ChatPost
     {
-        public string OwnerLogin { get; set; }
-
-        public int IdOwner { get; set; }
-
-        public DateTime Time { get; set; } 
-
-        public string Message { get; set; }
+        /// <summary>
+        /// Логін автора повідомлення
+        /// </summary>
+        public string OwnerLogin;
 
         /// <summary>
-        /// Показывать только данному игроку, если не заданно показывать всем.
-        /// Например ответ на /help напишет здесь имя игрока, а в OwnerLogin слово system
+        /// Числовий ідентифікатор автора повідомлення
         /// </summary>
-        //[Obsolete ("Для системных сообщений будет использоваться чат с Id=0, для приватного сообщения пользователю надо будет создать канал")]
-        public string OnlyForPlayerLogin { get; set; }
+        public int IdOwner;
 
         /// <summary>
-        /// Служебное поле. Если оно !=0 значит сообщение пришло из Discord и его не надо отправлять туда обратно :-)
+        /// Час відправлення повідомлення
         /// </summary>
-        public ulong DiscordIdMessage { get; set; }
+        public DateTime Time;
+
+        /// <summary>
+        /// Текст повідомлення
+        /// </summary>
+        public string Message;
+
+        /// <summary>
+        /// Показувати лише зазначеному гравцеві; якщо значення не вказано — повідомлення бачать усі учасники чату.
+        /// Наприклад, для відповіді на команду /help тут записується нікнейм гравця, а в OwnerLogin — значення "system".
+        /// </summary>
+        public string OnlyForPlayerLogin;
+
+        /// <summary>
+        /// Службове поле: якщо значення != 0, повідомлення надійшло з Discord і його не потрібно відправляти туди назад
+        /// </summary>
+        public ulong DiscordIdMessage;
     }
 }
