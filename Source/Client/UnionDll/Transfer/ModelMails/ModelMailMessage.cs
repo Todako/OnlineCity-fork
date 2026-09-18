@@ -1,13 +1,11 @@
-﻿using Model;
+using Model;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Transfer.ModelMails
 {
-
+    /// <summary>
+    /// Лист-сповіщення загального призначення (текстові повідомлення, попередження про загрози, візити)
+    /// </summary>
     [Serializable]
     public class ModelMailMessadge : ModelMail, IModelPlace
     {
@@ -18,24 +16,24 @@ namespace Transfer.ModelMails
         public int Tile { get; set; }
         public long PlaceServerId { get; set; }
 
-        public override string GetHash()
-        {
-            return "NotContent";
-        }
+        public override string GetHash() => "NotContent";
 
-        public enum MessadgeTypes
+        /// <summary>
+        /// Тип сповіщення (базовий тип byte для економії мережевого трафіку)
+        /// </summary>
+        [Serializable]
+        public enum MessadgeTypes : byte
         {
-            ThreatBig,
-            ThreatSmall,
-            Negative,
-            Neutral,
-            Positive,
-            Death,
-            Visitor,
+            ThreatBig = 0,
+            ThreatSmall = 1,
+            Negative = 2,
+            Neutral = 3,
+            Positive = 4,
+            Death = 5,
+            Visitor = 6,
 
-            GoldenLetter,
-            GreyGoldenLetter,
+            GoldenLetter = 7,
+            GreyGoldenLetter = 8,
         }
     }
-
 }
