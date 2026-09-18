@@ -1,37 +1,98 @@
-﻿using OCUnion.Transfer.Model;
+using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Verse;
 
 namespace Model
 {
+    /// <summary>
+    /// Пакет стану бою та оновлень карти, що надсилається сервером атакуючому гравцю (ініціатору)
+    /// </summary>
     [Serializable]
     public class AttackInitiatorFromSrv
     {
-        public string ErrorText { get; set; }
+        /// <summary>
+        /// Текст помилки, якщо сесія або дія завершилися збоєм
+        /// </summary>
+        public string ErrorText;
 
-        public int State { get; set; }
+        /// <summary>
+        /// Поточний числовий стан сесії бою
+        /// </summary>
+        public int State;
 
-        public bool TestMode { get; set; }
+        /// <summary>
+        /// Прапорець тестового режиму
+        /// </summary>
+        public bool TestMode;
 
-        public IntVec3S MapSize { get; set; }
+        /// <summary>
+        /// Розмір карти бою
+        /// </summary>
+        public IntVec3S MapSize;
 
-        public List<IntVec3S> TerrainDefNameCell { get; set; }
-        public List<string> TerrainDefName { get; set; }
+        /// <summary>
+        /// Координати клітинок покриття території, що змінилися
+        /// </summary>
+        public List<IntVec3S> TerrainDefNameCell;
 
-        public List<IntVec3S> ThingCell { get; set; }
-        public List<ThingTrade> Thing { get; set; }
+        /// <summary>
+        /// Назви Def-ів покриття території
+        /// </summary>
+        public List<string> TerrainDefName;
 
-        public List<ThingEntry> NewPawns { get; set; }
-        public List<int> NewPawnsId { get; set; }
-        public List<ThingTrade> NewThings { get; set; }
-        public List<int> NewThingsId { get; set; }
-        public List<AttackCorpse> NewCorpses { get; set; }
-        public List<int> Delete { get; set; }
-        public List<AttackThingState> UpdateState { get; set; }
-        public bool Finishing { get; set; }
-        public bool VictoryAttacker { get; set; }
+        /// <summary>
+        /// Координати розташування об'єктів або предметів
+        /// </summary>
+        public List<IntVec3S> ThingCell;
+
+        /// <summary>
+        /// Список об'єктів та предметів на відповідних клітинках
+        /// </summary>
+        public List<ThingTrade> Thing;
+
+        /// <summary>
+        /// Список нових пішаків, що з'явилися на карті бою
+        /// </summary>
+        public List<ThingEntry> NewPawns;
+
+        /// <summary>
+        /// Ідентифікатори нових пішаків
+        /// </summary>
+        public List<int> NewPawnsId;
+
+        /// <summary>
+        /// Список нових предметів (скинута зброя, спорядження тощо)
+        /// </summary>
+        public List<ThingTrade> NewThings;
+
+        /// <summary>
+        /// Ідентифікатори нових предметів
+        /// </summary>
+        public List<int> NewThingsId;
+
+        /// <summary>
+        /// Список нових трупів на полі бою
+        /// </summary>
+        public List<AttackCorpse> NewCorpses;
+
+        /// <summary>
+        /// Ідентифікатори знищених або видалених об'єктів карти
+        /// </summary>
+        public List<int> Delete;
+
+        /// <summary>
+        /// Оновлені стани об'єктів (здоров'я, пошкодження тощо)
+        /// </summary>
+        public List<AttackThingState> UpdateState;
+
+        /// <summary>
+        /// Прапорець переходу бою до завершальної фази
+        /// </summary>
+        public bool Finishing;
+
+        /// <summary>
+        /// Прапорець перемоги атакуючого гравця
+        /// </summary>
+        public bool VictoryAttacker;
     }
 }
