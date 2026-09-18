@@ -1,34 +1,68 @@
-﻿using OCUnion.Transfer.Model;
+using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace Model
 {
+    /// <summary>
+    /// Пакет команд та стану бою, що надсилається атакуючим гравцем (ініціатором) до сервера
+    /// </summary>
     [Serializable]
     public class AttackInitiatorToSrv
     {
-        public int State { get; set; }
+        /// <summary>
+        /// Поточний числовий стан сесії бою
+        /// </summary>
+        public int State;
 
-        public bool TestMode { get; set; }
+        /// <summary>
+        /// Прапорець тестового режиму
+        /// </summary>
+        public bool TestMode;
 
-        public string StartHostPlayer { get; set; }
+        /// <summary>
+        /// Логін гравця-захисника (хоста карти)
+        /// </summary>
+        public string StartHostPlayer;
 
-        public long HostPlaceServerId { get; set; }
+        /// <summary>
+        /// Серверний ідентифікатор об'єкта карти захисника
+        /// </summary>
+        public long HostPlaceServerId;
 
-        public long InitiatorPlaceServerId { get; set; }
+        /// <summary>
+        /// Серверний ідентифікатор об'єкта каравану або бази атакуючого
+        /// </summary>
+        public long InitiatorPlaceServerId;
 
-        public List<ThingEntry> Pawns { get; set; }
+        /// <summary>
+        /// Список підконтрольних пішаків атакуючого
+        /// </summary>
+        public List<ThingEntry> Pawns;
 
-        public List<AttackPawnCommand> UpdateCommand { get; set; }
+        /// <summary>
+        /// Список оновлених наказів і команд для пішаків
+        /// </summary>
+        public List<AttackPawnCommand> UpdateCommand;
 
-        public List<int> NeedNewThingIDs { get; set; }
+        /// <summary>
+        /// Список ідентифікаторів об'єктів, дані про які потрібно отримати від сервера
+        /// </summary>
+        public List<int> NeedNewThingIDs;
 
-        public TimeSpan SetPauseOnTimeToHost { get; set; }
+        /// <summary>
+        /// Запит на встановлення паузи в бою для хоста
+        /// </summary>
+        public TimeSpan SetPauseOnTimeToHost;
 
-        public bool VictoryHostToHost { get; set; }
+        /// <summary>
+        /// Прапорець визнання перемоги захисника (здача атакуючого)
+        /// </summary>
+        public bool VictoryHostToHost;
 
-        public bool TerribleFatalError { get; set; }
+        /// <summary>
+        /// Прапорець критичної фатальної помилки на боці атакуючого
+        /// </summary>
+        public bool TerribleFatalError;
     }
 }
