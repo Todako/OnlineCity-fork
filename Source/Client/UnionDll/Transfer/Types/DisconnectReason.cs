@@ -1,28 +1,31 @@
-﻿using System;
+using System;
 
 namespace OCUnion.Transfer
 {
     /// <summary>
-    /// Correctly disconnect reason
+    /// Причина відключення або розірвання з'єднання
     /// </summary>
-   [Serializable]
+    [Serializable]
     public enum DisconnectReason : byte
     {
-        ///
-        /// All good Всё хорошо продолжаем работать
-        /// 
-        AllGood,
         /// <summary>
-        /// Close game 
+        /// Усе добре, з'єднання стабільне, продовжуємо роботу
         /// </summary>
-        CloseConnection,
+        AllGood = 0,
+
         /// <summary>
-        /// Connection Time Out
+        /// З'єднання закрито за ініціативою клієнта (вихід із гри або відключення)
         /// </summary>
-        ConnectionTimeOut,
+        CloseConnection = 1,
+
         /// <summary>
-        ///  
+        /// Вичерпано час очікування відповіді від сервера (тайм-аут з'єднання)
         /// </summary>
-        FilesMods,
+        ConnectionTimeOut = 2,
+
+        /// <summary>
+        /// Невідповідність або помилка синхронізації файлів конфігурацій чи модифікацій
+        /// </summary>
+        FilesMods = 3,
     }
 }
