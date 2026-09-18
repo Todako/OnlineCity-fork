@@ -1,16 +1,27 @@
-﻿using Model;
+using Model;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace OCUnion.Transfer.Model
 {
+    /// <summary>
+    /// Дані про труп пішака, передані під час синхронізації онлайн-битви
+    /// </summary>
     [Serializable]
     public class AttackCorpse
     {
-        public ThingEntry CorpseWithPawn { get; set; }
-        public int CorpseId { get; set; }
-        public int PawnId { get; set; }
+        /// <summary>
+        /// Запис предмета трупа разом із даними внутрішнього пішака
+        /// </summary>
+        public ThingEntry CorpseWithPawn;
+
+        /// <summary>
+        /// Ідентифікатор об'єкта трупа на карті
+        /// </summary>
+        public int CorpseId;
+
+        /// <summary>
+        /// Ідентифікатор загиблого пішака
+        /// </summary>
+        public int PawnId;
     }
 }
