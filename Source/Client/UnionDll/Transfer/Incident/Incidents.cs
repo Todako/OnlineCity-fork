@@ -1,251 +1,242 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Transfer.ModelMails;
 
 namespace OCUnion
 {
     public static class Incidents
     {
-        public static List<IncidentMetadata> AllIncidents
-        {
-            get 
-            {
-                if (_Incidents == null) Init();
-                return _Incidents;
-            }
-        }
-        private static List<IncidentMetadata> _Incidents;
+        public static List<IncidentMetadata> AllIncidents => _incidents;
 
-        private static void Init()
+        private static readonly List<IncidentMetadata> _incidents;
+        private static readonly Dictionary<string, IncidentMetadata> _incidentsByName;
+
+        static Incidents()
         {
-            _Incidents = new List<IncidentMetadata>()
+            _incidents = new List<IncidentMetadata>
             {
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label",
                     Enable = true,
                     IncidentType = IncidentTypes.Infistation,
                     IncidentTypeName = "inf",
                     Label = "OC_Bugs",
                     DelayBeforeStart = (mail) => mail.IncidentMult >= 5,
-                    DelayMessageType = (mail) => ModelMailMessadge.MessadgeTypes.ThreatBig,
-                    DelayMessageLabel = (mail) => "OC_Incidents_Raid_Warning_label",
-                    DelayMessageText = (mail) => "OC_Incidents_Inf_Warning_Text_inf",
+                    DelayMessageType = (_) => ModelMailMessadge.MessadgeTypes.ThreatBig,
+                    DelayMessageLabel = (_) => "OC_Incidents_Raid_Warning_label",
+                    DelayMessageText = (_) => "OC_Incidents_Inf_Warning_Text_inf",
                     CalcCostMult = (_) => 3f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label",
                     Enable = true,
                     IncidentType = IncidentTypes.Raid,
                     IncidentTypeName = "raid",
                     Label = "OC_Raid",
                     DelayBeforeStart = (mail) => mail.IncidentMult >= 5,
-                    DelayMessageType = (mail) => ModelMailMessadge.MessadgeTypes.ThreatBig,
-                    DelayMessageLabel = (mail) => "OC_Incidents_Raid_Warning_label",
-                    DelayMessageText = (mail) => mail.IncidentParams[1].ToLower().Trim() == "mech" ? "OC_Incidents_Raid_Warning_Text_mech" : "OC_Incidents_Raid_Warning_Text_human", 
+                    DelayMessageType = (_) => ModelMailMessadge.MessadgeTypes.ThreatBig,
+                    DelayMessageLabel = (_) => "OC_Incidents_Raid_Warning_label",
+                    DelayMessageText = (mail) =>
+                    {
+                        var factionParam = GetParamSafe(mail.IncidentParams, 1);
+                        return string.Equals(factionParam, "mech", StringComparison.OrdinalIgnoreCase)
+                            ? "OC_Incidents_Raid_Warning_Text_mech"
+                            : "OC_Incidents_Raid_Warning_Text_human";
+                    },
                     CalcCostMult = (incidentParams) =>
                     {
-                        var arrivalModes = incidentParams[0].ToLower().Trim();
-                        var faction = incidentParams[1].ToLower().Trim();
+                        var arrivalModes = GetParamSafe(incidentParams, 0);
+                        var faction = GetParamSafe(incidentParams, 1);
 
-                        float arr_mult = 1f;
-                        float fac_mult = 1f;
-                        switch (arrivalModes)
+                        float arrMult = 1f;
+                        if (string.Equals(arrivalModes, "random", StringComparison.OrdinalIgnoreCase))
                         {
-                            case "random":
-                                arr_mult = 1.5f;
-                                break;
-                            case "air":
-                                arr_mult = 1.2f;
-                                break;
-                            default:
-                                arr_mult = 1f;
-                                break;
+                            arrMult = 1.5f;
                         }
-                        switch (faction)
+                        else if (string.Equals(arrivalModes, "air", StringComparison.OrdinalIgnoreCase))
                         {
-                            case "mech":
-                                fac_mult = 3.5f;
-                                break;
-                            case "pirate":
-                                fac_mult = 2f;
-                                break;
-                            case "randy":
-                                fac_mult = 2.5f;
-                                break;
-                            default:
-                                fac_mult = 1f;
-                                break;
+                            arrMult = 1.2f;
                         }
-                        return fac_mult * arr_mult;
+
+                        float facMult = 1f;
+                        if (string.Equals(faction, "mech", StringComparison.OrdinalIgnoreCase))
+                        {
+                            facMult = 3.5f;
+                        }
+                        else if (string.Equals(faction, "pirate", StringComparison.OrdinalIgnoreCase))
+                        {
+                            facMult = 2f;
+                        }
+                        else if (string.Equals(faction, "randy", StringComparison.OrdinalIgnoreCase))
+                        {
+                            facMult = 2.5f;
+                        }
+
+                        return facMult * arrMult;
                     }
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label",
                     Enable = false,
                     IncidentType = IncidentTypes.Bombing,
                     IncidentTypeName = "bomb",
-                    Label = "Bombing",  //todo
-                    DelayBeforeStart = (mail) => false, //todo
-                    DelayMessageType = null, //todo
-                    DelayMessageLabel = null, //todo
-                    DelayMessageText = null, //todo
+                    Label = "Bombing",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label",
                     Enable = true,
                     IncidentType = IncidentTypes.Acid,
                     IncidentTypeName = "acid",
-                    Label = "OC_Acid_Rain", //Кислотный дождь
-                    DelayBeforeStart = (mail) => false,
+                    Label = "OC_Acid_Rain",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 2f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label",
                     Enable = true,
                     IncidentType = IncidentTypes.Plague,
                     IncidentTypeName = "plague",
-                    Label = "OC_Plague", //Эпидемия
-                    DelayBeforeStart = (mail) => false,
+                    Label = "OC_Plague",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label",
                     Enable = true,
                     IncidentType = IncidentTypes.EMP,
                     IncidentTypeName = "emp",
-                    Label = "OC_EMP", //Э.М.И.
-                    DelayBeforeStart = (mail) => false,
+                    Label = "OC_EMP",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1.2f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label",
                     Enable = true,
                     IncidentType = IncidentTypes.Eclipse,
                     IncidentTypeName = "eclipse",
-                    Label = "OC_Eclipse", //Поглотитель света
-                    DelayBeforeStart = (mail) => false,
+                    Label = "OC_Eclipse",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 0.5f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label",
                     Enable = false,
                     IncidentType = IncidentTypes.Storm,
                     IncidentTypeName = "storm",
-                    Label = "OC_Storm", //Шторм
-                    DelayBeforeStart = (mail) => false,
+                    Label = "OC_Storm",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "",
                     Enable = false,
                     IncidentType = IncidentTypes.Caravan,
                     IncidentTypeName = "caravan",
-                    Label = "Caravan", //todo?
-                    DelayBeforeStart = (mail) => false,
+                    Label = "Caravan",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "",
                     Enable = false,
                     IncidentType = IncidentTypes.ChunkDrop,
                     IncidentTypeName = "chunkdrop",
-                    Label = "ChunkDrop", //todo?
-                    DelayBeforeStart = (mail) => false,
+                    Label = "ChunkDrop",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "",
                     Enable = false,
                     IncidentType = IncidentTypes.Quest,
                     IncidentTypeName = "quest",
-                    Label = "Quest", //todo?
-                    DelayBeforeStart = (mail) => false,
+                    Label = "Quest",
+                    DelayBeforeStart = (_) => false,
                     CalcCostMult = (_) => 1f,
                 },
-                new IncidentMetadata()
+                new IncidentMetadata
                 {
                     NumberOrder = 0,
-                    OrderLabel = "", //Особые события, мгновенного действия, всегда без интерфейса
+                    OrderLabel = "",
                     Enable = false,
                     IncidentType = IncidentTypes.Def,
                     IncidentTypeName = "def",
                     Label = "def",
-                    DelayBeforeStart = (mail) => false,
-                    CalcCostMult = (_) => 0, //в "def" параметр используется, но он не влияет на цену, она всегда 0, т.к. "def" только от админа
-                },
+                    DelayBeforeStart = (_) => false,
+                    CalcCostMult = (_) => 0f,
+                }
             };
+
+            _incidentsByName = new Dictionary<string, IncidentMetadata>(_incidents.Count, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < _incidents.Count; i++)
+            {
+                var inc = _incidents[i];
+                if (!string.IsNullOrEmpty(inc.IncidentTypeName))
+                {
+                    _incidentsByName[inc.IncidentTypeName] = inc;
+                }
+            }
         }
 
         public static IncidentMetadata ParseIncidentName(string arg)
         {
-            var name = (arg ?? "").ToLower().Trim();
-            return Incidents.AllIncidents.FirstOrDefault(i => i.IncidentTypeName == name);
+            if (string.IsNullOrWhiteSpace(arg)) return null;
+            _incidentsByName.TryGetValue(arg.Trim(), out var result);
+            return result;
+        }
+
+        private static string GetParamSafe(List<string> parameters, int index)
+        {
+            if (parameters == null || index < 0 || index >= parameters.Count)
+            {
+                return string.Empty;
+            }
+            return parameters[index]?.Trim() ?? string.Empty;
         }
     }
+
     public class IncidentMetadata
     {
-        /// <summary>
-        /// Номер очереди, зависит от типа события
-        /// 0 - без очереди, без ожиданий
-        /// 1 - положительная
-        /// 2 - природное бедствие
-        /// 3 - агресивное, с предупреждением и ожиданием перед событием (если лвл>=5)
-        /// </summary>
         public int NumberOrder { get; set; }
         public string OrderLabel { get; set; }
-        /// <summary>
-        /// Действует ли
-        /// </summary>
         public bool Enable { get; set; }
 
         public IncidentTypes IncidentType { get; set; }
-        /// <summary>
-        /// Идентификатор, без локализации, только в нижнем регистре без пробелов
-        /// </summary>
         public string IncidentTypeName { get; set; }
         public string Label { get; set; }
 
-        /// <summary>
-        /// Делать ли задержку перед инцидентом, если да, то будет перед задержкой будет выведено дополнительное сообщение
-        /// </summary>
         public Func<ModelMailStartIncident, bool> DelayBeforeStart { get; set; }
         public Func<ModelMailStartIncident, ModelMailMessadge.MessadgeTypes> DelayMessageType { get; set; }
         public Func<ModelMailStartIncident, string> DelayMessageLabel { get; set; }
         public Func<ModelMailStartIncident, string> DelayMessageText { get; set; }
 
-        /// <summary>
-        /// Множитель стоимости, передаются параметры mail.IncidentParams
-        /// </summary>
         public Func<List<string>, float> CalcCostMult { get; set; }
-        
     }
-    
+
     public enum IncidentTypes
     {
         Raid,
@@ -262,5 +253,4 @@ namespace OCUnion
         Plague,
         Def,
     }
-    
 }
