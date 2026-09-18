@@ -1,36 +1,73 @@
-﻿using OCUnion.Transfer.Model;
+using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace Model
 {
+    /// <summary>
+    /// Пакет стану бою, що надсилається сервером гравцю-захиснику (хосту карти)
+    /// </summary>
     [Serializable]
     public class AttackHostFromSrv
     {
-        public string ErrorText { get; set; }
+        /// <summary>
+        /// Текст помилки, якщо операція завершилася невдачею
+        /// </summary>
+        public string ErrorText;
 
-        public int State { get; set; }
-        
-        public string StartInitiatorPlayer { get; set; }
+        /// <summary>
+        /// Поточний числовий стан сесії атаки
+        /// </summary>
+        public int State;
 
-        public long HostPlaceServerId { get; set; }
+        /// <summary>
+        /// Логін гравця-ініціатора нападу
+        /// </summary>
+        public string StartInitiatorPlayer;
 
-        public long InitiatorPlaceServerId { get; set; }
+        /// <summary>
+        /// Серверний ID об'єкта карти захисника
+        /// </summary>
+        public long HostPlaceServerId;
 
-        public List<ThingEntry> Pawns { get; set; }
+        /// <summary>
+        /// Серверний ID об'єкта каравану/бази атакуючого
+        /// </summary>
+        public long InitiatorPlaceServerId;
 
-        public List<AttackPawnCommand> UpdateCommand { get; set; }
+        /// <summary>
+        /// Список пішаків, залучених до бою
+        /// </summary>
+        public List<ThingEntry> Pawns;
 
-        public List<int> NeedNewThingIDs { get; set; }
+        /// <summary>
+        /// Список оновлених команд для пішаків від атакуючого
+        /// </summary>
+        public List<AttackPawnCommand> UpdateCommand;
 
-        public bool TestMode { get; set; }
+        /// <summary>
+        /// Список ID об'єктів, які потребують синхронізації з клієнтом
+        /// </summary>
+        public List<int> NeedNewThingIDs;
 
-        public DateTime SetPauseOnTime { get; set; }
+        /// <summary>
+        /// Прапорець тестового режиму
+        /// </summary>
+        public bool TestMode;
 
-        public bool VictoryHost { get; set; }
+        /// <summary>
+        /// Час встановлення паузи в бою
+        /// </summary>
+        public DateTime SetPauseOnTime;
 
-        public bool TerribleFatalError { get; set; }
+        /// <summary>
+        /// Прапорець перемоги захисника
+        /// </summary>
+        public bool VictoryHost;
+
+        /// <summary>
+        /// Прапорець критичної фатальної помилки сесії
+        /// </summary>
+        public bool TerribleFatalError;
     }
 }
