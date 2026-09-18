@@ -1,16 +1,22 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace OCUnion.Transfer.Model
 {
+    /// <summary>
+    /// Універсальний контейнер для завантаження або пакетної передачі даних за хешами
+    /// </summary>
     [Serializable]
     public class ModelAnyLoad
     {
-        public List<long> Hashs { get; set; }
-        public List<string> Datas { get; set; }
+        /// <summary>
+        /// Список числових хешів об'єктів чи фрагментів даних
+        /// </summary>
+        public List<long> Hashs;
 
+        /// <summary>
+        /// Список серіалізованих рядкових даних, що відповідають зазначеним хешам
+        /// </summary>
+        public List<string> Datas;
     }
 }
