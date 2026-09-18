@@ -1,13 +1,31 @@
-﻿namespace OCUnion.Transfer
+using System;
+
+namespace OCUnion.Transfer
 {
+    /// <summary>
+    /// Тип запитуваної інформації про сервер або стан світу
+    /// </summary>
+    [Serializable]
     public enum ServerInfoType : byte
     {
-        Full = 1,
-        Short = 2,
-        SendSave = 3,
         /// <summary>
-        /// Полное с подробным текстовым описанием
+        /// Повна базова інформація про сервер
         /// </summary>
-        FullWithDescription
+        Full = 1,
+
+        /// <summary>
+        /// Коротка інформація (основний статус)
+        /// </summary>
+        Short = 2,
+
+        /// <summary>
+        /// Запит на відправку файлу збереження світу
+        /// </summary>
+        SendSave = 3,
+
+        /// <summary>
+        /// Повна інформація з докладним текстовим описом
+        /// </summary>
+        FullWithDescription = 4
     }
 }
