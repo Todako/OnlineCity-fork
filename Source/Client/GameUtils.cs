@@ -1,40 +1,39 @@
+using HarmonyLib;
+using Model;
+using OCUnion;
+using OCUnion.Transfer.Model;
 using RimWorld;
+using RimWorld.Planet;
+using RimWorldOnlineCity.GameClasses.Harmony;
+using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
-using Verse;
-using Model;
 using System.Reflection;
-using System.Xml;
-using OCUnion;
-using RimWorld.Planet;
-using UnityEngine;
-using OCUnion.Transfer.Model;
 using System.Threading;
-using HarmonyLib;
-using RimWorldOnlineCity.GameClasses.Harmony;
+using System.Xml;
+using UnityEngine;
 using Util;
-using System.IO;
-using System.Diagnostics;
-using RimWorldOnlineCity.UI;
+using Verse;
 
 namespace RimWorldOnlineCity
 {
     public static class ScribeSaverHelper
     {
+        // ОПТИМІЗАЦІЯ: прямий IL-доступ до приватного поля writer замість важкої рефлексії на кожному сейві
+        private static readonly AccessTools.FieldRef<ScribeSaver, XmlWriter> WriterRef =
+            AccessTools.FieldRefAccess<ScribeSaver, XmlWriter>("writer");
+
         public static XmlWriter GetWriter(this ScribeSaver scribeSaver)
         {
-            FieldInfo fieldInfo = typeof(ScribeSaver).GetField("writer", BindingFlags.Instance | BindingFlags.NonPublic);
-            XmlWriter result = (XmlWriter)fieldInfo.GetValue(scribeSaver);
-            return result;
+            return WriterRef(scribeSaver);
         }
 
         public static void SetWriter(this ScribeSaver scribeSaver, XmlWriter writer)
         {
-            FieldInfo fieldInfo = typeof(ScribeSaver).GetField("writer", BindingFlags.Instance | BindingFlags.NonPublic);
-            fieldInfo.SetValue(scribeSaver, writer);
+            WriterRef(scribeSaver) = writer;
         }
     }
 
@@ -42,16 +41,16 @@ namespace RimWorldOnlineCity
     public static class GameUtils
     {
         internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
-        private static HashSet<string> ExceptionDravLineThing = new HashSet<string>();
+        private static readonly HashSet<string> ExceptionDravLineThing = new HashSet<string>();
 
         private static int BugNum = 0;
         public static void GetBug()
         {
             var dir = Loger.PathLog.Substring(0, Loger.PathLog.Length - 1);
-            var fileName = $"Log_{DateTime.Now.ToString("yyyy-MM-dd")}_*.txt";
+            var fileName = $"Log_{DateTime.Now:yyyy-MM-dd}_*.txt";
             var list = Directory.GetFiles(dir, fileName, SearchOption.TopDirectoryOnly);
             var dataToSave = GZip.ZipMoreByteByte(list, name => File.ReadAllBytes(name.NormalizePath()));
-            var code = $"{DateTime.Now.ToString("yyyy-MM-dd")}_{MainHelper.LockCode}_{BugNum++}";
+            var code = $"{DateTime.Now:yyyy-MM-dd}_{MainHelper.LockCode}_{BugNum++}";
             var dataDir = Path.Combine(dir, "Log_" + code);
             Directory.CreateDirectory(dataDir);
             File.WriteAllBytes(Path.Combine(dataDir, $"BugReport_{code}.zip"), dataToSave);
@@ -60,28 +59,23 @@ namespace RimWorldOnlineCity
 
         public static Texture2D GetTextureFromSaveData(byte[] data)
         {
-            Texture2D texture = new Texture2D(2, 2);//, TextureFormat.BGRA32, false);
+            Texture2D texture = new Texture2D(2, 2);
             texture.LoadImage(data);
             texture.Apply();
             return texture;
         }
 
-        /// <summary>
-        /// Іконка речі, опціонально "i". Запускається у довільному Rect
-        /// </summary>
         public static void DravLineThing(Rect rect, ThingTrade thing, bool withInfo)
         {
             DravLineThing(rect, thing, withInfo, Color.white);
         }
-        /// <summary>
-        /// Іконка речі, опціонально "i". Запускається у довільному Rect
-        /// </summary>
+
         public static void DravLineThing(Rect rect, ThingTrade thing, bool withInfo, Color labelColor, float xi = 24f, float yi = 0)
         {
             if (ExceptionDravLineThing.Contains(thing.ToString())) return;
             try
             {
-                if (/*thing.IsCorpse ||*/ (thing.Def?.race?.Humanlike ?? false))
+                if (thing.Def?.race?.Humanlike ?? false)
                 {
                     var position = new Rect(rect.x, rect.y, 24f, 24f);
                     GUI.DrawTexture(position, GeneralTexture.IconHuman);
@@ -90,6 +84,7 @@ namespace RimWorldOnlineCity
                 {
                     Widgets.ThingIcon(rect, thing.Def);
                 }
+
                 if (string.IsNullOrEmpty(thing.StuffName))
                 {
                     TooltipHandler.TipRegion(rect, thing.Def.LabelCap);
@@ -104,7 +99,6 @@ namespace RimWorldOnlineCity
                     if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing.Def, thing.StuffDef);
                     GUI.color = Color.white;
                 }
-                // GenLabel.ThingLabel(this.Def, this.StuffDef, 1)
             }
             catch
             {
@@ -112,6 +106,7 @@ namespace RimWorldOnlineCity
                 throw;
             }
         }
+
         public static void DravLineThing(Rect rect, Thing thing, bool withInfo, float xi = 24f, float yi = 0)
         {
             if (thing == null) return;
@@ -131,6 +126,7 @@ namespace RimWorldOnlineCity
                 return text;
             }, localThing.GetHashCode()));
         }
+
         public static void DravLineThing(Rect rect, ThingDef thing, bool withInfo)
         {
             if (thing == null) return;
@@ -150,19 +146,11 @@ namespace RimWorldOnlineCity
             }, localThing.GetHashCode()));
         }
 
-        /// <summary>
-        /// Іконка речі, "i" та назва. Повинно запускатися у відносних координатах
-        /// </summary>
-        /// <param name="rectLine"></param>
-        /// <param name="thing"></param>
-        /// <param name="labelColor"></param>
         public static void DravLineThing(Rect rectLine, Thing thing, Color labelColor)
         {
-            //Rect rect = new Rect(-1f, -1f, 27f, 27f);
             Rect rect = new Rect(0f, 0f, 24f, 24f);
 
             Widgets.ThingIcon(rect, thing, 1f);
-
             Widgets.InfoCardButton(30f, 0f, thing);
 
             Text.Anchor = TextAnchor.MiddleLeft;
@@ -188,24 +176,30 @@ namespace RimWorldOnlineCity
             }, localThing.GetHashCode()));
         }
 
+        /// <summary>
+        /// Повертає список усіх об'єктів планети без створення проміжних масивів і LINQ.
+        /// </summary>
         public static List<WorldObject> GetAllWorldObjects()
         {
-            var allWorldObjectsArr = new WorldObject[Find.WorldObjects.AllWorldObjects.Count];
-            Find.WorldObjects.AllWorldObjects.CopyTo(allWorldObjectsArr);
-
-            return allWorldObjectsArr.Where(wo => wo != null).ToList();
+            var raw = Find.WorldObjects.AllWorldObjects;
+            var list = new List<WorldObject>(raw.Count);
+            for (int i = 0; i < raw.Count; i++)
+            {
+                var wo = raw[i];
+                if (wo != null) list.Add(wo);
+            }
+            return list;
         }
 
         /// <summary>
-        /// Об'єднує однакові речі в список всередині одного контейнера TransferableOneWay
+        /// Об'єднує однакові речі в список всередині одного контейнера TransferableOneWay.
         /// </summary>
-        /// <param name=""></param>
-        /// <returns></returns>
         public static List<TransferableOneWay> DistinctToTransferableOneWays(this IEnumerable<Thing> things)
         {
             var transferables = new List<TransferableOneWay>();
             foreach (var item in things)
             {
+                if (item == null) continue;
                 TransferableOneWay transferableOneWay = TransferableUtility.TransferableMatching<TransferableOneWay>(item, transferables, TransferAsOneMode.Normal);
                 if (transferableOneWay == null)
                 {
@@ -214,175 +208,144 @@ namespace RimWorldOnlineCity
                 }
                 transferableOneWay.things.Add(item);
             }
-            return transferables.Where(t => t.MaxCount > 0).ToList();
+
+            transferables.RemoveAll(t => t.MaxCount <= 0);
+            return transferables;
         }
 
         /// <summary>
-        /// Розгортає список із (вид речі (всередині список конкретних речей), кількість вибору) до словника (конкретна річ, кількість)
-        /// Операція, зворотна DistinctThings, зі збереженням кількості вибраних (CountToTransfer)
+        /// Розгортає список TransferableOneWay до словника (річ -> кількість).
+        /// ОПТИМІЗАЦІЯ: заповнення за один прохід без SelectMany і тимчасових списків Pair.
         /// </summary>
-        /// <returns></returns>
-        public static Dictionary<Thing, int> TransferableOneWaysToDictionary(this IEnumerable<TransferableOneWay> selectByGroup, bool seletAll = false)
+        public static Dictionary<Thing, int> TransferableOneWaysToDictionary(this IEnumerable<TransferableOneWay> selectByGroup, bool selectAll = false)
         {
-            return selectByGroup.SelectMany(tow =>
+            var dict = new Dictionary<Thing, int>();
+            foreach (var tow in selectByGroup)
             {
-                var needCount = seletAll ? tow.MaxCount : tow.CountToTransfer;
-                if (needCount == 0)
+                var needCount = selectAll ? tow.MaxCount : tow.CountToTransfer;
+                if (needCount <= 0) continue;
+
+                if (tow.AnyThing is Pawn pawn)
                 {
-                    return new List<Pair<Thing, int>>();
+                    dict[pawn] = 1;
+                    continue;
                 }
-                if (tow.AnyThing is Pawn)
-                {
-                    //Loger.Log(" ======== " + tow.AnyThing.LabelCap);
-                    return new List<Pair<Thing, int>>() { new Pair<Thing, int>(tow.AnyThing, 1) };
-                }
-                var res = new List<Pair<Thing, int>>();
+
                 for (int i = 0; i < tow.things.Count; i++)
                 {
-                    var cnt = tow.things[i].stackCount;
+                    var thing = tow.things[i];
+                    var cnt = thing.stackCount;
                     if (needCount > cnt)
                     {
-                        //Loger.Log(" ======== " + tow.things[i].LabelCap + " === " + cnt);
-                        res.Add(new Pair<Thing, int>(tow.things[i], cnt));
+                        dict[thing] = cnt;
                     }
                     else
                     {
-                        //Loger.Log(" ======== " + tow.things[i].LabelCap + " === " + needCount);
-                        res.Add(new Pair<Thing, int>(tow.things[i], needCount));
+                        dict[thing] = needCount;
                     }
                     needCount -= cnt;
                     if (needCount <= 0) break;
                 }
-                return res;
-            }).ToDictionary(p => p.First, p => p.Second);
+            }
+            return dict;
         }
 
-        /// <summary>
-        /// Повертає набір речей з allThings, вибраних у targets, або null, якщо чогось не вистачає.
-        /// Встановлює target.NotTrade
-        /// </summary>
-        /// <param name="targets">Шукані речі або фільтри з ордера</param>
-        /// <param name="allThings">Усі доступні речі</param>s
-        /// <returns></returns>
         public static List<TransferableOneWay> ChechToTrade(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings)
         {
-            // сортуємо цілі для вибірки гірших спочатку
-            var rate = 1;// Максимальна кількість повторів, зменшується для кожної наступної речі. Розрахунок на те, що речі не конкурують між собою або конкурують незначно
-            // перший запуск для з'ясування rate
+            var rate = 1;
             return ChechToTradeDo(targets, allThings, null, ref rate, false);
-
         }
-        /// <summary>
-        /// Повертає набір речей з allThings, вибраних у targets, або null, якщо чогось не вистачає.
-        /// Встановлює target.NotTrade
-        /// </summary>
-        /// <param name="targets">Шукані речі або фільтри з ордера</param>
-        /// <param name="allThings">Усі доступні речі</param>
-        /// <param name="altThings">Додаткові речі, які беруть участь у відборі, якщо на позицію в allThings не вистачило. Якщо задано, то в результаті лише частина з цього набору</param>
-        /// <param name="rate">Кількість повторів цієї угоди</param>
-        /// <param name="incomplete">Якщо не 0, то вказано бажане rate, але якщо якихось речей немає, то результат усе одно буде видано, і лише бракуючих не буде в результаті</param>
-        /// <returns></returns>
+
         public static List<TransferableOneWay> ChechToTrade(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, out int rate, int incomplete = 0)
         {
-            if (MainHelper.DebugMode) Loger.Log("GameUtils.ChechToTrade "
-                + "targets: " + targets.ToList().ToStringLabel() + Environment.NewLine
-                + "allThings: " + allThings.Select(t => ThingTrade.CreateTrade(t, t.stackCount)).ToList().ToStringLabel() + Environment.NewLine
-                );
-            
-            // сортуємо цілі для вибірки кращих спочатку, а речі спочатку гірші
+            if (MainHelper.DebugMode)
+            {
+                Loger.Log("GameUtils.ChechToTrade "
+                    + "targets: " + targets.ToList().ToStringLabel() + Environment.NewLine
+                    + "allThings: " + allThings.Select(t => ThingTrade.CreateTrade(t, t.stackCount)).ToList().ToStringLabel() + Environment.NewLine);
+            }
+
             var trs = targets.OrderByCost();
-                //.Where(t => t.Count > 0)
-                //.OrderBy(t => t.DefName + "#" + (9 - t.Quality).ToString() + t.HitPoints.ToString().PadLeft(5) + t.Count.ToString().PadLeft(6))
-                //.ToList();
             if (incomplete == 0)
             {
-                rate = 100000000;// Максимальна кількість повторів, зменшується для кожної наступної речі. Розрахунок на те, що речі не конкурують між собою або конкурують незначно
-                // перший запуск для з'ясування rate
+                rate = 100000000;
                 var res = ChechToTradeDo(trs, allThings, altThings, ref rate, true);
                 if (res == null) return null;
-                // повторно запускаємо для коректного заповнення CountToTransfer (оскільки при зменшенні rate не перераховуються речі, відібрані раніше)
                 return ChechToTradeDo(trs, allThings, altThings, ref rate, false);
             }
             else
             {
-                rate = incomplete; // відмінність від блоку вище 1
-                // перший запуск для з'ясування rate
+                rate = incomplete;
                 var res = ChechToTradeDo(trs, allThings, altThings, ref rate, true);
                 if (res == null)
-                {   // відмінність від блоку вище 2
+                {
                     rate = incomplete;
                     return ChechToTradeDo(trs, allThings, altThings, ref rate, false, true);
-                }    
-                // повторно запускаємо для коректного заповнення CountToTransfer (оскільки при зменшенні rate не перераховуються речі, відібрані раніше)
+                }
                 return ChechToTradeDo(trs, allThings, altThings, ref rate, false);
             }
         }
-        private static List<TransferableOneWay> ChechToTradeDo(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, ref int rate, bool setRect, bool incomplete = false
-            , bool setTradeCount = true)
+
+        private static List<TransferableOneWay> ChechToTradeDo(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, ref int rate, bool setRect, bool incomplete = false, bool setTradeCount = true)
         {
             bool result = true;
             var selects = new List<TransferableOneWay>();
             var source = allThings.ToDictionary(i => i, i => i.stackCount);
-            // сортуємо речі спочатку гірші
+
             var sourceKeys = source.Keys
                 .Select(t =>
                 {
-                    QualityCategory qq;
-                    QualityUtility.TryGetQuality(t, out qq);
+                    QualityUtility.TryGetQuality(t, out QualityCategory qq);
                     return new { thing = t, q = qq };
                 })
                 .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
                 .Select(t => t.thing)
                 .ToList();
-            // копія для alt
+
             var sourcealt = altThings?.ToDictionary(i => i, i => i.stackCount);
-            // сортуємо речі спочатку гірші
             var sourcealtKeys = sourcealt?.Keys
                 .Select(t =>
                 {
-                    QualityCategory qq;
-                    QualityUtility.TryGetQuality(t, out qq);
+                    QualityUtility.TryGetQuality(t, out QualityCategory qq);
                     return new { thing = t, q = qq };
                 })
                 .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
                 .Select(t => t.thing)
                 .ToList();
+
             foreach (var target in targets)
             {
                 target.TradeCount = 0;
                 if (target.Count == 0)
                 {
-                    target.NotTrade = false; // де NotTrade істина, там буде червоний рядок в інтерфейсі
-                    target.TradeCount = 0; 
+                    target.NotTrade = false;
+                    target.TradeCount = 0;
                     continue;
                 }
-                if (MainHelper.DebugMode) Log.Message("--- --- " + target.DefName.ToString() + " " + target.Count.ToString() + "*" + rate.ToString());
-                if (setRect && target.Count > 100 && rate > 1000000) rate = 1000000; // від переповнення
+
+                if (MainHelper.DebugMode) Log.Message("--- --- " + target.DefName + " " + target.Count + "*" + rate);
+                if (setRect && target.Count > 100 && rate > 1000000) rate = 1000000;
+
                 var select = new TransferableOneWay();
                 var selectalt = new TransferableOneWay();
-                //Log.Message(target.DefName);
+
                 foreach (var thing in sourceKeys)
                 {
                     if (!setTradeCount && target.Count <= select.CountToTransfer) break;
                     if (source[thing] == 0) continue;
                     if (target.MatchesThing(thing))
                     {
-                        // нам підходить, вибираємо потрібну кількість
                         target.TradeCount += source[thing];
                         if (target.Count <= select.CountToTransfer) continue;
                         select.things.Add(thing);
-                        if (MainHelper.DebugMode) Log.Message("---s T " + (source[thing]).ToString());
                         var count = target.Count * rate - select.CountToTransfer > source[thing]
                             ? source[thing]
                             : target.Count * rate - select.CountToTransfer;
-                        if (MainHelper.DebugMode) Log.Message("---s + " + (select.CountToTransfer + count).ToString());
                         select.ForceTo(select.CountToTransfer + count);
                         source[thing] -= count;
-                        //Log.Message(target.DefName + " == " + thing.def.defName + " o:" + source[thing].ToString() + " g:" + select.CountToTransfer.ToString() + " rate:" + rate.ToString());
                     }
-                    //else Log.Message(target.DefName + " != " + thing.def.defName + " " + select.CountToTransfer.ToString());
                 }
-                // копія для alt + запис у selectalt
+
                 if (altThings != null)
                 {
                     foreach (var thing in sourcealtKeys)
@@ -391,149 +354,37 @@ namespace RimWorldOnlineCity
                         if (sourcealt[thing] == 0) continue;
                         if (target.MatchesThing(thing))
                         {
-                            // нам підходить, вибираємо потрібну кількість
                             target.TradeCount += sourcealt[thing];
                             if (target.Count <= select.CountToTransfer) continue;
                             select.things.Add(thing);
-                            if (MainHelper.DebugMode) Log.Message("---a T " + (sourcealt[thing]).ToString());
                             var count = target.Count * rate - select.CountToTransfer > sourcealt[thing]
                                 ? sourcealt[thing]
                                 : target.Count * rate - select.CountToTransfer;
                             select.ForceTo(select.CountToTransfer + count);
-                            if (MainHelper.DebugMode) Log.Message("---a + " + (select.CountToTransfer + count).ToString());
                             sourcealt[thing] -= count;
-                            // додатково записуємо в selectalt
+
                             selectalt.things.Add(thing);
                             selectalt.ForceTo(selectalt.CountToTransfer + count);
                         }
                     }
                 }
-                if (!incomplete
-                    && target.Count * (setRect ? 1 : rate) > select.CountToTransfer)
+
+                if (!incomplete && target.Count * (setRect ? 1 : rate) > select.CountToTransfer)
                 {
                     result = false;
                     target.NotTrade = true;
-                    if (MainHelper.DebugMode) Log.Message("---NotTrade " + target.Count.ToString() + " > " + select.CountToTransfer.ToString());
                 }
                 else
                 {
                     if (setRect && target.Count * rate > select.CountToTransfer)
                     {
                         rate = select.CountToTransfer / target.Count;
-                        //Log.Message(" rate:" + rate.ToString());
                     }
                     if (altThings == null)
                         selects.Add(select);
                     else
                         selects.Add(selectalt);
                     target.NotTrade = false;
-                    if (MainHelper.DebugMode) Log.Message("---Trade " + target.Count.ToString() + " > " + select.CountToTransfer.ToString());
-                }
-            }
-            return result ? selects : null;
-        }
-        private static List<TransferableOneWay> ChechToTradeNNN(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, bool setTradeCount = true)
-        {
-            bool result = true;
-            var selects = new List<TransferableOneWay>();
-            var source = allThings.ToDictionary(i => i, i => i.stackCount);
-            // сортуємо речі спочатку гірші
-            var sourceKeys = source.Keys
-                .Select(t =>
-                {
-                    QualityCategory qq;
-                    QualityUtility.TryGetQuality(t, out qq);
-                    return new { thing = t, q = qq };
-                })
-                .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
-                .Select(t => t.thing)
-                .ToList();
-            // копія для alt
-            var sourcealt = altThings?.ToDictionary(i => i, i => i.stackCount);
-            // сортуємо речі спочатку гірші
-            var sourcealtKeys = sourcealt?.Keys
-                .Select(t =>
-                {
-                    QualityCategory qq;
-                    QualityUtility.TryGetQuality(t, out qq);
-                    return new { thing = t, q = qq };
-                })
-                .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
-                .Select(t => t.thing)
-                .ToList();
-            foreach (var target in targets)
-            {
-                target.TradeCount = 0;
-                if (target.Count == 0)
-                {
-                    target.NotTrade = false; // де NotTrade істина, там буде червоний рядок в інтерфейсі
-                    continue;
-                }
-                Log.Message("--- --- " + target.DefName.ToString() + " " + target.Count.ToString());
-                var select = new TransferableOneWay();
-                var selectalt = new TransferableOneWay();
-                //Log.Message(target.DefName);
-                foreach (var thing in sourceKeys)
-                {
-                    if (!setTradeCount && target.Count <= select.CountToTransfer) break;
-                    if (source[thing] == 0) continue;
-                    if (target.MatchesThing(thing))
-                    {
-                        // нам підходить, вибираємо потрібну кількість
-                        target.TradeCount += source[thing];
-                        if (target.Count <= select.CountToTransfer) continue;
-                        select.things.Add(thing);
-                        Log.Message("---s T " + (source[thing]).ToString());
-                        var count = target.Count - select.CountToTransfer > source[thing]
-                            ? source[thing]
-                            : target.Count - select.CountToTransfer;
-                        Log.Message("---s + " + (select.CountToTransfer + count).ToString());
-                        select.ForceTo(select.CountToTransfer + count);
-                        source[thing] -= count;
-                        //Log.Message(target.DefName + " == " + thing.def.defName + " o:" + source[thing].ToString() + " g:" + select.CountToTransfer.ToString() + " rate:" + rate.ToString());
-                    }
-                    //else Log.Message(target.DefName + " != " + thing.def.defName + " " + select.CountToTransfer.ToString());
-                }
-                // копія для alt + запис у selectalt
-                if (altThings != null)
-                {
-                    foreach (var thing in sourcealtKeys)
-                    {
-                        if (!setTradeCount && target.Count <= select.CountToTransfer) break;
-                        if (sourcealt[thing] == 0) continue;
-                        if (target.MatchesThing(thing))
-                        {
-                            // нам підходить, вибираємо потрібну кількість
-                            target.TradeCount += sourcealt[thing];
-                            if (target.Count <= select.CountToTransfer) continue;
-                            select.things.Add(thing);
-                            Log.Message("---a T " + (sourcealt[thing]).ToString());
-                            var count = target.Count - select.CountToTransfer > sourcealt[thing]
-                                ? sourcealt[thing]
-                                : target.Count - select.CountToTransfer;
-                            select.ForceTo(select.CountToTransfer + count);
-                            Log.Message("---a + " + (select.CountToTransfer + count).ToString());
-                            sourcealt[thing] -= count;
-                            // додатково записуємо в selectalt
-                            selectalt.things.Add(thing);
-                            selectalt.ForceTo(selectalt.CountToTransfer + count);
-                        }
-                    }
-                }
-                if (target.Count > select.CountToTransfer)
-                {
-                    result = false;
-                    target.NotTrade = true;
-                    Log.Message("---NotTrade " + target.Count.ToString() + " > " + select.CountToTransfer.ToString());
-                }
-                else
-                {
-                    if (altThings == null)
-                        selects.Add(select);
-                    else
-                        selects.Add(selectalt);
-                    target.NotTrade = false;
-                    Log.Message("---Trade " + target.Count.ToString() + " > " + select.CountToTransfer.ToString());
                 }
             }
             return result ? selects : null;
@@ -542,96 +393,162 @@ namespace RimWorldOnlineCity
         public static bool IsProtectingNovice()
         {
             if (SessionClientController.Data.IsAdmin || !SessionClientController.Data.ProtectingNovice) return false;
-            
+
             var costAll = SessionClientController.Data.MyEx.CostAllWorldObjects();
             return SessionClientController.My.LastTick < 3600000 / 2 || costAll.MarketValueTotal < MainHelper.MinCostForTrade;
         }
 
-        internal static IEnumerable<Thing> FilterBeforeSendServer(this IEnumerable<Thing> list)
+        /// <summary>
+        /// Фільтрує речі перед відправкою на сервер.
+        /// ОПТИМІЗАЦІЯ: безпечний доступ до налаштувань та прямий обхід без ланцюжків IEnumerable.Where.
+        /// </summary>
+        internal static List<Thing> FilterBeforeSendServer(this IEnumerable<Thing> list)
         {
-            if (UpdateWorldController.ExistsEnemyPawns) return new List<Thing>();
+            if (UpdateWorldController.ExistsEnemyPawns || list == null) return new List<Thing>(0);
 
-            // для ідеології забороняємо передачу пешок, які мають ідеологічну роль лідера чи проповідника
-            var rolesListForReading = Find.FactionManager.OfPlayer.ideos.PrimaryIdeo.RolesListForReading
-                .Where(r => r.def.defName == "IdeoRole_Leader" || r.def.defName == "IdeoRole_Moralist")
-                .ToList();
-            if (MainHelper.DebugMode) foreach (var r in Find.FactionManager.OfPlayer.ideos.PrimaryIdeo.RolesListForReading) Loger.Log(" Role " + r.def.defName + " " + r.TipLabel);
-
-            var res = list.Where(thing => !(thing is Pawn) || !rolesListForReading.Any(r => r.IsAssigned(thing as Pawn)))
-                // Заборона на передачу трупів
-                .Where(thing => !(thing is Corpse))
-                // Заборона на передачу мішків з відходами Wastepack
-                .Where(thing => thing.def.defName != "Wastepack")
-                // Заборонені налаштуванням
-                .Where(thing => !SessionClientController.Data.GeneralSettings.ExchengeForbiddenDefNamesList.Contains(thing.def.defName));
-
-            //Loger.Log($"Debug IsProtectingNovice={IsProtectingNovice()} " + Environment.NewLine + res.Select(t => ThingTrade.CreateEntry(t, t.stackCount)).ToStringThing());
-            if (IsProtectingNovice()) res = res.Where(thing => thing.def.stackLimit > 1);
-            return res;
-        }
-
-        public static List<Thing> GetAllThings(Caravan caravan, bool thingOnPawn = false, bool withTransferFilter = true)
-        {
-            IEnumerable<Thing> pawns = caravan.PawnsListForReading;
-            if (withTransferFilter) pawns = pawns.FilterBeforeSendServer();
-            IEnumerable<Thing> goods;
-            if (thingOnPawn)
+            List<Precept_Role> roles = null;
+            if (ModsConfig.IdeologyActive && Find.FactionManager?.OfPlayer?.ideos?.PrimaryIdeo != null)
             {
-                goods = GetThingOnPawn(pawns).ToList()
-                    .Concat(pawns);
+                var allRoles = Find.FactionManager.OfPlayer.ideos.PrimaryIdeo.RolesListForReading;
+                for (int i = 0; i < allRoles.Count; i++)
+                {
+                    var r = allRoles[i];
+                    if (r.def.defName == "IdeoRole_Leader" || r.def.defName == "IdeoRole_Moralist")
+                    {
+                        if (roles == null) roles = new List<Precept_Role>();
+                        roles.Add(r);
+                    }
+                }
             }
-            else
-            {
-                goods = CaravanInventoryUtility.AllInventoryItems(caravan).ToList()
-                    .Concat(pawns);
-            }
-            if (withTransferFilter) goods = goods.FilterBeforeSendServer();
-            return goods.ToList();
-        }
 
-        public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true)
-        {
-            IEnumerable<Thing> pawns = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer);
-            if (withTransferFilter) pawns = pawns.FilterBeforeSendServer();
-            var goods = CaravanFormingUtility.AllReachableColonyItems(map, allowEvenIfReserved: true).ToList()
-                .Concat(pawns);
-            if (thingOnPawn)
+            // Безпечне отримання заборонених предметів зі структури GeneralSettings
+            var data = SessionClientController.Data;
+            var forbidden = data != null ? data.GeneralSettings.ExchengeForbiddenDefNamesList : null;
+            bool isNovice = IsProtectingNovice();
+
+            var result = new List<Thing>();
+            foreach (var thing in list)
             {
-                goods = goods.Concat(GetThingOnPawn(pawns));
+                if (thing == null) continue;
+                if (thing is Corpse) continue;
+                if (thing.def.defName == "Wastepack") continue;
+                if (forbidden != null && forbidden.Contains(thing.def.defName)) continue;
+                if (isNovice && thing.def.stackLimit <= 1) continue;
+
+                if (thing is Pawn p && roles != null)
+                {
+                    bool isRoleAssigned = false;
+                    for (int r = 0; r < roles.Count; r++)
+                    {
+                        if (roles[r].IsAssigned(p))
+                        {
+                            isRoleAssigned = true;
+                            break;
+                        }
+                    }
+                    if (isRoleAssigned) continue;
+                }
+
+                result.Add(thing);
             }
-            if (withTransferFilter) goods = goods.FilterBeforeSendServer();
-            return goods.ToList();
+
+            return result;
         }
 
         /// <summary>
-        /// Витягнути всі речі у пешки, з найхитриших місць (зброя, одяг, інвентар і те, що в руках)
+        /// Повертає всі речі каравану без Concat та зайвих копіювань.
         /// </summary>
-        private static IEnumerable<Thing> GetThingOnPawn(IEnumerable<Thing> pawns)
+        public static List<Thing> GetAllThings(Caravan caravan, bool thingOnPawn = false, bool withTransferFilter = true)
         {
-            return pawns.Cast<Pawn>().SelectMany(p =>
-                    p.EquippedWornOrInventoryThings
-                    .Concat(
-                        p.carryTracker != null && p.carryTracker.CarriedThing != null && p.carryTracker.CarriedThing.def.category != ThingCategory.Pawn
-                        ? new Thing[] { p.carryTracker.CarriedThing } : new Thing[0]
-                    ));
+            var rawPawns = caravan.PawnsListForReading;
+            var pawns = withTransferFilter ? FilterBeforeSendServer(rawPawns) : new List<Thing>(rawPawns);
+
+            List<Thing> goods;
+            if (thingOnPawn)
+            {
+                var onPawn = GetThingOnPawn(pawns);
+                goods = new List<Thing>(onPawn.Count + pawns.Count);
+                goods.AddRange(onPawn);
+                goods.AddRange(pawns);
+            }
+            else
+            {
+                var inv = CaravanInventoryUtility.AllInventoryItems(caravan);
+                goods = new List<Thing>(inv.Count + pawns.Count);
+                goods.AddRange(inv);
+                goods.AddRange(pawns);
+            }
+
+            return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
+        }
+
+        /// <summary>
+        /// Повертає всі речі карти.
+        /// </summary>
+        public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true)
+        {
+            var rawPawns = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer);
+            var pawns = withTransferFilter ? FilterBeforeSendServer(rawPawns) : new List<Thing>(rawPawns);
+
+            var reachableItems = CaravanFormingUtility.AllReachableColonyItems(map, allowEvenIfReserved: true);
+            var goods = new List<Thing>(reachableItems.Count + pawns.Count + (thingOnPawn ? pawns.Count * 2 : 0));
+            goods.AddRange(reachableItems);
+            goods.AddRange(pawns);
+
+            if (thingOnPawn)
+            {
+                goods.AddRange(GetThingOnPawn(pawns));
+            }
+
+            return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
+        }
+
+        /// <summary>
+        /// Витягнути всі речі пішака (зброя, одяг, інвентар, предмет у руках).
+        /// ОПТИМІЗАЦІЯ: обхід IEnumerable<Thing> через простий foreach без викликів LINQ.
+        /// </summary>
+        private static List<Thing> GetThingOnPawn(IEnumerable<Thing> pawns)
+        {
+            var result = new List<Thing>();
+            foreach (var thing in pawns)
+            {
+                if (thing is Pawn p)
+                {
+                    foreach (var item in p.EquippedWornOrInventoryThings)
+                    {
+                        result.Add(item);
+                    }
+
+                    if (p.carryTracker?.CarriedThing != null && p.carryTracker.CarriedThing.def.category != ThingCategory.Pawn)
+                    {
+                        result.Add(p.carryTracker.CarriedThing);
+                    }
+                }
+            }
+            return result;
         }
 
         public static List<Thing> GetAllThings(TradeThingsOnline storage)
         {
-            using (var gameError = GameUtils.NormalGameError())
+            using (GameUtils.NormalGameError())
             {
-                return storage.TradeThings.Things.Select(t => t.CreateThing()).ToList();
+                var things = storage.TradeThings.Things;
+                var res = new List<Thing>(things.Count);
+                for (int i = 0; i < things.Count; i++)
+                {
+                    res.Add(things[i].CreateThing());
+                }
+                return res;
             }
         }
 
-        public static CatchGameError NormalGameError() => new CatchGameError(errorText => 
+        public static CatchGameError NormalGameError() => new CatchGameError(errorText =>
             !errorText.Contains("during LoadingVars. pathRelToParent=/leader, parent")
             && !errorText.Contains("PostLoadInit on RimWorld.Pawn_IdeoTracker: System.NullReferenceException")
             );
 
         public static void ShortSetupForQuickTestPlay()
         {
-            // часткова копія
             Current.Game = new Game();
             Current.Game.InitData = new GameInitData();
             Current.Game.Scenario = ScenarioDefOf.Crashlanded.scenario;
@@ -646,29 +563,8 @@ namespace RimWorldOnlineCity
                 );
         }
 
-        /// <summary>
-        /// Шматки з SpawnSetup на карту, що не стосуються карти
-        /// </summary>
-        /// <param name="pawn"></param>
         public static void SpawnSetupOnCaravan(Pawn pawn)
         {
-            /*
-            if (Find.TickManager != null)
-            {
-                Find.TickManager.RegisterAllTickabilityFor(pawn);
-            }
-            StealAIDebugDrawer.Notify_ThingChanged(pawn);
-            if (pawn is IThingHolder && Find.ColonistBar != null)
-            {
-                Find.ColonistBar.MarkColonistsDirty();
-            }
-            if (pawn.def.receivesSignals)
-            {
-                Find.SignalManager.RegisterReceiver(pawn);
-            }
-            */
-            /*if (pawn.Faction != Faction.OfPlayer)
-                pawn.SetFaction(Faction.OfPlayer);*/
             if (!pawn.IsWorldPawn())
             {
                 Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
@@ -682,55 +578,47 @@ namespace RimWorldOnlineCity
             {
                 Find.ColonistBar.MarkColonistsDirty();
             }
-            /*
-            if (Find.TickManager != null)
-            {
-                Find.TickManager.RegisterAllTickabilityFor(pawn);
-            }
-            StealAIDebugDrawer.Notify_ThingChanged(pawn);
-            if (pawn is IThingHolder && Find.ColonistBar != null)
-            {
-                Find.ColonistBar.MarkColonistsDirty();
-            }
-            if (pawn.def.receivesSignals)
-            {
-                Find.SignalManager.RegisterReceiver(pawn);
-            }
-            if (pawn.IsWorldPawn())
-            {
-                Find.WorldPawns.RemovePawn(pawn);
-            }
-            */
         }
 
         /// <summary>
-        /// Отримуємо координати клітинки, куди звантажувати вантаж для вказаної карти.
-        /// Клітинка — центр складу. Склад вибирається як найкращий за:
-        /// має в назві слово "торг" або "trad", не смітник із назвою за замовчуванням, найбільший, за назвою
+        /// Пошук клітинки для вивантаження вантажу.
         /// </summary>
         public static IntVec3 GetTradeCell(Map map)
         {
-            // назва смітника за замовчуванням
             var labelDumping = "DumpingStockpile".Translate();
             var labelDumping2 = "DumpingStockpileLabel".Translate();
 
-            Zone zone = map.zoneManager.AllZones
-                .OrderBy(z =>
-                    (z.label.IndexOf("торг", StringComparison.OrdinalIgnoreCase) >= 0
-                    || z.label.IndexOf("trad", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "0" : "1")
-                    // намагаємося вибирати не смітник
-                    + (z.label.IndexOf(labelDumping, StringComparison.OrdinalIgnoreCase) == 0
-                    || z.label.IndexOf(labelDumping2, StringComparison.OrdinalIgnoreCase) == 0
-                    ? "1" : "0")
-                    + (100000000 - z.Cells.Count).ToString().PadLeft(10)
-                    + z.label)
-                .FirstOrDefault();
-            if (zone == null) return map.Center;
+            Zone bestZone = null;
+            int bestScore = int.MinValue;
 
-            var res = zone.Cells.Aggregate(new IntVec3(), (a, i) => { a.x += i.x; a.z += i.z; return a; });
-            res.x /= zone.Cells.Count;
-            res.z /= zone.Cells.Count;
+            var zones = map.zoneManager.AllZones;
+            for (int i = 0; i < zones.Count; i++)
+            {
+                var z = zones[i];
+                int score = 0;
+
+                bool isTrade = z.label.IndexOf("торг", StringComparison.OrdinalIgnoreCase) >= 0
+                    || z.label.IndexOf("trad", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (isTrade) score += 1000000;
+
+                bool isDumping = z.label.IndexOf(labelDumping, StringComparison.OrdinalIgnoreCase) == 0
+                    || z.label.IndexOf(labelDumping2, StringComparison.OrdinalIgnoreCase) == 0;
+                if (!isDumping) score += 100000;
+
+                score += Mathf.Clamp(z.Cells.Count, 0, 10000);
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestZone = z;
+                }
+            }
+
+            if (bestZone == null) return map.Center;
+
+            var res = bestZone.Cells.Aggregate(new IntVec3(), (a, cell) => { a.x += cell.x; a.z += cell.z; return a; });
+            res.x /= bestZone.Cells.Count;
+            res.z /= bestZone.Cells.Count;
             return res;
         }
 
@@ -740,9 +628,6 @@ namespace RimWorldOnlineCity
             return () => CellFinder.RandomSpawnCellForPawnNear(enterCell, map, 4);
         }
 
-        /// <summary>
-        /// CaravanEnterMapUtility.FindNearEdgeCell
-        /// </summary>
         private static IntVec3 FindNearEdgeCell(Map map, Predicate<IntVec3> extraCellValidator)
         {
             Predicate<IntVec3> baseValidator = (IntVec3 x) => x.Standable(map) && !x.Fogged(map);
@@ -769,64 +654,44 @@ namespace RimWorldOnlineCity
             return SpawnList(map, pawns, true, (p) => true, spawn, (p) => nextCell());
         }
 
-        // використовується тільки в ПВП
-        public static IntVec3 SpawnList<TE>(Map map, List<TE> pawns, bool attackCell
-            , Func<TE, bool> getPirate
-            , Action<Thing, TE> spawn = null
-            , Func<Thing, IntVec3> getCell = null)
+        public static IntVec3 SpawnList<TE>(Map map, List<TE> pawns, bool attackCell, Func<TE, bool> getPirate, Action<Thing, TE> spawn = null, Func<Thing, IntVec3> getCell = null)
             where TE : ThingEntry
         {
             if (MainHelper.DebugMode) Loger.Log("SpawnList...");
 
-            // на основі UpdateWorldController.DropToWorldObjectDo
-            var factionPirate = Find.FactionManager.AllFactions.FirstOrDefault(f => f.def.defName == "Pirate")
-                    ?? Find.FactionManager.OfAncientsHostile; //SessionClientController.Data.FactionPirate;
-
             IntVec3 ret = new IntVec3();
             ModBaseData.RunMainThreadSync(() =>
             {
-                Thing thinXZ;
                 for (int i = 0; i < pawns.Count; i++)
                 {
                     var thing = pawns[i];
-                    //GenSpawn.Spawn(pawn, cell, map, Rot4.Random, WipeMode.Vanish, false);
-
                     if (getPirate(thing)) thing.Affiliation = PawnAffiliation.Enemy;
-                    if (MainHelper.DebugMode) Loger.Log("Prepare... " + thing.Affiliation.ToString());
+                    if (MainHelper.DebugMode) Loger.Log("Prepare... " + thing.Affiliation);
                     var thin = thing.CreateThing();
 
                     var cell = getCell != null ? getCell(thin) : thin.Position;
                     if (i == 0) ret = cell;
 
-                    //if (MainHelper.DebugMode) 
-                    try
+                    if (thin is Pawn pawn)
                     {
-                        Loger.Log("Spawn... " + thin.Label);
-                    }
-                    catch
-                    {
-                        Loger.Log("Spawn... ");
-                    }
-                    if (thin is Pawn)
-                    {
-                        if (MainHelper.DebugMode) Loger.Log("Pawn... " + thin.Position.x + " " + thin.Position.y);
                         try
                         {
-                            GenSpawn.Spawn((Pawn)thin, cell, map);
+                            GenSpawn.Spawn(pawn, cell, map);
                         }
                         catch (Exception exp)
                         {
-                            Loger.Log("SpawnList Exception " + thing.Name + ": " + exp.ToString(), Loger.LogLevel.ERROR);
+                            Loger.Log("SpawnList Exception " + thing.Name + ": " + exp, Loger.LogLevel.ERROR);
                             Thread.Sleep(5);
-                            GenSpawn.Spawn((Pawn)thin, cell, map);
+                            GenSpawn.Spawn(pawn, cell, map);
                         }
                     }
                     else
-                        GenDrop.TryDropSpawn(thin, cell, map, ThingPlaceMode.Near, out thinXZ, null);
-                    if (spawn != null) spawn(thin, thing);
-                    if (MainHelper.DebugMode) Loger.Log("Spawn...OK");
-                }
+                    {
+                        GenDrop.TryDropSpawn(thin, cell, map, ThingPlaceMode.Near, out _, null);
+                    }
 
+                    spawn?.Invoke(thin, thing);
+                }
             });
             return ret;
         }
@@ -834,165 +699,110 @@ namespace RimWorldOnlineCity
         public static void PawnDestroy(Pawn pawn)
         {
             pawn.Destroy(DestroyMode.Vanish);
-            Find.WorldPawns.RemovePawn(pawn); // неперевірене повне видалення, щоб не з'являлися клони пешки після повернення її назад
+            Find.WorldPawns.RemovePawn(pawn);
         }
 
         public static void ApplyState(Thing thing, AttackThingState state, bool pawnHealthStateDead = false)
         {
-            // корисне з гри: RecoverFromUnwalkablePositionOrKill
             if (state.StackCount > 0 && thing.stackCount != state.StackCount)
             {
-                Loger.Log("Client ApplyState Set StackCount " + thing.stackCount.ToString() + " -> " + state.StackCount.ToString());
                 thing.stackCount = state.StackCount;
             }
 
             if (thing.Position.x != state.Position.x || thing.Position.z != state.Position.z)
             {
                 thing.Position = state.Position.Get();
-                if (thing is Pawn)
+                if (thing is Pawn pawn)
                 {
-                    var pawn = (Pawn)thing;
-                    // після 1.4
                     if (CellFinder.TryFindBestPawnStandCell(pawn, out var cell))
                     {
                         pawn.Position = cell;
                         pawn.Notify_Teleported(endCurrentJob: true, resetTweenedPos: false);
                     }
-                    /* що було до оновлення 1.4:
-                    try
-                    {
-                        pawn.Notify_Teleported(true, true);
-                    }
-                    catch (Exception ext)
-                    {
-                        Loger.Log("Client ApplyState Exception " + ext.ToString(), Loger.LogLevel.ERROR);
-                    }
-                    pawn.Drawer.DrawTrackerTick();
-                    */
                 }
             }
 
-            if (thing is Fire)
+            if (thing is Fire fire)
             {
-                (thing as Fire).fireSize = (float)state.HitPoints / 10000f;
+                fire.fireSize = (float)state.HitPoints / 10000f;
             }
-            else
+            else if (thing.def.useHitPoints)
             {
-                if (thing.def.useHitPoints)
-                {
-                    Loger.Log("Client ApplyState Set HitPoints " + thing.HitPoints.ToString() + " -> " + state.HitPoints.ToString());
-                    thing.HitPoints = state.HitPoints;
-                }
+                thing.HitPoints = state.HitPoints;
             }
 
-            if (thing is Pawn)
+            if (thing is Pawn targetPawn)
             {
-                var pawn = thing as Pawn;
-                if ((int)pawn.health.State != (int)state.DownState)
+                if ((int)targetPawn.health.State != (int)state.DownState)
                 {
-                    if (pawn.health.State == PawnHealthState.Dead)
+                    if (targetPawn.health.State == PawnHealthState.Dead)
                     {
-                        Loger.Log("Client ApplyState Set pawn state is Dead! Error to change on " + state.DownState.ToString());
+                        Loger.Log("Client ApplyState Set pawn state is Dead! Error to change on " + state.DownState);
                     }
                     else if (state.DownState == AttackThingState.PawnHealthState.Dead)
                     {
                         if (pawnHealthStateDead)
                         {
-                            Loger.Log("Client ApplyState Set pawn state (1): " + pawn.health.State.ToString() + " -> " + state.DownState.ToString());
-                            HealthUtility.DamageUntilDead(pawn);
-                            //PawnKill(pawn);
+                            HealthUtility.DamageUntilDead(targetPawn);
                         }
                     }
                     else if (state.DownState == AttackThingState.PawnHealthState.Down)
                     {
-                        Loger.Log("Client ApplyState Set pawn state (2): " + pawn.health.State.ToString() + " -> " + state.DownState.ToString());
-                        // Застосовуємо наркоз?
-                        HealthUtility.DamageUntilDowned(pawn, false);
+                        HealthUtility.DamageUntilDowned(targetPawn, false);
                     }
                     else
                     {
-                        Loger.Log("Client ApplyState Set pawn state (3): " + pawn.health.State.ToString() + " -> " + state.DownState.ToString());
-                        // повне лікування
-                        pawn.health.Notify_Resurrected();
+                        targetPawn.health.Notify_Resurrected();
                     }
                 }
             }
-
         }
-        /*
-        public static void PawnKill(Pawn pawn)
-        {
-            // замінено на HealthUtility.DamageUntilDead(p);
-            DamageDef crush = DamageDefOf.Crush;
-            float amount = 99999f;
-            float armorPenetration = 999f;
-            BodyPartRecord brain = pawn.health.hediffSet.GetBrain();
-            DamageInfo damageInfo = new DamageInfo(crush, amount, armorPenetration, -1f, null, brain, null, DamageInfo.SourceCategory.Collapse, null);
-            pawn.TakeDamage(damageInfo);
-            if (!pawn.Dead)
-            {
-                pawn.Kill(new DamageInfo?(damageInfo), null);
-            }
-        }
-        */
 
         private static bool DialodShowing = false;
-        private static Queue<Action> DialodQueue = new Queue<Action>();
+        private static readonly Queue<Action> DialodQueue = new Queue<Action>();
 
-        public static void ShowDialodOKCancel(string title
-            , string text
-            , Action ActOK
-            , Action ActCancel
-            , GlobalTargetInfo? target = null
-            , string AltText = null
-            , Action ActAlt = null)
+        public static void ShowDialodOKCancel(string title, string text, Action ActOK, Action ActCancel, GlobalTargetInfo? target = null, string AltText = null, Action ActAlt = null)
         {
             DiaNode diaNode = new DiaNode(text);
 
             if (target != null)
             {
-                var diaOptionT = new DiaOption("JumpToLocation".Translate()); // "Перейти до місця"
-                diaOptionT.action = () =>
+                var diaOptionT = new DiaOption("JumpToLocation".Translate())
                 {
-                    CameraJumper.TryJumpAndSelect(target.Value);
+                    action = () => CameraJumper.TryJumpAndSelect(target.Value)
                 };
                 diaNode.options.Add(diaOptionT);
             }
 
-            DiaOption diaOption = new DiaOption("OCity_GameUtils_Ok".Translate()); // OK -> Прийняти передачу
-            diaOption.action = () => { ActOK(); DialodQueueGoNext(); };
-            /*{ спавн пешки бігучої "на допомогу"
-                GenSpawn.Spawn(refugee, spawnSpot, map, WipeMode.Vanish);
-                refugee.SetFaction(Faction.OfPlayer, null);
-                CameraJumper.TryJump(refugee);
-                QueuedIncident qi = new QueuedIncident(new FiringIncident(IncidentDefOf.RaidEnemy, null, raidParms), Find.TickManager.TicksGame + IncidentWorker_RefugeeChased.RaidDelay.RandomInRange, 0);
-                Find.Storyteller.incidentQueue.Add(qi);
-
-            };*/
-            diaOption.resolveTree = true;
+            DiaOption diaOption = new DiaOption("OCity_GameUtils_Ok".Translate())
+            {
+                action = () => { ActOK(); DialodQueueGoNext(); },
+                resolveTree = true
+            };
             diaNode.options.Add(diaOption);
 
             if (!string.IsNullOrEmpty(AltText) && ActAlt != null)
             {
-                diaOption = new DiaOption(AltText);
-                diaOption.action = () => { ActAlt(); DialodQueueGoNext(); };
-                diaOption.resolveTree = true;
+                diaOption = new DiaOption(AltText)
+                {
+                    action = () => { ActAlt(); DialodQueueGoNext(); },
+                    resolveTree = true
+                };
                 diaNode.options.Add(diaOption);
             }
 
             if (ActCancel != null)
             {
-                diaOption = new DiaOption("RejectLetter".Translate());
-                // RansomDemand_Reject це "Відмовитися"
-                // RejectLetter це Відхилити
-                diaOption.action = () => { ActCancel(); DialodQueueGoNext(); };
-                diaOption.resolveTree = true;
+                diaOption = new DiaOption("RejectLetter".Translate())
+                {
+                    action = () => { ActCancel(); DialodQueueGoNext(); },
+                    resolveTree = true
+                };
                 diaNode.options.Add(diaOption);
             }
 
             Action show = () => Find.WindowStack.Add(new Dialog_NodeTreeWithFactionInfo(diaNode, null, true, true, title));
 
-            // якщо вікно одне, то запускаємо, якщо це вікно створюється при вже відкритому іншому, то ставимо в чергу
             lock (DialodQueue)
             {
                 if (!DialodShowing)
@@ -1022,53 +832,35 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Малюємо кружок із цифрою. Код із мода ResearchTree (MIT license)
-        /// </summary>
-        /// <param name="canvas"></param>
-        /// <param name="main"></param>
-        /// <param name="background"></param>
-        /// <param name="label"></param>
         public static void DrawLabel(Rect canvas, Color main, Color background, int label)
         {
-            // малюємо кольоровий тег
             GUI.color = main;
             GUI.DrawTexture(canvas, CircleFill);
 
-            // якщо це не перший у лінійці, робимо центр тегу сірим
             if (background != main)
             {
                 GUI.color = background;
                 GUI.DrawTexture(canvas.ContractedBy(2f), CircleFill);
             }
 
-            // малюємо номер черги
             GUI.color = Color.white;
             Text.Anchor = TextAnchor.MiddleCenter;
             Widgets.Label(canvas, label.ToString());
             Text.Anchor = TextAnchor.UpperLeft;
         }
 
-        /// <summary>
-        /// Шукаємо річ за зразком і вибираємо потрібну кількість. Вибір починається з карти з максимальною кількістю речей.
-        /// </summary>
-        /// <param name="def">Шуканий зразок</param>
-        /// <param name="select">Скільки вибрати в thingsMaxByMap. Якщо не вистачає, то буде вибрано стільки, скільки є</param>
-        /// <param name="getMaxByMap">Виводити не загальну суму, а максимальну кількість на одній з карт.</param>
-        /// <param name="thingsMaxByMap">Якщо не null, заповнюється для карти з максимальною кількістю. Не впливає на видалення.</param>
-        /// <returns>Кількість знайдених речей до видалення. Якщо це число менше destroy, отже видалення взагалі не проводилося.</returns>
         public static int FindThings(ThingDef def, int select, bool getMaxByMap, out Dictionary<Thing, int> thingsSelect)
         {
             int countAll = 0;
             int countMax = 0;
             List<Pair<List<Thing>, int>> maps = new List<Pair<List<Thing>, int>>();
-            for (int i = 0; i < Current.Game.Maps.Count; i++)
+            var gameMaps = Current.Game.Maps;
+            for (int i = 0; i < gameMaps.Count; i++)
             {
-                var m = Current.Game.Maps[i];
+                var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    List<Thing> things = GameUtils.GetAllThings(m)
-                        .Where(t => t.def == def).ToList();
+                    List<Thing> things = GameUtils.GetAllThings(m).Where(t => t.def == def).ToList();
                     var c = things.Sum(t => t.stackCount);
                     maps.Add(new Pair<List<Thing>, int>(things, c));
                     countAll += c;
@@ -1104,25 +896,18 @@ namespace RimWorldOnlineCity
             return count;
         }
 
-        /// <summary>
-        /// Шукаємо річ за зразком і видаляємо потрібну кількість. Видалення починається з карти з максимальною кількістю речей.
-        /// </summary>
-        /// <param name="def">Шуканий зразок</param>
-        /// <param name="destroy">Скільки видалити. Не видаляє взагалі нічого, якщо потрібної кількості не буде</param>
-        /// <param name="getMaxByMap">Виводити не загальну суму, а максимальну кількість на одній з карт. Впливає на видалення.</param>
-        /// <returns>Кількість знайдених речей до видалення. Якщо це число менше destroy, отже видалення взагалі не проводилося.</returns>
         public static int FindThings(ThingDef def, int destroy, bool getMaxByMap)
         {
             int countAll = 0;
             int countMax = 0;
             List<Pair<List<Thing>, int>> maps = new List<Pair<List<Thing>, int>>();
-            for (int i = 0; i < Current.Game.Maps.Count; i++)
+            var gameMaps = Current.Game.Maps;
+            for (int i = 0; i < gameMaps.Count; i++)
             {
-                var m = Current.Game.Maps[i];
+                var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    List<Thing> things = GameUtils.GetAllThings(m)
-                        .Where(t => t.def == def).ToList();
+                    List<Thing> things = GameUtils.GetAllThings(m).Where(t => t.def == def).ToList();
                     var c = things.Sum(t => t.stackCount);
                     maps.Add(new Pair<List<Thing>, int>(things, c));
                     countAll += c;
@@ -1155,35 +940,16 @@ namespace RimWorldOnlineCity
             return count;
         }
 
-        /*
-        public static Dictionary<string, Scenario> AllScenarios()
-        {
-            var res = new Dictionary<string, Scenario>();
-
-            ScenarioLister.AllScenarios().ToList();
-
-            foreach (ScenarioDef allDef in DefDatabase<ScenarioDef>.AllDefs)
-            {
-                if (!res.ContainsKey(allDef.defName)) res.Add(allDef.defName, allDef.scenario);
-            }
-            foreach (Scenario item2 in ScenarioFiles.AllScenariosWorkshop)
-            {
-                if (!res.ContainsKey(item2.fileName)) res.Add(item2.fileName, item2);
-            }
-            foreach (Scenario item in ScenarioFiles.AllScenariosLocal)
-            {
-                if (!res.ContainsKey(item.fileName)) res.Add(item.fileName, item);
-            }
-
-            return res;
-        }*/
-
+        /// <summary>
+        /// Повертає оповідача за ім'ям без виділення enumerator-ів.
+        /// </summary>
         public static StorytellerDef GetStorytallerByName(string name)
         {
-            foreach (StorytellerDef teller in DefDatabase<StorytellerDef>.AllDefs)
+            var defs = DefDatabase<StorytellerDef>.AllDefsListForReading;
+            for (int i = 0; i < defs.Count; i++)
             {
-                if (teller.defName == name)
-                    return teller;
+                if (defs[i].defName == name)
+                    return defs[i];
             }
             return null;
         }
@@ -1191,76 +957,60 @@ namespace RimWorldOnlineCity
         public static Dictionary<string, Scenario> AllowedScenarios()
         {
             var res = new Dictionary<string, Scenario>();
-
-            ScenarioLister.AllScenarios().ToList();
-
-            foreach (ScenarioDef allDef in DefDatabase<ScenarioDef>.AllDefs)
+            var allDefs = DefDatabase<ScenarioDef>.AllDefsListForReading;
+            for (int i = 0; i < allDefs.Count; i++)
             {
-                //Loger.Log($"AllowedScenarios {allDef.defName}={allDef.LabelCap}={allDef.fileName}=Name:{allDef.modContentPack.Name}=RootDir:{allDef.modContentPack.RootDir}");
-                if (allDef.modContentPack.Name != "OnlineCity fork") continue;
-                //// старе перерахування всіх ванільних
-                //if (allDef.defName == "Crashlanded"
-                //    || allDef.defName == "Tutorial"
-                //    || allDef.defName == "LostTribe"
-                //    || allDef.defName == "TheRichExplorer"
-                //    || allDef.defName == "NakedBrutality")
-                //{
-                //    continue;
-                //}
+                var allDef = allDefs[i];
+                if (allDef.modContentPack?.Name != "OnlineCity fork") continue;
                 if (!res.ContainsKey(allDef.defName))
                 {
                     res.Add(allDef.defName, allDef.scenario);
-                    //Loger.Log($"AllowedScenarios ok");
                 }
             }
-
             return res;
         }
 
         public static Command_Action CommandShowMap(BaseOnline that)
         {
-            // Кнопка відкриття зображення бази
             if (SessionClientController.Data.GeneralSettings.ColonyScreenEnable)
             {
-                var command_Action = new Command_Action();
-                command_Action.defaultLabel = "CommandShowMap".Translate();
-                command_Action.defaultDesc = "CommandShowMapDesc".Translate();
-                command_Action.icon = GeneralTexture.BaseOnlineButtonShowMap;
+                var command_Action = new Command_Action
+                {
+                    defaultLabel = "CommandShowMap".Translate(),
+                    defaultDesc = "CommandShowMapDesc".Translate(),
+                    icon = GeneralTexture.BaseOnlineButtonShowMap
+                };
 
                 var keyColonyScreen = "cs_" + that.OnlineWObject.LoginOwner + "@" + that.OnlineWObject.PlaceServerId;
-
                 var time = GeneralTexture.Get.GetLoadTimeByName(keyColonyScreen);
-                // з сервера не намагалися завантажувати
                 bool isNotCheck = GeneralTexture.Get.IsNotCheckByLoadTime(time);
-                // робили запит на сервер — немає даних
                 bool isNotData = GeneralTexture.Get.IsNotDataByLoadTime(time);
 
                 if (!that.IsOnline && that.ImageBaseWhenOwnerOffline != null)
                 {
-                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner; // Відкрийте зображення бази гравця
+                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner;
                 }
                 else if (isNotData)
                 {
-                    command_Action.defaultDesc = "OC_DataNotAvailable".Translate(); // Дані недоступні 
+                    command_Action.defaultDesc = "OC_DataNotAvailable".Translate();
                     command_Action.disabled = true;
                 }
                 else if (isNotCheck)
                 {
-                    command_Action.defaultDesc = "OC_ImageBase2".Translate() + " " + that.OnlineWObject.LoginOwner; // Натисніть для завантаження зображення бази гравця
+                    command_Action.defaultDesc = "OC_ImageBase2".Translate() + " " + that.OnlineWObject.LoginOwner;
                 }
                 else if (GeneralTexture.UpdateSecondColonyScreen - (int)time.TotalSeconds < 0)
                 {
-                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner // Відкрийте зображення бази гравця
-                        + " " + Environment.NewLine + "OC_ImageBase4".Translate(); // І перевірити наявність оновлень
+                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner
+                        + " " + Environment.NewLine + "OC_ImageBase4".Translate();
                 }
                 else
                 {
                     var showSec = GeneralTexture.UpdateSecondColonyScreen - (int)time.TotalSeconds;
-                    showSec -= showSec % 5 + 5; // інакше підказка мерехтить щосекунди
-                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner // Відкрийте зображення бази гравця
-                        + ". " + Environment.NewLine + "OC_ImageBase6".Translate() + " " + showSec + " " + "OC_Seconds".Translate(); // Перевірка оновлень доступна через 5 секунд
+                    showSec -= showSec % 5 + 5;
+                    command_Action.defaultDesc = "OC_ImageBase1".Translate() + " " + that.OnlineWObject.LoginOwner
+                        + ". " + Environment.NewLine + "OC_ImageBase6".Translate() + " " + showSec + " " + "OC_Seconds".Translate();
                 }
-                //command_Action.defaultDesc = command_Action.defaultDesc + Environment.NewLine + (int)time.TotalSeconds;
 
                 command_Action.action = delegate
                 {
@@ -1292,7 +1042,6 @@ namespace RimWorldOnlineCity
                             }
                             else
                             {
-                                // перевіряємо, що запит завершився і картинки немає, оскільки немає результату
                                 if (!isLoading)
                                 {
                                     formView.TextShowOnUp = false;
@@ -1313,15 +1062,12 @@ namespace RimWorldOnlineCity
             return null;
         }
 
-
-
         public static int DistanceBetweenTile(int start, int end)
         {
             var key = new Pair<int, int>(start, end);
             if (!SessionClientController.Data.DistanceBetweenTileCache.TryGetValue(key, out int res))
             {
                 res = Find.WorldGrid.TraversalDistanceBetween(start, end);
-
                 SessionClientController.Data.DistanceBetweenTileCache[key] = res;
             }
             return res;
@@ -1329,8 +1075,8 @@ namespace RimWorldOnlineCity
 
         public static List<Thing> GetCashlessBalanceThingList(float cashlessBalance)
         {
-            if (cashlessBalance > 0) return new List<Thing>() { GetCashlessBalanceThing(cashlessBalance) };
-            else return new List<Thing>();
+            if (cashlessBalance > 0) return new List<Thing>(1) { GetCashlessBalanceThing(cashlessBalance) };
+            return new List<Thing>(0);
         }
 
         public static Thing GetCashlessBalanceThing(float cashlessBalance)
@@ -1355,7 +1101,7 @@ namespace RimWorldOnlineCity
 
         public static bool isBuilding(Thing thing)
         {
-            if(thing.def.category == ThingCategory.Building && thing.def.destroyable)
+            if (thing.def.category == ThingCategory.Building && thing.def.destroyable)
             {
                 if (thing.def.building.IsDeconstructible && thing.def.building.uninstallWork > 0)
                     return true;
@@ -1367,18 +1113,12 @@ namespace RimWorldOnlineCity
         {
             switch (h)
             {
-                case Hilliness.Flat:
-                    return "Hilliness_Flat";
-                case Hilliness.SmallHills:
-                    return "Hilliness_SmallHills";
-                case Hilliness.LargeHills:
-                    return "Hilliness_LargeHills";
-                case Hilliness.Mountainous:
-                    return "Hilliness_Mountainous";
-                case Hilliness.Impassable:
-                    return "Hilliness_Impassable";
-                default:
-                    return h.ToString();
+                case Hilliness.Flat: return "Hilliness_Flat";
+                case Hilliness.SmallHills: return "Hilliness_SmallHills";
+                case Hilliness.LargeHills: return "Hilliness_LargeHills";
+                case Hilliness.Mountainous: return "Hilliness_Mountainous";
+                case Hilliness.Impassable: return "Hilliness_Impassable";
+                default: return h.ToString();
             }
         }
 
@@ -1387,24 +1127,30 @@ namespace RimWorldOnlineCity
             var ti = new GlobalTargetInfo(wo);
             CameraJumper.TryJumpAndSelect(ti);
         }
+
         public static void CameraJump(int tile)
         {
             var ti = new GlobalTargetInfo(tile);
             CameraJumper.TryJumpAndSelect(ti);
         }
+
         public static bool CameraJumpWorldObject(int tile)
         {
-            var wos = ExchengeUtils.WorldObjectsByTile(tile)
-                .Where(o => o is TradeThingsOnline
-                    || o is WorldObjectBaseOnline
-                    || (o.Faction?.IsPlayer ?? false) && (o is Settlement || o is Caravan))
-                .ToList();
-            var woi = wos.FirstOrDefault(o => o is TradeThingsOnline)
-                ?? wos.FirstOrDefault(o => (o.Faction?.IsPlayer ?? false) && (o is Settlement || o is Caravan))
-                ?? wos.FirstOrDefault(o => o is WorldObjectBaseOnline)
-                ?? wos.FirstOrDefault();
-            if (woi == null) return false;
-            GameUtils.CameraJump(woi);
+            var list = ExchengeUtils.WorldObjectsByTile(tile);
+            WorldObject target = null;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                var o = list[i];
+                if (o is TradeThingsOnline) { target = o; break; }
+                if ((o.Faction?.IsPlayer ?? false) && (o is Settlement || o is Caravan)) { target = o; }
+                else if (target == null && o is WorldObjectBaseOnline) { target = o; }
+            }
+
+            if (target == null && list.Count > 0) target = list[0];
+            if (target == null) return false;
+
+            CameraJump(target);
             return true;
         }
     }
