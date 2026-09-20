@@ -1,12 +1,14 @@
 ﻿using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading;
 
 namespace OCUnion
 {
+    /// <summary>
+    /// Високопродуктивний таймер періодичних фонових завдань.
+    /// Працює на базі подій синхронізації без постійного навантаження на процесор (busy-wait).
+    /// </summary>
     public class WorkTimer
     {
         private class WorkTimerData
@@ -16,8 +18,10 @@ namespace OCUnion
             public DateTime LastRun;
         }
 
-        private List<WorkTimerData> Timers;
+        private readonly List<WorkTimerData> Timers;
+        private readonly AutoResetEvent _wakeEvent = new AutoResetEvent(false);
         private int Index;
+
         public bool IsStop { get; private set; } = false;
         public bool Pause { get; set; } = false;
         public Thread ThreadDo { get; private set; }
@@ -27,23 +31,30 @@ namespace OCUnion
         {
             Timers = new List<WorkTimerData>();
             Index = 0;
-            ThreadDo = new Thread(Do);
-            ThreadDo.IsBackground = true;
+            ThreadDo = new Thread(Do)
+            {
+                IsBackground = true,
+                Name = "OC_WorkTimerThread"
+            };
             ThreadDo.Start();
         }
 
         /// <summary>
-        /// После остановки невозможно продолжить работу, класс должен быть пересоздан
+        /// Повна зупинка таймера без блокувань.
         /// </summary>
         public void Stop()
         {
             IsStop = true;
-            Timers = new List<WorkTimerData>(); //без блокировки это может вызвать исключение, но это допустимо, т.к. останавливаем, а блокировка недопкустима
+            _wakeEvent.Set();
+            lock (Timers)
+            {
+                Timers.Clear();
+            }
         }
 
         public object Add(long interval, Action action)
         {
-            var item = new WorkTimerData()
+            var item = new WorkTimerData
             {
                 Interval = interval,
                 Act = action,
@@ -53,76 +64,100 @@ namespace OCUnion
             {
                 Timers.Add(item);
             }
+            _wakeEvent.Set();
             return item;
         }
 
         public void Remove(object obj)
         {
-            var item = obj as WorkTimerData;
-            if (item == null) return;
+            if (!(obj is WorkTimerData item)) return;
             lock (Timers)
             {
                 Timers.Remove(item);
             }
+            _wakeEvent.Set();
         }
 
         private void Do()
         {
-            var needSleep = true;
             while (!IsStop)
             {
                 if (Pause)
                 {
-                    Thread.Sleep(1);
+                    _wakeEvent.WaitOne(50);
                     continue;
                 }
-                if (needSleep) Thread.Sleep(1);
-                needSleep = true;
-                try
+
+                Action actionToRun = null;
+                int waitMs = 50;
+
+                lock (Timers)
                 {
-                    lock (Timers)
+                    if (Timers.Count > 0)
                     {
-                        if (Timers.Count == 0) continue;
                         var now = DateTime.UtcNow;
                         LastLoop = now;
-                        var curIndex = Index;
-                        while (true)
+
+                        long minDelay = long.MaxValue;
+                        WorkTimerData targetItem = null;
+
+                        int count = Timers.Count;
+                        for (int i = 0; i < count; i++)
                         {
-                            var item = Timers[curIndex++];
-                            if (curIndex >= Timers.Count) curIndex = 0;
-                            if (item.LastRun.AddMilliseconds(item.Interval) < now)
+                            var idx = (Index + i) % count;
+                            var item = Timers[idx];
+                            var elapsed = (long)(now - item.LastRun).TotalMilliseconds;
+                            var remaining = item.Interval - elapsed;
+
+                            if (remaining <= 0)
                             {
-                                //выполнение
-                                item.LastRun = now;
-                                DoItem(item.Act);
-                                //записываем индекс с которого начнем цикл в следующий раз
-                                Index = curIndex;
-                                needSleep = false;
+                                targetItem = item;
+                                Index = (idx + 1) % count;
                                 break;
                             }
-                            //если ничего не выполняли, то проверяем, не завешен ли цикл
-                            if (IsStop || curIndex == Index) break;
+
+                            if (remaining < minDelay)
+                            {
+                                minDelay = remaining;
+                            }
+                        }
+
+                        if (targetItem != null)
+                        {
+                            targetItem.LastRun = now;
+                            actionToRun = targetItem.Act;
+                            waitMs = 0; // Наступна дія готова до перевірки
+                        }
+                        else
+                        {
+                            waitMs = (int)Math.Min(Math.Max(1, minDelay), 50);
                         }
                     }
                 }
-                catch
+
+                // ОПТИМІЗАЦІЯ: виконання делегата строго ПОЗА МЕЖАМИ lock (Timers)
+                if (actionToRun != null)
                 {
+                    DoItem(actionToRun);
+                }
+                else
+                {
+                    // ОПТИМІЗАЦІЯ: потік чекає точного настання наступного таймера замість Thread.Sleep(1)
+                    _wakeEvent.WaitOne(waitMs);
                 }
             }
-
         }
 
         private void DoItem(Action action)
         {
             try
             {
-                action(); //выполняем всё в потоке таймера
+                action();
             }
             catch (Exception e)
             {
                 ExceptionUtil.ExceptionLog(e, "WorkTimer");
             }
         }
-
     }
 }
