@@ -7,7 +7,6 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses.Harmony;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Transfer;
 using UnityEngine;
 using Verse;
@@ -35,6 +34,42 @@ namespace RimWorldOnlineCity
 
         public static bool ExistsEnemyPawns => gameProgress?.ExistsEnemyPawns == true;
 
+        #region Ключі швидкого хешування (O(1) замість LINQ Any)
+
+        private readonly struct WorldObjectKey : IEquatable<WorldObjectKey>
+        {
+            public readonly int Tile;
+            public readonly string Name;
+
+            public WorldObjectKey(int tile, string name)
+            {
+                Tile = tile;
+                Name = name ?? string.Empty;
+            }
+
+            public bool Equals(WorldObjectKey other) => Tile == other.Tile && string.Equals(Name, other.Name, StringComparison.Ordinal);
+            public override bool Equals(object obj) => obj is WorldObjectKey other && Equals(other);
+            public override int GetHashCode() => (Tile * 397) ^ StringComparer.Ordinal.GetHashCode(Name);
+        }
+
+        private readonly struct FactionKey : IEquatable<FactionKey>
+        {
+            public readonly int LoadID;
+            public readonly string DefName;
+
+            public FactionKey(int loadID, string defName)
+            {
+                LoadID = loadID;
+                DefName = defName ?? string.Empty;
+            }
+
+            public bool Equals(FactionKey other) => LoadID == other.LoadID && string.Equals(DefName, other.DefName, StringComparison.Ordinal);
+            public override bool Equals(object obj) => obj is FactionKey other && Equals(other);
+            public override int GetHashCode() => (LoadID * 397) ^ StringComparer.Ordinal.GetHashCode(DefName);
+        }
+
+        #endregion
+
         #region Збір даних у головному потоці гри
 
         public static List<WorldObject> allWorldObjects;
@@ -55,14 +90,16 @@ namespace RimWorldOnlineCity
         {
             try
             {
-                gameProgress = new PlayerGameProgress() { Pawns = new List<PawnStat>() };
+                gameProgress = new PlayerGameProgress { Pawns = new List<PawnStat>() };
 
                 allWorldObjects = GameUtils.GetAllWorldObjects();
                 var cacheColonists = new Dictionary<Map, CacheMap>();
                 var tmpMap = new Dictionary<WorldObjectEntry, Map>();
                 WObjects = new List<WorldObjectEntry>(allWorldObjects.Count);
 
-                // Однопрохідний збір власних об'єктів без зайвих проміжних LINQ-масивів
+                float totalMarketValue = 0f;
+
+                // ОПТИМІЗАЦІЯ: Збір об'єктів та підсумовування вартості за один прохід
                 for (int i = 0; i < allWorldObjects.Count; i++)
                 {
                     var o = allWorldObjects[i];
@@ -74,53 +111,52 @@ namespace RimWorldOnlineCity
                             tmpMap.Add(entry, mp.Map);
                         }
                         WObjects.Add(entry);
+                        totalMarketValue += entry.MarketValue + entry.MarketValuePawn;
                     }
                 }
 
-                // Розподіл безготівкового балансу пропорційно сумарній вартості поселень
-                float totalMarketValue = 0f;
-                for (int i = 0; i < WObjects.Count; i++)
-                {
-                    totalMarketValue += WObjects[i].MarketValue + WObjects[i].MarketValuePawn;
-                }
+                var patchMap = new Dictionary<Map, float>();
+                var wealthFactor = (float)SessionClientController.Data.GeneralSettings.ExchengePrecentWealthForIncident / 1000f;
 
+                // ОПТИМІЗАЦІЯ: Об'єднання розподілу балансу та формування patchMap в один цикл
                 if (totalMarketValue > 0)
                 {
                     var cashlessBalance = Math.Abs(SessionClientController.Data.CashlessBalance);
                     var storageBalance = Math.Abs(SessionClientController.Data.StorageBalance);
+
                     for (int i = 0; i < WObjects.Count; i++)
                     {
                         var wo = WObjects[i];
                         var val = wo.MarketValue + wo.MarketValuePawn;
                         wo.MarketValueBalance = cashlessBalance * val / totalMarketValue;
                         wo.MarketValueStorage = storageBalance * val / totalMarketValue;
+
+                        if (wo.Type == WorldObjectEntryType.Base && tmpMap.TryGetValue(wo, out var map) && map != null)
+                        {
+                            patchMap[map] = (wo.MarketValueBalance + wo.MarketValueStorage) * wealthFactor;
+                        }
                     }
                 }
                 else
                 {
                     for (int i = 0; i < WObjects.Count; i++)
                     {
-                        WObjects[i].MarketValueBalance = 0;
-                        WObjects[i].MarketValueStorage = 0;
+                        var wo = WObjects[i];
+                        wo.MarketValueBalance = 0;
+                        wo.MarketValueStorage = 0;
+
+                        if (wo.Type == WorldObjectEntryType.Base && tmpMap.TryGetValue(wo, out var map) && map != null)
+                        {
+                            patchMap[map] = 0f;
+                        }
                     }
                 }
 
-                // Встановлення скоригованої вартості карти для розрахунку сили рейдів
-                var patchMap = new Dictionary<Map, float>();
-                var wealthFactor = (float)SessionClientController.Data.GeneralSettings.ExchengePrecentWealthForIncident / 1000f;
-                for (int i = 0; i < WObjects.Count; i++)
-                {
-                    var wo = WObjects[i];
-                    if (wo.Type == WorldObjectEntryType.Base && tmpMap.TryGetValue(wo, out var map) && map != null)
-                    {
-                        patchMap[map] = (wo.MarketValueBalance + wo.MarketValueStorage) * wealthFactor;
-                    }
-                }
                 MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth = patchMap;
             }
             catch (Exception ex)
             {
-                Loger.Log("Exception PrepareInMainThread: " + ex.ToString(), Loger.LogLevel.ERROR);
+                Loger.Log("Exception PrepareInMainThread: " + ex, Loger.LogLevel.ERROR);
             }
         }
         #endregion
@@ -180,7 +216,7 @@ namespace RimWorldOnlineCity
                 toServ.WObjects = WObjects;
                 LastSendMyWorldObjects = toServ.WObjects;
 
-                // ОПТИМІЗАЦІЯ: швидкий пошук видалених гравцем об'єктів O(N + M) через HashSet замість O(N * M)
+                // Швидкий пошук видалених гравцем об'єктів O(N + M)
                 if (ToDelete != null && WorldObjectEntrys != null && WorldObjectEntrys.Count > 0)
                 {
                     var presentIds = new HashSet<int>();
@@ -209,10 +245,12 @@ namespace RimWorldOnlineCity
 
             if (SessionClientController.Data.GeneralSettings.EquableWorldObjects)
             {
-                #region Відправка неігрових поселень (NPC)
+                #region Відправка неігрових поселень (NPC) - ОПТИМІЗАЦІЯ O(N+M)
                 try
                 {
                     var onlineWObjList = new List<WorldObject>();
+                    var currentKeySet = new HashSet<WorldObjectKey>();
+
                     if (allWorldObjects != null)
                     {
                         for (int i = 0; i < allWorldObjects.Count; i++)
@@ -221,23 +259,49 @@ namespace RimWorldOnlineCity
                             if (wo is Settlement && wo.HasName && !wo.Faction.IsPlayer)
                             {
                                 onlineWObjList.Add(wo);
+                                currentKeySet.Add(new WorldObjectKey(wo.Tile, wo.LabelCap));
                             }
                         }
                     }
 
                     if (!firstRun && LastWorldObjectOnline != null && LastWorldObjectOnline.Count > 0)
                     {
-                        toServ.WObjectOnlineToDelete = LastWorldObjectOnline
-                            .Where(WOnline => !onlineWObjList.Any(wo => ValidateOnlineWorldObject(WOnline, wo)))
-                            .ToList();
+                        var lastKeySet = new HashSet<WorldObjectKey>();
+                        for (int i = 0; i < LastWorldObjectOnline.Count; i++)
+                        {
+                            var obj = LastWorldObjectOnline[i];
+                            lastKeySet.Add(new WorldObjectKey(obj.Tile, obj.Name));
+                        }
 
-                        toServ.WObjectOnlineToAdd = onlineWObjList
-                            .Where(wo => !LastWorldObjectOnline.Any(WOnline => ValidateOnlineWorldObject(WOnline, wo)))
-                            .Select(obj => GetWorldObjects(obj))
-                            .ToList();
+                        var toDelete = new List<WorldObjectOnline>();
+                        for (int i = 0; i < LastWorldObjectOnline.Count; i++)
+                        {
+                            var item = LastWorldObjectOnline[i];
+                            if (!currentKeySet.Contains(new WorldObjectKey(item.Tile, item.Name)))
+                            {
+                                toDelete.Add(item);
+                            }
+                        }
+                        toServ.WObjectOnlineToDelete = toDelete;
+
+                        var toAdd = new List<WorldObjectOnline>();
+                        for (int i = 0; i < onlineWObjList.Count; i++)
+                        {
+                            var item = onlineWObjList[i];
+                            if (!lastKeySet.Contains(new WorldObjectKey(item.Tile, item.LabelCap)))
+                            {
+                                toAdd.Add(GetWorldObjects(item));
+                            }
+                        }
+                        toServ.WObjectOnlineToAdd = toAdd;
                     }
 
-                    toServ.WObjectOnlineList = onlineWObjList.Select(obj => GetWorldObjects(obj)).ToList();
+                    var resultList = new List<WorldObjectOnline>(onlineWObjList.Count);
+                    for (int i = 0; i < onlineWObjList.Count; i++)
+                    {
+                        resultList.Add(GetWorldObjects(onlineWObjList[i]));
+                    }
+                    toServ.WObjectOnlineList = resultList;
                     LastWorldObjectOnline = toServ.WObjectOnlineList;
                 }
                 catch (Exception e)
@@ -246,22 +310,54 @@ namespace RimWorldOnlineCity
                 }
                 #endregion
 
-                #region Відправка неігрових фракцій
+                #region Відправка неігрових фракцій - ОПТИМІЗАЦІЯ O(N+M)
                 try
                 {
                     if (!firstRun && LastFactionOnline != null && LastFactionOnline.Count > 0)
                     {
-                        toServ.FactionOnlineToDelete = LastFactionOnline
-                            .Where(FOnline => !factionList.Any(f => ValidateFaction(FOnline, f)))
-                            .ToList();
+                        var currentFactionKeys = new HashSet<FactionKey>();
+                        for (int i = 0; i < factionList.Count; i++)
+                        {
+                            var f = factionList[i];
+                            currentFactionKeys.Add(new FactionKey(f.loadID, f.def.defName));
+                        }
 
-                        toServ.FactionOnlineToAdd = factionList
-                            .Where(f => !LastFactionOnline.Any(FOnline => ValidateFaction(FOnline, f)))
-                            .Select(obj => GetFactions(obj))
-                            .ToList();
+                        var lastFactionKeys = new HashSet<FactionKey>();
+                        for (int i = 0; i < LastFactionOnline.Count; i++)
+                        {
+                            var f = LastFactionOnline[i];
+                            lastFactionKeys.Add(new FactionKey(f.loadID, f.DefName));
+                        }
+
+                        var fToDelete = new List<FactionOnline>();
+                        for (int i = 0; i < LastFactionOnline.Count; i++)
+                        {
+                            var item = LastFactionOnline[i];
+                            if (!currentFactionKeys.Contains(new FactionKey(item.loadID, item.DefName)))
+                            {
+                                fToDelete.Add(item);
+                            }
+                        }
+                        toServ.FactionOnlineToDelete = fToDelete;
+
+                        var fToAdd = new List<FactionOnline>();
+                        for (int i = 0; i < factionList.Count; i++)
+                        {
+                            var item = factionList[i];
+                            if (!lastFactionKeys.Contains(new FactionKey(item.loadID, item.def.defName)))
+                            {
+                                fToAdd.Add(GetFactions(item));
+                            }
+                        }
+                        toServ.FactionOnlineToAdd = fToAdd;
                     }
 
-                    toServ.FactionOnlineList = factionList.Select(obj => GetFactions(obj)).ToList();
+                    var resultFactions = new List<FactionOnline>(factionList.Count);
+                    for (int i = 0; i < factionList.Count; i++)
+                    {
+                        resultFactions.Add(GetFactions(factionList[i]));
+                    }
+                    toServ.FactionOnlineList = resultFactions;
                     LastFactionOnline = toServ.FactionOnlineList;
                 }
                 catch (Exception e)
@@ -299,7 +395,6 @@ namespace RimWorldOnlineCity
 
             ToDelete = new List<WorldObjectEntry>();
 
-            // ОПТИМІЗАЦІЯ: швидке заповнення словника за один прохід без LINQ
             var catchAllWorldObjects = Find.WorldObjects.AllWorldObjects;
             var catchAllWorldObjectsByID = new Dictionary<int, WorldObjectBaseOnline>(catchAllWorldObjects.Count);
             for (int i = 0; i < catchAllWorldObjects.Count; i++)
@@ -310,7 +405,8 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            var wObjectsList = catchAllWorldObjects.ToList();
+            // ОПТИМІЗАЦІЯ: використання списку без зайвого виклику .ToList()
+            var wObjectsList = catchAllWorldObjects;
 
             if (fromServ.WObjects != null && fromServ.WObjects.Count > 0)
             {
@@ -355,9 +451,9 @@ namespace RimWorldOnlineCity
             {
                 LongEventHandler.QueueLongEvent(delegate
                 {
-                    foreach (var mail in fromServ.Mails)
+                    for (int i = 0; i < fromServ.Mails.Count; i++)
                     {
-                        MailController.MailArrived(mail);
+                        MailController.MailArrived(fromServ.Mails[i]);
                     }
                 }, "", false, null);
             }
@@ -427,10 +523,8 @@ namespace RimWorldOnlineCity
                 }
                 return null;
             }
-            else
-            {
-                return allWorldObjectsByID.TryGetValue(objId, out var worldObject) ? worldObject : null;
-            }
+
+            return allWorldObjectsByID.TryGetValue(objId, out var worldObject) ? worldObject : null;
         }
 
         public static WorldObject GetWOByServerId(long serverId, List<WorldObject> allObjects = null)
@@ -528,7 +622,6 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Розрахунок параметрів і вартості поселення або каравану гравця.
-        /// ОПТИМІЗАЦІЯ: видалено Thread.Sleep(100) та копіювання списку пішаків.
         /// </summary>
         private static WorldObjectEntry GetWorldObjectEntry(WorldObject worldObject, PlayerGameProgress gameProgress, Dictionary<Map, CacheMap> cacheColonists)
         {
@@ -577,7 +670,7 @@ namespace RimWorldOnlineCity
                         }
                         else
                         {
-                            worldObjectEntry.MarketValue += thing.MarketValue * (float)count;
+                            worldObjectEntry.MarketValue += thing.MarketValue * count;
                         }
                     }
                 }
@@ -611,7 +704,6 @@ namespace RimWorldOnlineCity
 
                     worldObjectEntry.MarketValuePawn = 0;
 
-                    // ОПТИМІЗАЦІЯ: обхід AllPawnsSpawned безпосередньо без копіювання масивів та LINQ
                     if (!cacheColonists.TryGetValue(map, out var ps))
                     {
                         ps = new CacheMap();
@@ -659,7 +751,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Застосування опису поселення або каравану іншого гравця.
-        /// ОПТИМІЗАЦІЯ: усунено подвійні сканування словника через LINQ Any/First.
+        /// ОПТИМІЗАЦІЯ: швидкий O(1) пошук за ConverterServerId замість повного перебору WorldObjectEntrys.
         /// </summary>
         public static void ApplyWorldObject(WorldObjectEntry worldObjectEntry, ref List<WorldObject> allWorldObjects, ref Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID)
         {
@@ -668,12 +760,21 @@ namespace RimWorldOnlineCity
                 if (worldObjectEntry.LoginOwner == SessionClientController.My?.Login)
                 {
                     int existingKey = -1;
-                    foreach (var kvp in WorldObjectEntrys)
+
+                    // ОПТИМІЗАЦІЯ: O(1) пошук
+                    if (ConverterServerId != null && ConverterServerId.TryGetValue(worldObjectEntry.PlaceServerId, out int mappedId) && WorldObjectEntrys.ContainsKey(mappedId))
                     {
-                        if (kvp.Value.PlaceServerId == worldObjectEntry.PlaceServerId)
+                        existingKey = mappedId;
+                    }
+                    else
+                    {
+                        foreach (var kvp in WorldObjectEntrys)
                         {
-                            existingKey = kvp.Key;
-                            break;
+                            if (kvp.Value.PlaceServerId == worldObjectEntry.PlaceServerId)
+                            {
+                                existingKey = kvp.Key;
+                                break;
+                            }
                         }
                     }
 
@@ -763,9 +864,9 @@ namespace RimWorldOnlineCity
         {
             List<int> neighbors = new List<int>(0);
             Find.WorldGrid.GetTileNeighbors(centralTile, neighbors);
-            foreach (var tile in neighbors)
+            for (int i = 0; i < neighbors.Count; i++)
             {
-                Find.WorldDebugDrawer.FlashTile(tile, WorldMaterials.DebugTileRenderQueue, null, 999999);
+                Find.WorldDebugDrawer.FlashTile(neighbors[i], WorldMaterials.DebugTileRenderQueue, null, 999999);
             }
             Find.WorldDebugDrawer.FlashTile(centralTile, WorldMaterials.DebugTileRenderQueue, null, 999999);
         }
@@ -860,7 +961,7 @@ namespace RimWorldOnlineCity
                     {
                         if (worldObjectTO.TradeOrders[i].Id == worldObjectEntry.Id)
                         {
-                            worldObjectTO.TradeOrders.RemoveAt(i--);
+                            worldObjectTO.TradeOrders.RemoveAt(i);
                             break;
                         }
                     }
@@ -894,39 +995,84 @@ namespace RimWorldOnlineCity
         }
 
         #region Неігрові об'єкти планети
+        /// <summary>
+        /// Видалення та додавання поселень NPC без множинних WorldUpdate() та вкладених Where().
+        /// </summary>
         private static void ApplyNonPlayerWorldObject(ModelPlayToClient fromServ)
         {
             try
             {
                 if (fromServ.WObjectOnlineToDelete != null && fromServ.WObjectOnlineToDelete.Count > 0)
                 {
-                    var objectToDelete = Find.WorldObjects.AllWorldObjects.Where(wo => wo is Settlement)
-                        .Where(wo => wo.HasName && !wo.Faction.IsPlayer)
-                        .Where(o => fromServ.WObjectOnlineToDelete.Any(fs => ValidateOnlineWorldObject(fs, o)))
-                        .ToList();
-
-                    objectToDelete.ForEach(o =>
+                    var deleteKeys = new HashSet<WorldObjectKey>();
+                    for (int i = 0; i < fromServ.WObjectOnlineToDelete.Count; i++)
                     {
-                        Find.WorldObjects.SettlementAt(o.Tile).Destroy();
+                        var item = fromServ.WObjectOnlineToDelete[i];
+                        deleteKeys.Add(new WorldObjectKey(item.Tile, item.Name));
+                    }
+
+                    var all = Find.WorldObjects.AllWorldObjects;
+                    var objectToDelete = new List<WorldObject>();
+
+                    for (int i = 0; i < all.Count; i++)
+                    {
+                        var wo = all[i];
+                        if (wo is Settlement && wo.HasName && !wo.Faction.IsPlayer)
+                        {
+                            if (deleteKeys.Contains(new WorldObjectKey(wo.Tile, wo.LabelCap)))
+                            {
+                                objectToDelete.Add(wo);
+                            }
+                        }
+                    }
+
+                    bool anyDestroyed = false;
+                    for (int i = 0; i < objectToDelete.Count; i++)
+                    {
+                        var settlement = Find.WorldObjects.SettlementAt(objectToDelete[i].Tile);
+                        if (settlement != null)
+                        {
+                            settlement.Destroy();
+                            anyDestroyed = true;
+                        }
+                    }
+
+                    // ОПТИМІЗАЦІЯ: викликаємо оновлення сітки планети лише один раз замість виклику на кожній ітерації
+                    if (anyDestroyed)
+                    {
                         Find.World.WorldUpdate();
-                    });
+                    }
 
                     if (LastWorldObjectOnline != null && LastWorldObjectOnline.Count > 0)
                     {
-                        LastWorldObjectOnline.RemoveAll(WOnline => objectToDelete.Any(o => ValidateOnlineWorldObject(WOnline, o)));
+                        var deletedSet = new HashSet<WorldObjectKey>();
+                        for (int i = 0; i < objectToDelete.Count; i++)
+                        {
+                            deletedSet.Add(new WorldObjectKey(objectToDelete[i].Tile, objectToDelete[i].LabelCap));
+                        }
+                        LastWorldObjectOnline.RemoveAll(wo => deletedSet.Contains(new WorldObjectKey(wo.Tile, wo.Name)));
                     }
                 }
 
                 if (fromServ.WObjectOnlineToAdd != null && fromServ.WObjectOnlineToAdd.Count > 0)
                 {
-                    for (var i = 0; i < fromServ.WObjectOnlineToAdd.Count; i++)
+                    var factions = Find.FactionManager.AllFactionsListForReading;
+
+                    for (int i = 0; i < fromServ.WObjectOnlineToAdd.Count; i++)
                     {
                         var toAdd = fromServ.WObjectOnlineToAdd[i];
                         if (!Find.WorldObjects.AnySettlementAt(toAdd.Tile))
                         {
-                            Faction faction = Find.FactionManager.AllFactionsListForReading.FirstOrDefault(fm =>
-                                fm.def.LabelCap == toAdd.FactionGroup &&
-                                fm.loadID == toAdd.loadID);
+                            Faction faction = null;
+                            for (int f = 0; f < factions.Count; f++)
+                            {
+                                var fm = factions[f];
+                                if (fm.loadID == toAdd.loadID && fm.def.LabelCap == toAdd.FactionGroup)
+                                {
+                                    faction = fm;
+                                    break;
+                                }
+                            }
 
                             if (faction != null)
                             {
@@ -966,47 +1112,74 @@ namespace RimWorldOnlineCity
                 loadID = obj.Faction != null ? obj.Faction.loadID : 0
             };
         }
-
-        private static bool ValidateOnlineWorldObject(WorldObjectOnline WObjectOnline1, WorldObject WObjectOnline2)
-        {
-            return WObjectOnline1.Name == WObjectOnline2.LabelCap && WObjectOnline1.Tile == WObjectOnline2.Tile;
-        }
         #endregion
 
         #region Фракції
+        /// <summary>
+        /// Оновлення списку фракцій на карті за O(N + M) без вкладених LINQ-викликів.
+        /// </summary>
         private static void ApplyFactionsToWorld(ModelPlayToClient fromServ)
         {
             try
             {
                 if (fromServ.FactionOnlineToDelete != null && fromServ.FactionOnlineToDelete.Count > 0)
                 {
-                    var factionToDelete = Find.FactionManager.AllFactionsListForReading.Where(f => !f.IsPlayer)
-                        .Where(obj => fromServ.FactionOnlineToDelete.Any(fs => ValidateFaction(fs, obj))).ToList();
+                    var deleteKeys = new HashSet<FactionKey>();
+                    for (int i = 0; i < fromServ.FactionOnlineToDelete.Count; i++)
+                    {
+                        var fo = fromServ.FactionOnlineToDelete[i];
+                        deleteKeys.Add(new FactionKey(fo.loadID, fo.DefName));
+                    }
+
+                    var allFactions = Find.FactionManager.AllFactionsListForReading;
+                    var factionToDelete = new List<Faction>();
+
+                    for (int i = 0; i < allFactions.Count; i++)
+                    {
+                        var f = allFactions[i];
+                        if (!f.IsPlayer && deleteKeys.Contains(new FactionKey(f.loadID, f.def.defName)))
+                        {
+                            factionToDelete.Add(f);
+                        }
+                    }
 
                     OCFactionManager.UpdateFactionIDS(fromServ.FactionOnlineList);
-                    for (var i = 0; i < factionToDelete.Count; i++)
+                    for (int i = 0; i < factionToDelete.Count; i++)
                     {
                         OCFactionManager.DeleteFaction(factionToDelete[i]);
                     }
 
                     if (LastFactionOnline != null && LastFactionOnline.Count > 0)
                     {
-                        LastFactionOnline.RemoveAll(FOnline => factionToDelete.Any(obj => ValidateFaction(FOnline, obj)));
+                        var deletedSet = new HashSet<FactionKey>();
+                        for (int i = 0; i < factionToDelete.Count; i++)
+                        {
+                            deletedSet.Add(new FactionKey(factionToDelete[i].loadID, factionToDelete[i].def.defName));
+                        }
+                        LastFactionOnline.RemoveAll(fo => deletedSet.Contains(new FactionKey(fo.loadID, fo.DefName)));
                     }
                 }
 
                 if (fromServ.FactionOnlineToAdd != null && fromServ.FactionOnlineToAdd.Count > 0)
                 {
-                    for (var i = 0; i < fromServ.FactionOnlineToAdd.Count; i++)
+                    var existingFactions = Find.FactionManager.AllFactionsListForReading;
+                    var existingKeys = new HashSet<FactionKey>();
+                    for (int i = 0; i < existingFactions.Count; i++)
+                    {
+                        var f = existingFactions[i];
+                        existingKeys.Add(new FactionKey(f.loadID, f.def.defName));
+                    }
+
+                    for (int i = 0; i < fromServ.FactionOnlineToAdd.Count; i++)
                     {
                         var toAdd = fromServ.FactionOnlineToAdd[i];
                         try
                         {
-                            var existingFaction = Find.FactionManager.AllFactionsListForReading.Where(f => ValidateFaction(toAdd, f)).ToList();
-                            if (existingFaction.Count == 0)
+                            if (!existingKeys.Contains(new FactionKey(toAdd.loadID, toAdd.DefName)))
                             {
                                 OCFactionManager.UpdateFactionIDS(fromServ.FactionOnlineList);
                                 OCFactionManager.AddNewFaction(toAdd);
+                                existingKeys.Add(new FactionKey(toAdd.loadID, toAdd.DefName));
                             }
                             else
                             {
@@ -1036,13 +1209,6 @@ namespace RimWorldOnlineCity
                 DefName = obj.def.defName,
                 loadID = obj.loadID
             };
-        }
-
-        private static bool ValidateFaction(FactionOnline fOnline1, Faction fOnline2)
-        {
-            return fOnline1.LabelCap == fOnline2.def.LabelCap &&
-                fOnline1.DefName == fOnline2.def.defName &&
-                fOnline1.loadID == fOnline2.loadID;
         }
         #endregion
     }
