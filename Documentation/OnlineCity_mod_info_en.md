@@ -731,6 +731,7 @@ Replace the entire `"EqualFiles": [ ... ]` block with:
         "Prefs.xml"
       ],
       "IgnoreFolder": [
+        "OnlineCity",
         "RimHUD"
       ]
     }
@@ -905,6 +906,7 @@ Mismatched files are not transferred to the client; the connection is simply rej
         "Prefs.xml"
       ],
       "IgnoreFolder": [
+        "OnlineCity",
         "RimHUD"
       ]
     }

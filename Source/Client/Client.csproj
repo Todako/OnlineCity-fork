@@ -156,7 +156,6 @@
     <Compile Include="GameClasses\CaravanArrivalAction_VisitOnline.cs" />
     <Compile Include="GameClasses\CaravanOnline.cs" />
     <Compile Include="CommonUtils.cs" />
-    <Compile Include="GameClasses\Harmony\GameFix.cs" />
     <Compile Include="GameClasses\Harmony\GamePatch.cs" />
     <Compile Include="GameClasses\OCFactionManager.cs" />
     <Compile Include="GameClasses\OC_LetterDefOf.cs" />
@@ -250,7 +249,6 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-
   <!-- Build only: final clean package is produced from an explicit whitelist. -->
   <Target Name="PackageClient" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
@@ -260,11 +258,9 @@
       <ISharpZipLibSource Condition="'$(ISharpZipLibSource)' == '' and Exists('$(MSBuildProjectDirectory)\..\BuildOutput\Client\Release\ISharpZipLib.dll')">$(MSBuildProjectDirectory)\..\BuildOutput\Client\Release\ISharpZipLib.dll</ISharpZipLibSource>
       <ISharpZipLibSource Condition="'$(ISharpZipLibSource)' == '' and Exists('$(MSBuildProjectDirectory)\..\..\1.1\Assemblies\ISharpZipLib.dll')">$(MSBuildProjectDirectory)\..\..\1.1\Assemblies\ISharpZipLib.dll</ISharpZipLibSource>
     </PropertyGroup>
-
     <!-- Remove previous package so deleted/obsolete files can never remain. -->
     <RemoveDir Directories="$(ClientPackageDir)" Condition="Exists('$(ClientPackageDir)')" />
     <MakeDir Directories="$(ClientPackageDir);$(ClientAssembliesDir)" />
-
     <ItemGroup>
       <ClientAboutFiles Include="$(MSBuildProjectDirectory)\..\..\About\**\*" />
       <ClientDocumentationFiles Include="$(MSBuildProjectDirectory)\..\..\Documentation\**\*" />
@@ -272,13 +268,11 @@
       <ClientTexturesFiles Include="$(MSBuildProjectDirectory)\..\..\Textures\**\*" />
       <ClientOneOneFiles Include="$(MSBuildProjectDirectory)\..\..\1.1\**\*" Exclude="$(MSBuildProjectDirectory)\..\..\1.1\Assemblies\**\*" />
     </ItemGroup>
-
     <Copy SourceFiles="@(ClientAboutFiles)" DestinationFiles="@(ClientAboutFiles->'$(ClientPackageDir)\About\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ClientDocumentationFiles)" DestinationFiles="@(ClientDocumentationFiles->'$(ClientPackageDir)\Documentation\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ClientLanguagesFiles)" DestinationFiles="@(ClientLanguagesFiles->'$(ClientPackageDir)\Languages\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ClientTexturesFiles)" DestinationFiles="@(ClientTexturesFiles->'$(ClientPackageDir)\Textures\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ClientOneOneFiles)" DestinationFiles="@(ClientOneOneFiles->'$(ClientPackageDir)\1.1\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-
     <!-- Exact client runtime files. -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\Lib\0System.Drawing.dll" DestinationFolder="$(ClientAssembliesDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll" DestinationFolder="$(ClientAssembliesDir)" />
@@ -286,13 +280,11 @@
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientAssembliesDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\BuildOutput\Union\Release\OCUnion.dll" DestinationFolder="$(ClientAssembliesDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\ClientAncillary\bin\Release\ClientAncillary.exe" DestinationFolder="$(ClientAssembliesDir)" />
-
     <Error Condition="'$(ISharpZipLibSource)' == ''" Text="ISharpZipLib.dll не знайдено. Перевір Source\Client\Lib, Source\BuildOutput\Client\Release або 1.1\Assemblies." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Lib\0System.Drawing.dll')" Text="0System.Drawing.dll не знайдено в Source\Client\Lib." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" Text="ICSharpCode.SharpZipLib.dll не знайдено в Source\packages." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\BuildOutput\Union\Release\OCUnion.dll')" Text="OCUnion.dll не знайдено. Перевір збірку UnionDll." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\ClientAncillary\bin\Release\ClientAncillary.exe')" Text="ClientAncillary.exe не знайдено. Перевір збірку ClientAncillary." />
-
     <Message Importance="high" Text="OnlineCity Client package: $(ClientPackageDir)" />
   </Target>
 </Project>

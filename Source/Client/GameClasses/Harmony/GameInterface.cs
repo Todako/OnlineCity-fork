@@ -4,110 +4,52 @@ using RimWorld;
 using RimWorld.Planet;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
-using Verse.Steam;
 
 namespace RimWorldOnlineCity.GameClasses
 {
-    /*
-    [HarmonyPatch(typeof(WorldInspectPane))]
-    [HarmonyPatch("DoWindowContents")]
-    internal class WorldInspectPane_DoWindowContents_Patch
+    /// <summary>
+    /// Гармоні-патчі для інтеграції елементів мережевого інтерфейсу OnlineCity
+    /// в інформаційні картки (Dialog_InfoCard) та панелі інспектора (InspectPane).
+    /// </summary>
+    internal static class GameInterfaceHelper
     {
-        [HarmonyPrefix]
-        public static bool Prefix(WorldInspectPane __instance, ref Rect rect)
-        {
-			WorldObject worldObject = Find.WorldSelector.SingleSelectedObject;
-            if (worldObject != null)
-            {
-                //если есть иконка выводим её слева смещая панель вправо (расширяя её)
-                //var OCWO = worldObject as CaravanOnline;
-                //if (OCWO == null || OCWO.OnlinePlayerLogin == null) return true;
-                var iconImage = GeneralTexture.Waypoint; //GeneralTexture.Get.ByName("pl_" + OCWO.OnlinePlayerLogin);
-                if (iconImage != GeneralTexture.Null)
-                {
-                    var size = rect.height;
-                    var iconArea = new Rect(rect.x, rect.y, size, size);
-                    GUI.DrawTexture(iconArea, iconImage);
-                    rect.xMin += size;
+        private static readonly Dictionary<string, string> PlayerIconKeyCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                    if (__instance.windowRect.width == __instance.InitialSize.x)
-                    {
-                        __instance.windowRect.width += size;
-                    }
-                }
+        /// <summary>
+        /// Повертає кешований ідентифікатор аватарки гравця, запобігаючи створенню нових рядків щокадру.
+        /// </summary>
+        public static string GetPlayerIconKey(string login)
+        {
+            if (string.IsNullOrEmpty(login)) return string.Empty;
+            if (!PlayerIconKeyCache.TryGetValue(login, out var key))
+            {
+                key = "pl_" + login;
+                PlayerIconKeyCache[login] = key;
             }
-            return true;
+            return key;
         }
     }
-    */
 
-    /*
-    [HarmonyPatch(typeof(GizmoGridDrawer))]
-    [HarmonyPatch("DrawGizmoGrid")]
-    internal class GizmoGridDrawer_DrawGizmoGrid_Patch
-    {
-        //Выжимка из кода игры
-        private static Rect GizmoGridButtonDrawStart(float startX)
-        {
-            float num2 = (float)(Verse.UI.screenHeight - 35) - GizmoGridDrawer.GizmoSpacing.y - 75f;
-            if (SteamDeck.IsSteamDeck && SteamDeck.KeyboardShowing && Find.MainTabsRoot.OpenTab == MainButtonDefOf.Architect && ((MainTabWindow_Architect)MainButtonDefOf.Architect.TabWindow).QuickSearchWidgetFocused)
-            {
-                num2 -= 335f;
-            }
-            Vector2 vector = new Vector2(startX, num2);
-            return new Rect(vector.x, vector.y, 75f, 75f);
-        }
-
-        [HarmonyPrefix]
-        public static bool Prefix(ref float startX)
-        {
-            Pawn pawn = Find.Selector.SingleSelectedThing as Pawn; //  WorldSelector.SingleSelectedObject;
-            if (pawn != null)
-            {
-                var rect = GizmoGridButtonDrawStart(startX);
-                rect.y -= rect.width + GizmoGridDrawer.GizmoSpacing.x;
-                rect.width += rect.width + GizmoGridDrawer.GizmoSpacing.x;
-                rect.height = rect.width;
-
-                //var OCWO = worldObject as CaravanOnline;
-                //if (OCWO == null || OCWO.OnlinePlayerLogin == null) return true;
-                var iconImage = GeneralTexture.Waypoint; //GeneralTexture.Get.ByName("pl_" + OCWO.OnlinePlayerLogin);
-                if (iconImage != GeneralTexture.Null)
-                {
-                    var size = rect.height;
-                    var iconArea = new Rect(rect.x, rect.y, size, size);
-                    if (Widgets.ButtonInvisible(iconArea))
-                    {
-                        //Find.WindowStack.Add(new Dialog_MessageBox("Работает!"));
-                    }
-                    GUI.DrawTexture(iconArea, Command.BGTexShrunk); //BGTex); // текстура неактивной кнопки
-                    iconArea = iconArea.ContractedBy(2);
-                    GUI.DrawTexture(iconArea, iconImage);
-                    GenUI.AbsorbClicksInRect(iconArea);
-
-                    startX += GizmoGridDrawer.GizmoSpacing.x + rect.width;
-                }
-            }
-            return true;
-        }
-    }
-    */
-    // Эти данные отображаются в полноэкранном окне информации "i" Dialog_InfoCard
+    /// <summary>
+    /// Додає кнопку вставки тегу об'єкта в чат та аватарку власника в інформаційну картку об'єкта ("i").
+    /// </summary>
     [HarmonyPatch(typeof(StatsReportUtility))]
     [HarmonyPatch("DrawStatsWorker")]
     internal class StatsReportUtility_DrawStatsWorker_Patch
     {
+        private static string CachedInsertChatText;
+        private static string InsertChatText => CachedInsertChatText ?? (CachedInsertChatText = "OCity_GameInterface_InsertIntoChat".Translate());
+
         [HarmonyPrefix]
         public static bool Prefix(ref Rect rect, Thing optionalThing, WorldObject optionalWorldObject)
         {
+            if (!SessionClient.Get.IsLogined) return true;
+
             var iconCopy = new Rect(rect.width - 32f, 18f, 32f, 32f);
-            
-            var txt = "OCity_GameInterface_InsertIntoChat".Translate();
+
+            var txt = InsertChatText;
             var font = Text.Font;
             Text.Font = GameFont.Small;
             var anchor = Text.Anchor;
@@ -119,6 +61,7 @@ namespace RimWorldOnlineCity.GameClasses
 
             var serverId = (optionalWorldObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
 
+            // Кнопка копіювання посилання на предмет, базу чи тайл у рядок вводу чату
             if (Widgets.ButtonImage(iconCopy, GeneralTexture.OCToChat))
             {
                 if (optionalThing != null)
@@ -140,22 +83,25 @@ namespace RimWorldOnlineCity.GameClasses
             }
 
             if (optionalThing != null) return true;
-            var OCWO = optionalWorldObject as CaravanOnline;
-            if (OCWO == null || OCWO.OnlinePlayerLogin == null) return true;
+            if (!(optionalWorldObject is CaravanOnline OCWO) || string.IsNullOrEmpty(OCWO.OnlinePlayerLogin)) return true;
 
-            var size = 100f;
-
+            const float size = 100f;
             var iconArea = new Rect(rect.width - size, iconCopy.y + iconCopy.height, size, size);
 
-            var iconImage = GeneralTexture.Get.ByName("pl_" + OCWO.OnlinePlayerLogin);
-            GUI.DrawTexture(iconArea, iconImage);
+            // ОПТИМІЗАЦІЯ: використання кешованого ключа аватарки
+            var iconImage = GeneralTexture.Get.ByName(GameInterfaceHelper.GetPlayerIconKey(OCWO.OnlinePlayerLogin));
+            if (iconImage != null && iconImage != GeneralTexture.Null)
+            {
+                GUI.DrawTexture(iconArea, iconImage);
+            }
 
-            //rect.width -= iconArea.width;
-            
             return true;
         }
     }
 
+    /// <summary>
+    /// Відображає аватарку гравця на панелі огляду його каравану чи бази.
+    /// </summary>
     [HarmonyPatch(typeof(RimWorld.InspectPaneFiller))]
     [HarmonyPatch("DrawInspectStringFor")]
     internal class InspectPaneFiller_DrawInspectStringFor_Patch
@@ -163,22 +109,28 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPrefix]
         public static bool Prefix(ISelectable sel, ref Rect rect)
         {
-            var OCWO = sel as CaravanOnline;
-            if (OCWO == null || OCWO.OnlinePlayerLogin == null) return true;
+            if (!SessionClient.Get.IsLogined) return true;
 
-            var size = 100f;
+            if (sel is CaravanOnline OCWO && !string.IsNullOrEmpty(OCWO.OnlinePlayerLogin))
+            {
+                const float size = 100f;
+                var iconArea = new Rect(rect.width - size, 0f, size, size);
 
-            var iconArea = new Rect(rect.width - size, 0f, size, size);
-
-            var iconImage = GeneralTexture.Get.ByName("pl_" + OCWO.OnlinePlayerLogin);
-            GUI.DrawTexture(iconArea, iconImage);
-
-            rect.width -= iconArea.width;
+                var iconImage = GeneralTexture.Get.ByName(GameInterfaceHelper.GetPlayerIconKey(OCWO.OnlinePlayerLogin));
+                if (iconImage != null && iconImage != GeneralTexture.Null)
+                {
+                    GUI.DrawTexture(iconArea, iconImage);
+                    rect.width -= iconArea.width;
+                }
+            }
 
             return true;
         }
     }
-    
+
+    /// <summary>
+    /// Додає кнопку вставки виділеного предмета в чат на панелі інспектора карти.
+    /// </summary>
     [HarmonyPatch(typeof(MainTabWindow_Inspect))]
     [HarmonyPatch("DoInspectPaneButtons")]
     internal class MainTabWindow_Inspect_DoInspectPaneButtons_Patch
@@ -186,15 +138,11 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPostfix]
         public static void Postfix(Rect rect, ref float lineEndWidth)
         {
-            if (Find.Selector.NumSelected != 1)
-            {
-                return;
-            }
+            if (!SessionClient.Get.IsLogined) return;
+            if (Find.Selector.NumSelected != 1) return;
+
             Thing singleSelectedThing = Find.Selector.SingleSelectedThing;
-            if (singleSelectedThing == null)
-            {
-                return;
-            }
+            if (singleSelectedThing == null) return;
 
             lineEndWidth += 30f;
             var iconCopy = new Rect(rect.width - lineEndWidth, -2f, 30f, 30f);
@@ -206,6 +154,9 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
+    /// <summary>
+    /// Додає кнопку вставки виділеного об'єкта або тайла планети в чат на панелі інспектора планети.
+    /// </summary>
     [HarmonyPatch(typeof(WorldInspectPane))]
     [HarmonyPatch("DoInspectPaneButtons")]
     internal class WorldInspectPane_DoInspectPaneButtons_Patch
@@ -213,6 +164,8 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPostfix]
         public static void Postfix(Rect rect, ref float lineEndWidth)
         {
+            if (!SessionClient.Get.IsLogined) return;
+
             WorldObject singleSelectedObject = Find.WorldSelector.SingleSelectedObject;
             if (singleSelectedObject != null || Find.WorldSelector.selectedTile >= 0)
             {
@@ -220,13 +173,16 @@ namespace RimWorldOnlineCity.GameClasses
                 var iconCopy = new Rect(rect.width - lineEndWidth, -2f, 30f, 30f);
                 if (Widgets.ButtonImage(iconCopy, GeneralTexture.OCToChat))
                 {
-                    var serverId = (singleSelectedObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
-                    if (serverId == null && singleSelectedObject != null && singleSelectedObject.Faction.IsPlayer)
+                    long? serverId = (singleSelectedObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
+
+                    // ОПТИМІЗАЦІЯ: безпечна перевірка на null у Faction?.IsPlayer
+                    if (serverId == null && singleSelectedObject != null && singleSelectedObject.Faction?.IsPlayer == true)
                     {
                         serverId = UpdateWorldController.GetMyByLocalId(singleSelectedObject.ID)?.PlaceServerId;
                     }
+
                     if (serverId != null)
-                    { 
+                    {
                         var msg = $"<&{serverId.Value}/>";
                         ChatController.AddToInputChat(msg, true);
                     }
@@ -237,10 +193,7 @@ namespace RimWorldOnlineCity.GameClasses
                         ChatController.AddToInputChat(msg, true);
                     }
                 }
-
             }
         }
-
     }
-    
 }

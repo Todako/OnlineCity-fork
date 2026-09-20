@@ -613,6 +613,7 @@ Config
         "Prefs.xml"
       ],
       "IgnoreFolder": [
+        "OnlineCity",
         "RimHUD"
       ]
     }
@@ -763,6 +764,7 @@ Game
         "Prefs.xml"
       ],
       "IgnoreFolder": [
+        "OnlineCity",
         "RimHUD"
       ]
     }
