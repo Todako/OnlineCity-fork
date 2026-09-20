@@ -1,30 +1,43 @@
+﻿using MapRenderer;
 using Model;
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
-using RimWorldOnlineCity.Services;
-using RimWorldOnlineCity.UI;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
-using Verse;
-using MapRenderer;
 using RimWorld.Planet;
+using RimWorldOnlineCity.Services;
+using System;
+using System.Threading.Tasks;
+using Verse;
 
 namespace RimWorldOnlineCity
 {
+    /// <summary>
+    /// Відповідає за автоматичне створення графічного знімка карти колонії опівдні
+    /// та його фонову передачу на сервер для перегляду іншими гравцями.
+    /// </summary>
     internal class SnapshotColony
     {
         public bool HighQuality = false;
-        public bool Background = false;
+        public bool Background = true;
 
+        /// <summary>
+        /// Запуск процесу автоматичного рендерингу карти поселення.
+        /// </summary>
         public void Exec(Settlement settlement)
         {
-            if (settlement == null || settlement.Map == null) return;
+            // Перевірка наявності поселення та завантаженої активної карти
+            if (settlement == null || settlement.Map == null)
+            {
+                Loger.Log("SnapshotColony: поселення або його карта відсутні, скасування знімка", Loger.LogLevel.WARNING);
+                return;
+            }
+
+            // Захист від накладання: якщо попередній рендер ще триває, новий не запускаємо
+            if (RenderMap.IsRendering)
+            {
+                Loger.Log("SnapshotColony: RenderMap уже виконує рендеринг, пропуск запиту", Loger.LogLevel.INFO);
+                return;
+            }
 
             var serverId = UpdateWorldController.GetMyByLocalId(settlement.ID)?.PlaceServerId ?? 0;
             Loger.Log($"SnapshotColony serverId={serverId}");
@@ -33,6 +46,9 @@ namespace RimWorldOnlineCity
 
             var renderMap = new RenderMap();
 
+            // Логіка вибору якості:
+            // HighQuality = true: максимальна чіткість (30 px/клітинка, 86% якість) для красивих знімків на сервері.
+            // HighQuality = false: збалансований режим (16 px/клітинка, 75% якість) для відсутності фризів та економії місця.
             if (HighQuality)
             {
                 renderMap.SettingsPixelOnCell = 30;
@@ -41,22 +57,18 @@ namespace RimWorldOnlineCity
             else
             {
                 renderMap.SettingsPixelOnCell = 16;
-                renderMap.SettingsQuality = 80;
+                renderMap.SettingsQuality = 75;
             }
 
             renderMap.ImageReady = (image) => SendToServer(image, serverId, Background);
 
-            try
-            {
-                renderMap.Initialize(settlement.Map);
-                renderMap.Render();
-            }
-            catch (Exception ex)
-            {
-                Loger.Log($"SnapshotColony Render Exception: {ex}");
-            }
+            renderMap.Initialize(settlement.Map);
+            renderMap.Render();
         }
 
+        /// <summary>
+        /// Асинхронне кодування кадру в JPG та передача файлу на сервер у фоновому потоці.
+        /// </summary>
         private static void SendToServer(Func<byte[]> getImage, long serverId, bool background)
         {
             Task.Run(() =>
@@ -64,11 +76,11 @@ namespace RimWorldOnlineCity
                 try
                 {
                     Loger.Log("SnapshotColony EncodeToJPG start");
-                    var data = getImage?.Invoke();
+                    var data = getImage();
 
                     if (data == null || data.Length == 0)
                     {
-                        Loger.Log("SnapshotColony: data is empty, aborting upload.");
+                        Loger.Log("SnapshotColony: отримано порожній масив зображення", Loger.LogLevel.WARNING);
                         return;
                     }
 
@@ -78,35 +90,18 @@ namespace RimWorldOnlineCity
                     {
                         try
                         {
-                            // Відправляємо скріншот на сервер
-                            connect.FileSharingUpload(FileSharingCategory.ColonyScreen, SessionClientController.My.Login + "@" + serverId, data);
-
-                            // Без повторного зворотного завантаження для економії мережі та пам'яті
-                            if (!background)
-                            {
-                                ModBaseData.RunMainThread(() =>
-                                {
-                                    GeneralTexture.Clear();
-                                    Find.WindowStack.Add(new Dialog_MessageBox("OCity_Successfully".Translate()));
-                                });
-                            }
+                            var fileKey = SessionClientController.My.Login + "@" + serverId;
+                            connect.FileSharingUpload(FileSharingCategory.ColonyScreen, fileKey, data);
                         }
                         catch (Exception ex)
                         {
-                            Loger.Log($"SnapshotColony FileSharingUpload error: {ex.Message}");
-                            if (!background)
-                            {
-                                ModBaseData.RunMainThread(() =>
-                                {
-                                    Find.WindowStack.Add(new Dialog_MessageBox("OCity_Error".Translate()));
-                                });
-                            }
+                            Loger.Log($"SnapshotColony FileSharingUpload Exception: {ex.Message}", Loger.LogLevel.WARNING);
                         }
                     });
                 }
                 catch (Exception ex)
                 {
-                    Loger.Log($"SnapshotColony task error: {ex}");
+                    Loger.Log($"SnapshotColony Encode/Send Exception: {ex.Message}", Loger.LogLevel.WARNING);
                 }
 
                 Loger.Log("SnapshotColony Send end");
