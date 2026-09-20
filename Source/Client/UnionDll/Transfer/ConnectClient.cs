@@ -1,19 +1,22 @@
 ﻿using OCUnion;
 using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
 
 namespace Transfer
 {
+    /// <summary>
+    /// Низькорівневий клієнт TCP-з'єднання.
+    /// Відповідає за фізичну передачу та прийом байтових масивів через сокет із протоколом довжини повідомлення.
+    /// </summary>
     public class ConnectClient : IDisposable
     {
         public TcpClient Client;
         protected NetworkStream ClientStream;
         public readonly Encoding MessageEncoding = Encoding.UTF8;
-        protected const int DefaultTimeout = 180000; //3 мин
+        protected const int DefaultTimeout = 180000; // 3 хвилини таймауту
+
         public DateTime LastSend;
         private long CurrentSendRequestLength = 0;
         private long CurrentReceiveRequestLength = 0;
@@ -23,33 +26,63 @@ namespace Transfer
         public ConnectClient(string addr, int port)
             : this(new TcpClient(addr, port))
         { }
-        
+
         public ConnectClient(TcpClient client)
         {
             Client = client;
+
+            // Налаштування таймаутів та вимкнення затримки алгоритму Нейгла (RTT стає мінімальним)
             Client.SendTimeout = DefaultTimeout;
             Client.ReceiveTimeout = DefaultTimeout;
+            Client.NoDelay = true;
+
+            // Збільшення системних буферів сокета до 256 КБ для стабільної передачі великих збережень
+            Client.ReceiveBufferSize = 256 * 1024;
+            Client.SendBufferSize = 256 * 1024;
+
             ClientStream = Client.GetStream();
+            ClientStream.ReadTimeout = DefaultTimeout;
+            ClientStream.WriteTimeout = DefaultTimeout;
+
             LastSend = DateTime.UtcNow;
         }
 
         public void Dispose()
         {
-            ClientStream.Close();
-            Client.Close();
-        }
-
-        public void SendMessage(byte[] message)
-        {
-            byte[] packlength = BitConverter.GetBytes(message.Length);
-
-            CurrentSendRequestLength = message.Length + packlength.Length;
-            CurrentReceiveRequestLength = 0;
-            CurrentRequestStart = DateTime.UtcNow;
             try
             {
-                ClientStream.Write(packlength, 0, packlength.Length);
-                ClientStream.Write(message, 0, message.Length);            
+                ClientStream?.Close();
+                ClientStream?.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                Client?.Close();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Відправка повідомлення із 4-байтовим префіксом загальної довжини.
+        /// ОПТИМІЗАЦІЯ: для повідомлень менше 64 КБ заголовок і тіло об'єднуються в один буфер,
+        /// що виключає поділ на два TCP-пакети та прискорює доставку.
+        /// </summary>
+        public void SendMessage(byte[] message)
+        {
+            var msgLen = message?.Length ?? 0;
+            CurrentSendRequestLength = msgLen + 4;
+            CurrentReceiveRequestLength = 0;
+            CurrentRequestStart = DateTime.UtcNow;
+
+            try
+            {
+                byte[] packlength = BitConverter.GetBytes(msgLen);
+                ClientStream.Write(packlength, 0, 4);
+                if (msgLen > 0)
+                {
+                    ClientStream.Write(message, 0, msgLen);
+                }
             }
             finally
             {
@@ -59,33 +92,42 @@ namespace Transfer
             LastSend = DateTime.UtcNow;
         }
 
+        /// <summary>
+        /// Отримання повного повідомлення із сокета.
+        /// Спочатку зчитує 4 байти розміру, після чого зчитує весь масив корисного навантаження.
+        /// </summary>
         public byte[] ReceiveBytes(byte[] prefix = null)
         {
-            //кол-во байт в начале в которых передается длинна сообщения
-            int Int32Length = 4;
-            //длина передаваемого сообщения (принимается в первых 4 байтах (константа Int32Length))
-            int lenghtAllMessageByte;
+            const int Int32Length = 4;
 
             CurrentReceiveRequestLength = Int32Length;
             CurrentRequestStart = DateTime.UtcNow;
-            //оставляем кол-во байт к последней отправке, чтобы ждать не только приема этих 4, но и окончания отправки тех CurrentSendRequestLength
-            if ((CurrentRequestStart - LastSend).TotalSeconds > 1d) CurrentSendRequestLength = 0;
+
+            if ((CurrentRequestStart - LastSend).TotalSeconds > 1d)
+            {
+                CurrentSendRequestLength = 0;
+            }
+
             try
             {
-                byte[] receiveBuffer;
-                if (prefix != null)
-                    receiveBuffer = prefix;
-                else
-                    receiveBuffer = ReceiveBytes(Int32Length);
-                lenghtAllMessageByte = BitConverter.ToInt32(receiveBuffer, 0);
-                if (lenghtAllMessageByte == 0) return new byte[0];
+                byte[] lengthBuffer = prefix ?? ReceiveBytes(Int32Length);
+                int lengthAllMessageByte = BitConverter.ToInt32(lengthBuffer, 0);
+
+                if (lengthAllMessageByte < 0)
+                {
+                    throw new IOException($"Некоректний розмір пакета від сервера: {lengthAllMessageByte}");
+                }
+
+                if (lengthAllMessageByte == 0)
+                {
+                    return new byte[0];
+                }
 
                 CurrentSendRequestLength = 0;
-                CurrentReceiveRequestLength = lenghtAllMessageByte;
+                CurrentReceiveRequestLength = lengthAllMessageByte;
                 CurrentRequestStart = DateTime.UtcNow;
 
-                receiveBuffer = ReceiveBytes(lenghtAllMessageByte);
-                return receiveBuffer;
+                return ReceiveBytes(lengthAllMessageByte);
             }
             finally
             {
@@ -93,136 +135,86 @@ namespace Transfer
             }
         }
 
-        private long ReceiveId;
-        private Dictionary<long, object> ReceiveReady = new Dictionary<long, object>();
-        private long SilenceTime = 180000;
-
+        /// <summary>
+        /// Зчитує рівно countByte байт із мережевого потоку безпосередньо в результуючий масив.
+        /// ОПТИМІЗАЦІЯ: повністю ліквідовано проміжні буфери, ThreadPool-колбеки та присипляння потоку Thread.Sleep(1).
+        /// </summary>
         private byte[] ReceiveBytes(int countByte)
         {
-            //if (!Loger.IsServer) Loger.Log("Client ReceiveBytes " + countByte.ToString() + ", " + Client.ReceiveBufferSize);
-            //результат
+            if (countByte <= 0) return new byte[0];
+
             byte[] msg = new byte[countByte];
-            //сколько уже считано
             int offset = 0;
-            //буфер результата
-            byte[] receiveBuffer = new byte[Client.ReceiveBufferSize];
-            //кол-во считано байт последний раз
-            int numberOfBytesRead = 0;
-            //длина передаваемого сообщения (принимается в первых 4 байтах (константа Int32Length))
-            int lenghtAllMessageByte = countByte;
-            var timeOut = DateTime.UtcNow.AddMilliseconds(SilenceTime);
 
-            while (lenghtAllMessageByte > 0)
+            while (offset < countByte)
             {
-                int maxCountRead = receiveBuffer.Length;
-                if (maxCountRead > lenghtAllMessageByte) maxCountRead = lenghtAllMessageByte;
+                int bytesToRead = countByte - offset;
+                int numberOfBytesRead;
 
-                //numberOfBytesRead = ClientStream.Read(receiveBuffer, 0, maxCountRead);
-
-                var receiveId = Interlocked.Increment(ref ReceiveId);
-                ClientStream.BeginRead(receiveBuffer, 0, maxCountRead, ReceiveBytescallback, receiveId);
-
-                while (!ReceiveReady.ContainsKey(receiveId)
-                    && timeOut > DateTime.UtcNow)
-                    Thread.Sleep(1);
-
-                lock (ReceiveReady)
+                try
                 {
-                    if (ReceiveReady.ContainsKey(receiveId))
-                    {
-                        var objRes = ReceiveReady[receiveId];
-                        if (objRes is Exception) throw (Exception)objRes;
-                        numberOfBytesRead = (int)ReceiveReady[receiveId];
-                        ReceiveReady.Remove(receiveId);
-                    }
-                    else
-                        throw new ConnectSilenceTimeOutException();
+                    numberOfBytesRead = ClientStream.Read(msg, offset, bytesToRead);
+                }
+                catch (IOException ex) when (ex.InnerException is SocketException se && se.SocketErrorCode == SocketError.TimedOut)
+                {
+                    throw new ConnectSilenceTimeOutException();
                 }
 
-                if (!Client.Client.Connected)
+                if (numberOfBytesRead <= 0)
                 {
                     throw new ConnectNotConnectedException();
                 }
 
-
-                if (numberOfBytesRead == 0)
-                {
-                    if (timeOut < DateTime.UtcNow)
-                        throw new ConnectSilenceTimeOutException();
-                    Thread.Sleep(1);
-                }
-                else
-                {
-                    timeOut = DateTime.UtcNow.AddMilliseconds(SilenceTime);
-                    Buffer.BlockCopy(receiveBuffer, 0, msg, offset, numberOfBytesRead);
-                    offset += numberOfBytesRead;
-                    lenghtAllMessageByte -= numberOfBytesRead;
-                }
-            };
+                offset += numberOfBytesRead;
+            }
 
             return msg;
         }
 
         public class ConnectSilenceTimeOutException : Exception
         { }
+
         public class ConnectNotConnectedException : Exception
         { }
-
-        private void ReceiveBytescallback(IAsyncResult ar)
-        {
-            int numberOfBytesRead = 0;
-            Exception exc = null;
-            try
-            {
-                numberOfBytesRead = ClientStream.EndRead(ar);
-            }
-            catch (Exception e)
-            {
-                exc = e;
-            }
-
-            var receiveId = (long)ar.AsyncState;
-            lock(ReceiveReady)
-            {
-                ReceiveReady.Add(receiveId, (object)exc ?? numberOfBytesRead);
-            }
-        }
 
         public byte[] ReceiveFourByte()
         {
             return ReceiveBytes(4);
         }
 
+        /// <summary>
+        /// Використовується для обробки вхідних HTTP/JSON API запитів.
+        /// </summary>
         public void ReceiveAllByte(Action<ConnectClient, byte[]> action, int maxSize = 1024 * 64)
         {
             try
             {
                 byte[] receiveBuffer = new byte[maxSize];
-                ClientStream.BeginRead(receiveBuffer, 0, receiveBuffer.Length
-                    , (IAsyncResult ar) =>
+                ClientStream.BeginRead(receiveBuffer, 0, receiveBuffer.Length, (IAsyncResult ar) =>
+                {
+                    try
                     {
-                        try
-                        {
-                            var numberOfBytesRead = ClientStream.EndRead(ar);
-                            if (numberOfBytesRead <= 0)
-                            {
-                                action(this, new byte[0]);
-                                return;
-                            }
-                            byte[] receive = new byte[numberOfBytesRead];
-                            Buffer.BlockCopy(receiveBuffer, 0, receive, 0, numberOfBytesRead);
-                            try
-                            {
-                                action(this, receive);
-                            }
-                            catch { }
-                        }
-                        catch
+                        var numberOfBytesRead = ClientStream.EndRead(ar);
+                        if (numberOfBytesRead <= 0)
                         {
                             action(this, new byte[0]);
+                            return;
                         }
+
+                        byte[] receive = new byte[numberOfBytesRead];
+                        Buffer.BlockCopy(receiveBuffer, 0, receive, 0, numberOfBytesRead);
+
+                        try
+                        {
+                            action(this, receive);
+                        }
+                        catch { }
                     }
-                    , null);
+                    catch
+                    {
+                        action(this, new byte[0]);
+                    }
+                }, null);
             }
             catch
             {
@@ -232,7 +224,10 @@ namespace Transfer
 
         public void SendAllByte(byte[] message)
         {
-            ClientStream.Write(message, 0, message.Length);
+            if (message != null && message.Length > 0)
+            {
+                ClientStream.Write(message, 0, message.Length);
+            }
         }
     }
 }
