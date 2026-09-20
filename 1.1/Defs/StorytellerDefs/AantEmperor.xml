@@ -236,7 +236,6 @@
 		<portraitLarge>Things/StoryTeller/Aant_Lrg</portraitLarge>
 		<portraitTiny>Things/StoryTeller/Aant_Tiny</portraitTiny>
 		<listOrder>40</listOrder>
-	<listVisible>false</listVisible>
     <comps>
       <!-- Home all -->
       <li Class="StorytellerCompProperties_RandomMain">
