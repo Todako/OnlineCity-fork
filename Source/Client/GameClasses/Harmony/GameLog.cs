@@ -1,25 +1,22 @@
 ﻿using HarmonyLib;
 using OCUnion;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity.GameClasses.Harmony
 {
+    /// <summary>
+    /// Контекстний перехоплювач помилок гри під час виконання чутливих операцій (десеріалізації тощо).
+    /// </summary>
     public class CatchGameError : IDisposable
     {
-        private Func<string, bool> OnError;
-
+        private readonly Func<string, bool> OnError;
         public string GameError = null;
 
         public CatchGameError(Func<string, bool> onError = null)
         {
-            OnError = onError;
-            if (OnError == null) OnError = (msg) => true;
+            OnError = onError ?? ((msg) => true);
             GameLog.OnError += GameLog_OnError;
         }
 
@@ -41,11 +38,14 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
         internal static bool Error(string text)
         {
-            var res = OnError == null ? true : OnError(text);
+            var res = OnError == null || OnError(text);
 
-            if (res) Loger.Log("Error game log. " + text + Environment.NewLine
-                + GetStackTrace()
-                , Loger.LogLevel.GAMEERROR);
+            // ОПТИМІЗАЦІЯ: важкий StackTraceUtility.ExtractStackTrace викликається
+            // ЛИШЕ якщо помилка не приглушена і логування реально увімкнене в налаштуваннях
+            if (res && Loger.Enable && !MainHelper.OffAllLog)
+            {
+                Loger.Log("Error game log. " + text + Environment.NewLine + GetStackTrace(), Loger.LogLevel.GAMEERROR);
+            }
 
             return res;
         }
@@ -53,16 +53,22 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         private static string GetStackTrace()
         {
             var stackTrace = StackTraceUtility.ExtractStackTrace();
-            var i = stackTrace.IndexOf("RimWorldOnlineCity.GameClasses.Harmony.Log_Error_Patch");
+            var i = stackTrace.IndexOf("RimWorldOnlineCity.GameClasses.Harmony.Log_Error_Patch", StringComparison.Ordinal);
             if (i > 0)
             {
-                i = stackTrace.IndexOf("\n", i);
-                if (i > 0) stackTrace = stackTrace.Substring(i + 1);
+                i = stackTrace.IndexOf('\n', i);
+                if (i > 0 && i + 1 < stackTrace.Length)
+                {
+                    stackTrace = stackTrace.Substring(i + 1);
+                }
             }
-            return stackTrace;//.Trim();
+            return stackTrace;
         }
     }
 
+    /// <summary>
+    /// Гармоні-перехоплювач ванільного методу Verse.Log.Error.
+    /// </summary>
     [HarmonyPatch(typeof(Log))]
     [HarmonyPatch("Error")]
     [HarmonyPatch(new Type[] { typeof(string) })]
