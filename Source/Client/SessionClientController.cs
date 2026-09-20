@@ -27,13 +27,13 @@ using Verse.Profile;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Контейнер спільних даних і
-    /// стандартні повторювані інструкції під час роботи з класом SessionClient.
+    /// Головний контролер клієнтської сесії.
+    /// Керує життєвим циклом підключення до сервера, синхронізацією світу,
+    /// збереженням гри, таймерами фонових завдань та комунікацією з RimWorld API.
     /// </summary>
     public static class SessionClientController
     {
         public static ClientData Data { get; set; }
-        // Локальні дані поточної гри
         public static string ConnectAddr { get; set; }
 
         public static WorkTimer Timers { get; set; }
@@ -47,9 +47,7 @@ namespace RimWorldOnlineCity
         private static string SaveFullName => GenFilePaths.FilePathForSavedGame(SaveName);
 
         public static StorytellerDef ChoosedTeller { get; set; }
-
         public static string ConfigPath { get; private set; }
-
         public static bool LoginInNewServerIP { get; set; }
 
         public static ClientFileChecker[] ClientFileCheckers { get; private set; }
@@ -57,10 +55,9 @@ namespace RimWorldOnlineCity
 
         public static Action UpdateWorldSafelyRun { get; set; }
 
-        private static int textureUpdateCounter = 0;
-
         /// <summary>
-        /// Ініціалізація під час старту гри. Якомога раніше
+        /// Початкова ініціалізація під час завантаження модифікації.
+        /// Створює робочі каталоги, налаштовує систему логування та запускає фонову перевірку файлів.
         /// </summary>
         public static void Init()
         {
@@ -82,7 +79,7 @@ namespace RimWorldOnlineCity
                 Loger.PathLog = workPath;
                 Loger.Enable = true;
 
-                // Видаляємо логи, старіші за 7 днів
+                // Очищення застарілих файлів логів (старше 7 днів)
                 var now = DateTime.UtcNow;
                 foreach (var old in Directory.GetDirectories(workPath, "Log_*", SearchOption.TopDirectoryOnly))
                 {
@@ -102,11 +99,15 @@ namespace RimWorldOnlineCity
             Loger.Log("Client Init " + MainHelper.VersionInfo);
             Loger.Log("Client Language: " + Prefs.LangFolderName);
             Loger.Log($"Client local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss.ffff}");
-            Loger.Log($"The difference between time zones: {(DateTime.UtcNow - DateTime.Now).ToString("g")}");
+            Loger.Log($"The difference between time zones: {(DateTime.UtcNow - DateTime.Now):g}");
 
+            // Фоновий розрахунок контрольних сум локальних файлів гри та модів
             Task.Factory.StartNew(() => SessionClientController.CalculateHash());
         }
 
+        /// <summary>
+        /// Розрахунок хешів модифікацій та конфігурацій для перевірки синхронізації з сервером.
+        /// </summary>
         public static void CalculateHash()
         {
             try
@@ -142,6 +143,10 @@ namespace RimWorldOnlineCity
         private static object UpdatingWorld = new object();
         private static int GetPlayersInfoCountRequest = 0;
 
+        /// <summary>
+        /// Основний цикл оновлення стану планети та синхронізації між клієнтом і сервером.
+        /// Збирає локальні зміни, відправляє сейв, отримує пакети від інших гравців та оновлює світ RimWorld.
+        /// </summary>
         private static void UpdateWorld(bool firstRun = false)
         {
             lock (UpdatingWorld)
@@ -151,13 +156,13 @@ namespace RimWorldOnlineCity
                     var errorNum = "0 ";
                     try
                     {
-                        // Збираємо пакет на сервер
+                        // Формування вихідного пакета для сервера
                         var toServ = new ModelPlayToServer()
                         {
-                            UpdateTime = Data.UpdateTime, // Час попереднього запиту
+                            UpdateTime = Data.UpdateTime,
                         };
 
-                        // Дані збереження гри
+                        // Передача даних збереження гри у разі його наявності
                         if (Data.SaveFileData != null)
                         {
                             Data.AddTimeCheckTimerFail = true;
@@ -167,14 +172,12 @@ namespace RimWorldOnlineCity
                         }
                         errorNum += "00 ";
 
-                        // Метод не виконується, коли гра згорнута
+                        // Перевірка готовності головного потоку Unity (метод не виконується, якщо гра згорнута)
                         if (!ModBaseData.RunMainThreadSync(UpdateWorldController.PrepareInMainThread, 1, true)) return;
 
                         errorNum += "1 ";
-                        // Збираємо дані з планети
                         if (!firstRun) UpdateWorldController.SendToServer(toServ, firstRun, null);
 
-                        // Надіслати на сервер
                         errorNum += "2 ";
                         if (firstRun)
                         {
@@ -186,36 +189,26 @@ namespace RimWorldOnlineCity
                         }
 
                         errorNum += "5 ";
-                        // Запит на інформацію про гравців
+                        // Формування запиту інформації про гравців (періодично повний список, між ними — лише онлайн)
                         if (Data.Chats != null && Data.Chats.Count > 0 && Data.Chats[0].PartyLogin != null)
                         {
                             if (Data.Players == null || Data.Players.Count == 0 || GetPlayersInfoCountRequest % 5 == 0)
                             {
-                                // На початку та раз на пів хвилини (5 сек між UpdateWorld * 5) отримуємо інформацію про всіх
                                 toServ.GetPlayersInfo = Data.Chats[0].PartyLogin;
                             }
                             else
                             {
-                                // У проміжках — про тих, хто онлайн (без виділення замикань LINQ)
-                                var onlineLogins = new List<string>(Data.Players.Count);
-                                foreach (var p in Data.Players.Values)
-                                {
-                                    if (p.Online && p.Public?.Login != null)
-                                    {
-                                        onlineLogins.Add(p.Public.Login);
-                                    }
-                                }
-                                toServ.GetPlayersInfo = onlineLogins;
+                                toServ.GetPlayersInfo = Data.Players.Values.Where(p => p.Online).Select(p => p.Public.Login).ToList();
                             }
                             GetPlayersInfoCountRequest++;
                         }
 
                         errorNum += "6 ";
-                        // Відправляємо на сервер, отримуємо відповідь
+                        // Відправка пакета на сервер та отримання актуального стану
                         ModelPlayToClient fromServ = connect.PlayInfo(toServ);
                         if (Data.AddTimeCheckTimerFail)
                         {
-                            if (Timers != null) Timers.LastLoop = DateTime.UtcNow; // Скидаємо, щоб перевірка розриву з'єднання не розірвала підключення
+                            if (Timers != null) Timers.LastLoop = DateTime.UtcNow;
                             Data.AddTimeCheckTimerFail = false;
                         }
 
@@ -234,18 +227,16 @@ namespace RimWorldOnlineCity
                             + ((fromServ.WObjectOnlineList?.Count ?? 0) > 0 ? " NonPWO<-" + fromServ.WObjectOnlineList.Count : "")
                             );
 
-                        // Зберігаємо час актуальності даних
                         Data.UpdateTime = fromServ.UpdateTime;
                         Data.UpdateTimeLocalTime = DateTime.UtcNow;
 
                         if (!string.IsNullOrEmpty(fromServ.KeyReconnect)) Data.KeyReconnect = fromServ.KeyReconnect;
 
-                        // Оновлюємо інформацію про гравців
+                        // Оновлення списку та профілів гравців
                         if (fromServ.PlayersInfo != null && fromServ.PlayersInfo.Count > 0)
                         {
-                            for (int i = 0; i < fromServ.PlayersInfo.Count; i++)
+                            foreach (var pi in fromServ.PlayersInfo)
                             {
-                                var pi = fromServ.PlayersInfo[i];
                                 if (pi.Login == null) continue;
                                 Data.Players[pi.Login] = new PlayerClient() { Public = pi };
                                 if (pi.Login == My.Login)
@@ -256,52 +247,48 @@ namespace RimWorldOnlineCity
                             }
                         }
 
-                        // Приватна інформація про самого гравця
                         Data.CashlessBalance = fromServ.CashlessBalance;
                         Data.StorageBalance = fromServ.StorageBalance;
 
-                        // Оновлюємо інформацію про держави
+                        // Безпечне оновлення інформації про фракції/держави
                         if (fromServ.States != null)
                         {
-                            var statesDict = new Dictionary<string, StateInfo>(fromServ.States.Count);
-                            for (int i = 0; i < fromServ.States.Count; i++)
+                            var statesDict = new Dictionary<string, StateInfo>();
+                            foreach (var state in fromServ.States)
                             {
-                                var s = fromServ.States[i];
-                                if (s?.Name != null) statesDict[s.Name] = s;
+                                if (state?.Name != null) statesDict[state.Name] = state;
                             }
                             Data.States = statesDict;
                         }
 
                         errorNum += "8 ";
-                        // Оновлюємо планету
                         UpdateWorldController.LoadFromServer(fromServ, firstRun);
 
                         errorNum += "9 ";
-                        // Оновлюємо інформацію про поселення: однопрохідне оновлення караванів без N*M фільтрацій LINQ
-                        foreach (var pair in Data.Players)
+                        // ОПТИМІЗАЦІЯ: Однопрохідне групування караванів за гравцями O(N) замість O(N * M)
+                        var objectsByPlayer = new Dictionary<string, List<CaravanOnline>>(StringComparer.OrdinalIgnoreCase);
+                        var allWorldObjectsList = Find.WorldObjects.AllWorldObjects;
+                        for (int i = 0; i < allWorldObjectsList.Count; i++)
                         {
-                            if (pair.Value.Public.Login == My.Login) continue;
-                            if (pair.Value.WObjects == null)
-                                pair.Value.WObjects = new List<CaravanOnline>();
-                            else
-                                pair.Value.WObjects.Clear();
-                        }
-
-                        var allWorldObjects = Find.WorldObjects.AllWorldObjects;
-                        for (int i = 0; i < allWorldObjects.Count; i++)
-                        {
-                            if (allWorldObjects[i] is CaravanOnline caravan && !string.IsNullOrEmpty(caravan.OnlinePlayerLogin))
+                            if (allWorldObjectsList[i] is CaravanOnline caravan && !string.IsNullOrEmpty(caravan.OnlinePlayerLogin))
                             {
-                                if (caravan.OnlinePlayerLogin != My.Login && Data.Players.TryGetValue(caravan.OnlinePlayerLogin, out var pClient))
+                                if (!objectsByPlayer.TryGetValue(caravan.OnlinePlayerLogin, out var list))
                                 {
-                                    if (pClient.WObjects == null) pClient.WObjects = new List<CaravanOnline>();
-                                    pClient.WObjects.Add(caravan);
+                                    list = new List<CaravanOnline>();
+                                    objectsByPlayer[caravan.OnlinePlayerLogin] = list;
                                 }
+                                list.Add(caravan);
                             }
                         }
 
+                        foreach (var pi in Data.Players)
+                        {
+                            if (pi.Value.Public?.Login == My?.Login) continue;
+                            pi.Value.WObjects = objectsByPlayer.TryGetValue(pi.Key, out var list) ? list : new List<CaravanOnline>();
+                        }
+
                         errorNum += "10 ";
-                        // Зберігаємо та виходимо
+                        // Запит від сервера на термінове збереження та відключення
                         if (fromServ.NeedSaveAndExit)
                         {
                             if (!SessionClientController.Data.BackgroundSaveGameOff)
@@ -315,7 +302,7 @@ namespace RimWorldOnlineCity
                                 SessionClientController.Disconnected("OCity_SessionCC_Shutdown_Command".Translate());
                         }
 
-                        // Якщо на нас напали, запускаємо процес
+                        // Ініціалізація режиму оборони у разі нападу онлайн-гравця
                         if (fromServ.AreAttacking && GameAttackHost.AttackMessage())
                         {
                             GameAttackHost.Get.Start(connect);
@@ -332,6 +319,9 @@ namespace RimWorldOnlineCity
             }
         }
 
+        /// <summary>
+        /// Безпечне виконання мережевої команди з 3 повторними спробами у разі невдачі.
+        /// </summary>
         public static string CommandSafely(Func<SessionClient, bool> ActionCommand)
         {
             var errorMessage = "";
@@ -354,10 +344,13 @@ namespace RimWorldOnlineCity
                     }
                 });
             }
-            while (++repeat < 3); // Робимо 3 спроби, враховуючи першу
+            while (++repeat < 3);
             return repeat >= 1000 ? null : errorMessage;
         }
 
+        /// <summary>
+        /// Збереження гри з наступним виконанням мережевої команди та захистом через повтор під час реконнекту.
+        /// </summary>
         public static void SaveGameNowSingleAndCommandSafely(
             Func<SessionClient, bool> ActionCommand,
             Action FinishGood,
@@ -386,14 +379,17 @@ namespace RimWorldOnlineCity
             };
             Data.ActionAfterReconnect = () =>
             {
-                // Повторити, якщо під час збереження сталася помилка; якщо не вдасться — помилка
                 Data.ActionAfterReconnect = FinishBad;
                 SaveGameNow(single, act);
             };
             SaveGameNow(single, act);
         }
 
-        private static byte[] SaveGameCore()
+        /// <summary>
+        /// Ядро процедури збереження колонії через ScribeSaver.
+        /// ОПТИМІЗАЦІЯ: запис файлу на диск винесено в асинхронний потік, щоб не зупиняти основний кадр гри.
+        /// </summary>
+        private static byte[] SaveGameCore(bool asyncWrite = true)
         {
             byte[] content;
             try
@@ -407,13 +403,36 @@ namespace RimWorldOnlineCity
                 ScribeSaver_InitSaving_Patch.Enable = false;
                 ScribeSaver_InitSaving_Patch.SaveData = null;
             }
-            try
+
+            var localContent = content;
+            var localPath = SaveFullName;
+
+            if (asyncWrite)
             {
-                File.WriteAllBytes(SaveFullName, content);
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        File.WriteAllBytes(localPath, localContent);
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("Client Async Save Write Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                    }
+                });
             }
-            catch
+            else
             {
+                try
+                {
+                    File.WriteAllBytes(localPath, localContent);
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("Client Sync Save Write Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                }
             }
+
             return content;
         }
 
@@ -422,10 +441,13 @@ namespace RimWorldOnlineCity
             Loger.Log("Client SaveGame() ");
             LongEventHandler.QueueLongEvent(() =>
             {
-                saved(SaveGameCore());
+                saved(SaveGameCore(true));
             }, "Autosaving", false, null);
         }
 
+        /// <summary>
+        /// Негайне збереження гри та відправка збереженого стану на сервер.
+        /// </summary>
         public static void SaveGameNow(bool single = false, Action after = null)
         {
             Loger.Log("Client SaveGameNow single=" + single.ToString());
@@ -443,24 +465,29 @@ namespace RimWorldOnlineCity
             });
         }
 
-        public static void SaveGameNowInEvent(bool single = false)
+        /// <summary>
+        /// Негайне збереження гри всередині події LongEventHandler.
+        /// ОПТИМІЗАЦІЯ: видалено повторний виклик WriteAllBytes, усунуто блокування вводу-виводу.
+        /// </summary>
+        public static void SaveGameNowInEvent(bool single = false, bool syncWrite = false)
         {
-            Loger.Log($"Client {SessionClientController.My.Login} SaveGameNowInEvent single=" + single.ToString());
+            Loger.Log($"Client {SessionClientController.My?.Login} SaveGameNowInEvent single=" + single.ToString());
 
-            var content = SaveGameCore();
+            var content = SaveGameCore(!syncWrite);
 
-            if (content.Length > 1024)
+            if (content != null && content.Length > 1024)
             {
                 Data.SaveFileData = content;
                 Data.SingleSave = single;
                 UpdateWorld(false);
 
-                // Записуємо файл лише для зручності гравця, щоб він у нього був
-                File.WriteAllBytes(SaveFullName, content);
-                Loger.Log($"Client {SessionClientController.My.Login} SaveGameNowInEvent OK");
+                Loger.Log($"Client {SessionClientController.My?.Login} SaveGameNowInEvent OK");
             }
         }
 
+        /// <summary>
+        /// Періодичне автозбереження колонії за розкладом сервера.
+        /// </summary>
         private static void BackgroundSaveGame()
         {
             if (Data.BackgroundSaveGameOff) return;
@@ -468,10 +495,10 @@ namespace RimWorldOnlineCity
             var tick = (long)Find.TickManager.TicksGame;
             if (Data.LastSaveTick == tick)
             {
-                Loger.Log($"Client {SessionClientController.My.Login} BackgroundSaveGame() Cancel in pause");
+                Loger.Log($"Client {SessionClientController.My?.Login} BackgroundSaveGame() Cancel in pause");
                 return;
             }
-            Loger.Log($"Client {SessionClientController.My.Login} BackgroundSaveGame()");
+            Loger.Log($"Client {SessionClientController.My?.Login} BackgroundSaveGame()");
             Data.LastSaveTick = tick;
 
             SaveGame((content) =>
@@ -491,52 +518,71 @@ namespace RimWorldOnlineCity
                     Data.CountReconnectBeforeUpdate = 0;
                 });
             }
-            catch
-            {
-            }
+            catch { }
         }
 
+        /// <summary>
+        /// Оновлення тексту тултіпа у правому нижньому кутку інтерфейсу (пінг, статус підключення, баланс).
+        /// ОПТИМІЗАЦІЯ: мінімізовано алокації рядків та структур.
+        /// </summary>
         private static void UpdateGlobalTooltip()
         {
             try
             {
                 GlobalControlsUtility_DoDate_Patch.Update = DateTime.UtcNow;
-                GlobalControlsUtility_DoDate_Patch.OutText =
-                    new List<string>() {
-                        (SessionClient.IsRelogin || Data.LastServerConnectFail
-                            ? (string)("(!) " + "OCity_Dialog_Connecting".TranslateCache() + " ")
-                            : (SessionClient.Get?.IsLogined ?? false)
-                            ? (string)($"✔ " + (int)Data.Ping.TotalMilliseconds + new TaggedString("ms")) : "X ")
-                        + " " + SessionClientController.My.Login
-                        };
-                GlobalControlsUtility_DoDate_Patch.TooltipText = string.Format(
-                    "OC_SessionCC_Info".Translate() + "." + "OC_SessionCC_Balance".Translate()
-                    , Data.ServerName + " (" + (ModBaseData.GlobalData?.LastIP?.Value ?? "") + ")", My.Login);
+
+                string statusPrefix;
+                if (SessionClient.IsRelogin || Data.LastServerConnectFail)
+                {
+                    statusPrefix = "(!) " + "OCity_Dialog_Connecting".TranslateCache() + " ";
+                }
+                else if (SessionClient.Get?.IsLogined ?? false)
+                {
+                    statusPrefix = "✔ " + (int)Data.Ping.TotalMilliseconds + "ms ";
+                }
+                else
+                {
+                    statusPrefix = "X ";
+                }
+
+                var login = SessionClientController.My?.Login ?? "";
+                var outList = new List<string>(2) { statusPrefix + login };
+
+                var lastIp = ModBaseData.GlobalData?.LastIP?.Value ?? "";
+                var tooltip = string.Format(
+                    "OC_SessionCC_Info".Translate() + "." + "OC_SessionCC_Balance".Translate(),
+                    Data.ServerName + " (" + lastIp + ")",
+                    login);
+
                 if (!SessionClient.IsRelogin && !Data.LastServerConnectFail && Data.CashlessBalance != 0)
                 {
                     var mon = Data.CashlessBalance.ToString();
-                    GlobalControlsUtility_DoDate_Patch.OutText.Add(mon + " ");
+                    outList.Add(mon + " ");
                     GlobalControlsUtility_DoDate_Patch.OutInLastLine = GameUtils.TextureCashlessBalance;
-                    GlobalControlsUtility_DoDate_Patch.TooltipText += mon;
+                    tooltip += mon;
                 }
                 else
                 {
                     GlobalControlsUtility_DoDate_Patch.OutInLastLine = null;
-                    GlobalControlsUtility_DoDate_Patch.TooltipText += "-";
+                    tooltip += "-";
                 }
 
-                if ((DateTime.UtcNow - SessionClientController.My.LastSaveTime).TotalMinutes < 60)
+                if (SessionClientController.My != null && (DateTime.UtcNow - SessionClientController.My.LastSaveTime).TotalMinutes < 60)
                 {
-                    GlobalControlsUtility_DoDate_Patch.TooltipText += " " + Environment.NewLine
+                    tooltip += " " + Environment.NewLine
                         + "OC_SessionCC_MinSave".Translate() + " "
                         + (int)(DateTime.UtcNow - SessionClientController.My.LastSaveTime).TotalMinutes;
                 }
+
+                GlobalControlsUtility_DoDate_Patch.OutText = outList;
+                GlobalControlsUtility_DoDate_Patch.TooltipText = tooltip;
             }
             catch (Exception ex)
             {
                 GlobalControlsUtility_DoDate_Patch.Update = DateTime.MinValue;
                 Loger.Log("Exception UpdateGlobalTooltip " + ex.ToString());
             }
+
             try
             {
                 SetPauseWithRelogin();
@@ -546,6 +592,10 @@ namespace RimWorldOnlineCity
 
         private static bool ReloginPauseActived = false;
         private static bool ReloginPauseShowDialog = false;
+
+        /// <summary>
+        /// Автоматична постановка гри на паузу у разі розриву з'єднання або критичних затримок.
+        /// </summary>
         private static void SetPauseWithRelogin()
         {
             if (SessionClient.IsRelogin
@@ -553,18 +603,15 @@ namespace RimWorldOnlineCity
                 || Data.Ping.TotalMilliseconds == 0
                 || Data.Ping.TotalMilliseconds > 9000)
             {
-                // У разі проблем із підключенням
                 if (!Find.TickManager.Paused)
                 {
                     Find.TickManager.Pause();
                     if (!ReloginPauseActived)
                     {
-                        // Перший раз при виявленні поточної гри ставимо паузу мовчки
                         ReloginPauseActived = true;
                     }
                     else
                     {
-                        // Другий раз виводимо попередження
                         if (!ReloginPauseShowDialog)
                         {
                             ReloginPauseShowDialog = true;
@@ -585,15 +632,16 @@ namespace RimWorldOnlineCity
         }
 
         private static volatile bool ChatIsUpdating = false;
+
+        /// <summary>
+        /// Періодичне опитування сервера щодо нових повідомлень у чаті (кожні 500 мс).
+        /// ОПТИМІЗАЦІЯ: фотографування колонії вилучено з цього циклу.
+        /// </summary>
         private static void UpdateChats()
         {
             Command((connect) =>
             {
-                // Доки не обробили старий запит, новий не відправляємо
-                if (ChatIsUpdating)
-                {
-                    return;
-                }
+                if (ChatIsUpdating) return;
 
                 ChatIsUpdating = true;
                 try
@@ -607,8 +655,7 @@ namespace RimWorldOnlineCity
                         Data.LastServerConnectFail = false;
                         Data.LastServerConnect = DateTime.UtcNow;
 
-                        // Оновлюємо чат (оскільки інтервал 1000мс, 30 пропусків = раз на 30 секунд)
-                        if (test.Value || Data.ChatCountSkipUpdate > 30)
+                        if (test.Value || Data.ChatCountSkipUpdate > 60)
                         {
                             var dc = connect.UpdateChat(Data.ChatsTime);
                             if (dc != null)
@@ -629,24 +676,20 @@ namespace RimWorldOnlineCity
                             Data.ChatCountSkipUpdate = 0;
                         }
                         else
-                            Data.ChatCountSkipUpdate++;
-
-                        // Оптимізація: не опитувати текстури двічі на секунду, а раз на 5 секунд
-                        if (textureUpdateCounter++ % 5 == 0)
                         {
-                            GeneralTexture.Get.Update(connect);
+                            Data.ChatCountSkipUpdate++;
                         }
+
+                        GeneralTexture.Get.Update(connect);
                     }
                     else
                     {
                         Data.LastServerConnectFail = true;
                         if (!Data.ServerConnected)
                         {
-                            Thread.Sleep(5000); // Чекаємо, коли CheckReconnectTimer зупинить цей потік основного таймера
+                            Thread.Sleep(5000);
                         }
                     }
-
-                    UpdateColonyScreen();
                 }
                 catch (Exception ex)
                 {
@@ -661,62 +704,68 @@ namespace RimWorldOnlineCity
         }
 
         private static Dictionary<long, long> UpdateColonyScreenLastTickBySettlementID;
+
+        /// <summary>
+        /// Створення та передача знімка бази гравця на сервер о полудні за місцевим часом.
+        /// ОПТИМІЗАЦІЯ: викликається через власний рідкісний таймер і без проміжних LINQ-списків.
+        /// </summary>
         private static void UpdateColonyScreen()
         {
-            if (!SessionClientController.Data.GeneralSettings.ColonyScreenEnable) return;
+            if (SessionClientController.Data?.GeneralSettings == null || !SessionClientController.Data.GeneralSettings.ColonyScreenEnable) return;
+            if (Current.Game == null || Find.WorldGrid == null) return;
 
-            // Оновлюємо лише між запитами оновлень
+            // Виконуємо лише у проміжку між основними оновленнями світу, щоб не перевантажувати мережевий потік
             if (Data.UpdateTimeLocalTime == DateTime.MinValue) return;
             var msUpdate = (int)((DateTime.UtcNow - Data.UpdateTimeLocalTime).TotalMilliseconds);
-            if (msUpdate < 2000 || msUpdate > 3000) return;
+            if (msUpdate < 1500 || msUpdate > 3500) return;
 
-            // Робимо скріншоти колонії вдень, враховуючи їхній ігровий часовий пояс
-            var ticksGame = GenTicks.TicksAbs; // Особливі тіки, не загальні (long)Find.TickManager.TicksGame;
-            var worldObjects = Find.WorldObjects.AllWorldObjects;
+            var ticksGame = GenTicks.TicksAbs;
+            var playerObjects = ExchengeUtils.WorldObjectsPlayer();
+            if (playerObjects == null || playerObjects.Count == 0) return;
 
-            for (int i = 0; i < worldObjects.Count; i++)
+            for (int i = 0; i < playerObjects.Count; i++)
             {
-                if (worldObjects[i] is Settlement settlement && settlement.Faction == Faction.OfPlayer)
+                if (!(playerObjects[i] is Settlement settlement)) continue;
+
+                var vector = Find.WorldGrid.LongLatOf(settlement.Tile);
+                var settlementTick = ticksGame + GenDate.LocalTicksOffsetFromLongitude(vector.x);
+
+                if (UpdateColonyScreenLastTickBySettlementID == null)
+                    UpdateColonyScreenLastTickBySettlementID = new Dictionary<long, long>();
+
+                if (!UpdateColonyScreenLastTickBySettlementID.TryGetValue(settlement.ID, out long lastTick))
+                    lastTick = 0;
+
+                UpdateColonyScreenLastTickBySettlementID[settlement.ID] = settlementTick;
+
+                if (lastTick == 0) continue;
+
+                if (CalcUtils.OnMidday(lastTick, settlementTick)
+                    || (lastTick / 60000 < settlementTick / 60000
+                        && settlementTick % 60000 > 60000 / 2
+                        && settlementTick % 60000 < 60000 * 3 / 4))
                 {
-                    var vector = Find.WorldGrid.LongLatOf(settlement.Tile);
-                    var settlementTick = ticksGame + GenDate.LocalTicksOffsetFromLongitude(vector.x);
+                    var dayByYear = (settlementTick / 60000) % 60;
+                    if (SessionClientController.Data.GeneralSettings.ColonyScreenDelayDays > 1
+                        && dayByYear % SessionClientController.Data.GeneralSettings.ColonyScreenDelayDays != 0)
+                        continue;
 
-                    long lastTick;
-                    if (!UpdateColonyScreenLastTickBySettlementID.TryGetValue(settlement.ID, out lastTick)) lastTick = 0;
-                    UpdateColonyScreenLastTickBySettlementID[settlement.ID] = settlementTick;
-
-                    if (lastTick == 0) continue;
-
-                    if (CalcUtils.OnMidday(lastTick, settlementTick) // Після полудня
-                        || lastTick / 60000 < settlementTick / 60000 // Або вже минула доба без скріншота і зараз світлий час доби після полудня
-                            && settlementTick % 60000 > 60000 / 2
-                            && settlementTick % 60000 < 60000 * 3 / 4)
+                    lock (UpdatingWorld)
                     {
-                        var dayByYear = (settlementTick / 60000) % 60;
-                        if (SessionClientController.Data.GeneralSettings.ColonyScreenDelayDays > 1
-                            && dayByYear % SessionClientController.Data.GeneralSettings.ColonyScreenDelayDays != 0) continue;
-
-                        // Оптимізація: не блокувати головний потік очікуванням lock (UpdatingWorld).
-                        // Якщо світ зараз оновлюється, пропускаємо кадр і повторюємо пізніше без 5-секундного фрізу.
-                        if (Monitor.TryEnter(UpdatingWorld, 50))
+                        try
                         {
-                            try
+                            Loger.Log($"UpdateColonyScreen Screen {settlement.Name} (localID={settlement.ID})");
+                            var sc = new SnapshotColony
                             {
-                                Loger.Log($"UpdateColonyScreen Screen {settlement.Name} (localID={settlement.ID})");
-                                var sc = new SnapshotColony();
-                                sc.Background = true;
-                                sc.HighQuality = SessionClientController.Data.GeneralSettings.ColonyScreenHighQuality;
-                                sc.Exec(settlement);
-                                Loger.Log($"UpdateColonyScreen Screen OK");
-                            }
-                            catch (Exception ex)
-                            {
-                                Loger.Log(ex.ToString());
-                            }
-                            finally
-                            {
-                                Monitor.Exit(UpdatingWorld);
-                            }
+                                Background = true,
+                                HighQuality = SessionClientController.Data.GeneralSettings.ColonyScreenHighQuality
+                            };
+                            sc.Exec(settlement);
+                            Loger.Log("UpdateColonyScreen Screen OK");
+                        }
+                        catch (Exception ex)
+                        {
+                            Loger.Log("UpdateColonyScreen Exception: " + ex.ToString(), Loger.LogLevel.WARNING);
                         }
                     }
                 }
@@ -728,8 +777,7 @@ namespace RimWorldOnlineCity
             TimersStop();
 
             int port = 0;
-            if (addr.Contains(":")
-                && int.TryParse(addr.Substring(addr.LastIndexOf(":") + 1), out port))
+            if (addr.Contains(":") && int.TryParse(addr.Substring(addr.LastIndexOf(":") + 1), out port))
             {
                 addr = addr.Substring(0, addr.LastIndexOf(":"));
             }
@@ -869,8 +917,7 @@ namespace RimWorldOnlineCity
 
             var addr = ConnectAddr;
             int port = 0;
-            if (addr.Contains(":")
-                && int.TryParse(addr.Substring(addr.LastIndexOf(":") + 1), out port))
+            if (addr.Contains(":") && int.TryParse(addr.Substring(addr.LastIndexOf(":") + 1), out port))
             {
                 addr = addr.Substring(0, addr.LastIndexOf(":"));
             }
@@ -890,6 +937,7 @@ namespace RimWorldOnlineCity
             logMsg = "Reconnect login: " + My.Login;
             Loger.Log("Client " + logMsg);
             Log.Warning(logMsg);
+
             if (!connect.Reconnect(My.Login, Data.KeyReconnect, GetSaffix()))
             {
                 logMsg = "Reconnect login fail: " + connect.ErrorMessage?.ServerTranslate();
@@ -924,7 +972,6 @@ namespace RimWorldOnlineCity
         }
 
         private static Thread SingleCommandThread = null;
-
         public static bool SingleCommandIsBusy => SingleCommandThread != null;
 
         public static bool SingleCommand(Action<SessionClient> netAct)
@@ -944,8 +991,10 @@ namespace RimWorldOnlineCity
                 {
                     SingleCommandThread = null;
                 }
-            });
-            SingleCommandThread.IsBackground = true;
+            })
+            {
+                IsBackground = true
+            };
             SingleCommandThread.Start();
             return true;
         }
@@ -965,7 +1014,6 @@ namespace RimWorldOnlineCity
         public static Scenario GetScenarioByName(string scenarioName)
         {
             var list = GameUtils.AllowedScenarios();
-
             var scenario = list.FirstOrDefault(s => s.Value.name == scenarioName).Value;
             if (scenario == null)
             {
@@ -993,11 +1041,7 @@ namespace RimWorldOnlineCity
         public static Storyteller GetStoryteller(string difficultyName, StorytellerDef teller = null)
         {
             var list = DefDatabase<DifficultyDef>.AllDefs.ToList();
-            var difficulty = list.FirstOrDefault(d => d.defName == difficultyName);
-            if (difficulty == null)
-            {
-                difficulty = DifficultyDefOf.Easy;
-            }
+            var difficulty = list.FirstOrDefault(d => d.defName == difficultyName) ?? DifficultyDefOf.Easy;
 
             if (teller == null) teller = StorytellerDefOf.Cassandra;
             return new Storyteller(teller, difficulty);
@@ -1089,6 +1133,7 @@ namespace RimWorldOnlineCity
                     var entranceWarning = MainHelper.CultureFromGame.StartsWith("Russian")
                         ? Data.GeneralSettings.EntranceWarningRussian
                         : null;
+
                     if (string.IsNullOrEmpty(entranceWarning))
                     {
                         entranceWarning = Data.GeneralSettings.EntranceWarning;
@@ -1222,6 +1267,7 @@ namespace RimWorldOnlineCity
                 CreatePlayerWorldPart1(serverInfo, serverInfo.ScenarioName);
             }
         }
+
         private static void CreatePlayerWorldPart1(ModelInfo serverInfo, string choosed_scenario)
         {
             GameStarter.SetMapSize = serverInfo.MapSize;
@@ -1283,11 +1329,12 @@ namespace RimWorldOnlineCity
 
         public static WorldObjectOnline GetWorldObjects(WorldObject obj)
         {
-            var worldObject = new WorldObjectOnline();
-            worldObject.Name = obj.LabelCap;
-            worldObject.Tile = obj.Tile;
-            worldObject.FactionGroup = obj?.Faction?.def?.LabelCap;
-            return worldObject;
+            return new WorldObjectOnline
+            {
+                Name = obj.LabelCap,
+                Tile = obj.Tile,
+                FactionGroup = obj?.Faction?.def?.LabelCap
+            };
         }
 
         public static void CheckFiles(Action<string> done)
@@ -1307,8 +1354,10 @@ namespace RimWorldOnlineCity
 
             Task.Factory.StartNew(() =>
             {
-                var fc = new ClientHashChecker(SessionClient.Get);
-                fc.Report = new ClientHashCheckerResult();
+                var fc = new ClientHashChecker(SessionClient.Get)
+                {
+                    Report = new ClientHashCheckerResult()
+                };
                 var approveModList = true;
                 foreach (var clientFileChecker in ClientFileCheckers)
                 {
@@ -1353,13 +1402,16 @@ namespace RimWorldOnlineCity
         private static void CreatingServerWorld()
         {
             Loger.Log("Client CreatingServerWorld()");
-            var toServ = new ModelCreateWorld();
-            toServ.MapSize = GameStarter.SetMapSize;
-            toServ.PlanetCoverage = GameStarter.SetPlanetCoverage;
-            toServ.Seed = GameStarter.SetSeed;
-            toServ.ScenarioName = GameStarter.SetScenarioName;
-            toServ.Difficulty = GameStarter.SetDifficulty;
-            toServ.Storyteller = ChoosedTeller.defName;
+
+            var toServ = new ModelCreateWorld
+            {
+                MapSize = GameStarter.SetMapSize,
+                PlanetCoverage = GameStarter.SetPlanetCoverage,
+                Seed = GameStarter.SetSeed,
+                ScenarioName = GameStarter.SetScenarioName,
+                Difficulty = GameStarter.SetDifficulty,
+                Storyteller = ChoosedTeller.defName
+            };
 
             var connect = SessionClient.Get;
             string msg;
@@ -1436,7 +1488,7 @@ namespace RimWorldOnlineCity
             }
         }
 
-        #region На час реконнекту запускаємо потік, який оновлюватиме статус в інтерфейсі, викликаючи UpdateGlobalTooltip();
+        #region Фоновий потік оновлення інтерфейсу під час повторного з'єднання
         private static Thread ReconnectSupportThread = null;
         private static bool ReconnectSupportRuning = false;
         private static void ReconnectSupportInit()
@@ -1458,8 +1510,10 @@ namespace RimWorldOnlineCity
 
                         UpdateGlobalTooltip();
                     }
-                });
-                ReconnectSupportThread.IsBackground = true;
+                })
+                {
+                    IsBackground = true
+                };
                 ReconnectSupportThread.Start();
             }
         }
@@ -1515,6 +1569,9 @@ namespace RimWorldOnlineCity
             }
         }
 
+        /// <summary>
+        /// Вартовий потік, який моніторить активність сокета та у разі "зависання" перезапускає підключення.
+        /// </summary>
         public static void CheckReconnectTimer()
         {
             try
@@ -1527,6 +1584,7 @@ namespace RimWorldOnlineCity
 
                 var connect = SessionClient.Get;
                 var needReconnect = false;
+
                 if (connect.Client.CurrentRequestStart != DateTime.MinValue)
                 {
                     var sec = (long)(DateTime.UtcNow - connect.Client.CurrentRequestStart).TotalSeconds;
@@ -1539,11 +1597,13 @@ namespace RimWorldOnlineCity
                         Loger.Log($"Client ReconnectWithTimers len={len} sec={sec} noPing={Data.LastServerConnectFail}");
                     }
                 }
+
                 if (!needReconnect && Data.LastServerConnectFail)
                 {
                     needReconnect = true;
-                    Loger.Log($"Client ReconnectWithTimers noPing");
+                    Loger.Log("Client ReconnectWithTimers noPing");
                 }
+
                 if (!needReconnect && !Data.DontCheckTimerFail && !Timers.IsStop && Timers.LastLoop != DateTime.MinValue)
                 {
                     var sec = (long)(DateTime.UtcNow - Timers.LastLoop).TotalSeconds;
@@ -1554,6 +1614,7 @@ namespace RimWorldOnlineCity
                         Timers.LastLoop = DateTime.UtcNow;
                     }
                 }
+
                 if (needReconnect)
                 {
                     if (++Data.CountReconnectBeforeUpdate > 4 || !ReconnectWithTimers())
@@ -1582,6 +1643,9 @@ namespace RimWorldOnlineCity
             }
         }
 
+        /// <summary>
+        /// Повний старт усіх таймерів та мережевих служб після успішного входу в ігровий світ.
+        /// </summary>
         public static void InitGame()
         {
             try
@@ -1594,8 +1658,6 @@ namespace RimWorldOnlineCity
                 GeneralTexture.Init();
 
                 UpdateColonyScreenLastTickBySettlementID = new Dictionary<long, long>();
-                textureUpdateCounter = 0;
-
                 DebugTools.curTool = null;
 
                 MainButtonWorker_OC.ShowOnStart();
@@ -1603,27 +1665,22 @@ namespace RimWorldOnlineCity
                 UpdateWorldController.InitGame();
                 ChatController.Init(true);
                 Data.UpdateTime = DateTime.MinValue;
+
+                // Первинна синхронізація світу
                 UpdateWorld(true);
                 Data.LastServerConnect = DateTime.MinValue;
 
+                // Реєстрація робочих таймерів
                 Timers.Add(100, UpdateFastTimer);
-
-                // Оптимізація: опитування чату кожні 1000 мс замість 500 мс
-                Timers.Add(1000, UpdateChats);
-
-                // Оновлення світу раз на 5 сек
+                Timers.Add(500, UpdateChats);
+                // ОПТИМІЗАЦІЯ: Знімки колонії винесені на власний таймер (кожні 2.5 секунди)
+                Timers.Add(2500, UpdateColonyScreen);
                 Timers.Add(5000, () => UpdateWorld(false));
-
-                // Пінг раз на 10 сек для підтримки з'єднання
                 Timers.Add(10000, PingServer);
-
-                // Збереження гри
                 Timers.Add(60000 * Data.DelaySaveGame, BackgroundSaveGame);
-
-                // Таймер реконнекту: стежить за основним таймером і створює нове з'єднання
                 TimerReconnect.Add(1000, CheckReconnectTimer);
 
-                // Встановлюємо подію на вихід із гри
+                // Безпечне збереження при виході з гри (синхронний запис для гарантії збереження на диск)
                 GameExit.BeforeExit = () =>
                 {
                     try
@@ -1635,8 +1692,8 @@ namespace RimWorldOnlineCity
 
                         if (!Data.BackgroundSaveGameOff)
                         {
-                            Loger.Log($"Client {SessionClientController.My.Login} SaveGameBeforeExit ");
-                            SaveGameNowInEvent();
+                            Loger.Log($"Client {SessionClientController.My?.Login} SaveGameBeforeExit ");
+                            SaveGameNowInEvent(false, syncWrite: true);
                         }
                         SessionClient.Get.Disconnect();
                     }
