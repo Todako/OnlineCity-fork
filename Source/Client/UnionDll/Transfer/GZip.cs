@@ -30,7 +30,6 @@ namespace Util
 
         /// <summary>
         /// Швидке копіювання одного потоку в інший зі збільшеним буфером 64 КБ.
-        /// ОПТИМІЗАЦІЯ: усунено створення масиву new byte[4096] на кожен виклик.
         /// </summary>
         public static void CopyTo(Stream src, Stream dest)
         {
