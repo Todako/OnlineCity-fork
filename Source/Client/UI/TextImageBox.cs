@@ -1,13 +1,12 @@
-﻿using RimWorld;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using UnityEngine;
+﻿using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
+    /// <summary>
+    /// Контейнер відображення форматованого тексту з зображеннями та підтримкою прокручування.
+    /// ОПТИМІЗАЦІЯ: кешування висоти та ширини виключає повторні виклики перерахунку розмірів щокадру.
+    /// </summary>
     public class TextImageBox : DialogControlBase
     {
         public string Text
@@ -15,46 +14,55 @@ namespace RimWorldOnlineCity.UI
             get => Panel.PrintText;
             set => Panel.PrintText = value;
         }
-        public Vector2 ScrollPosition = new Vector2();
-        private PanelText Panel;
 
-        private string TextLastDrow;
-        private float WidthLastDrow;
-        private float HeightLastDrow;
-        private bool ScrollToDownLastDrow;
+        public Vector2 ScrollPosition = new Vector2();
+        private readonly PanelText Panel;
+
+        private string _textLastDrow;
+        private float _widthLastDrow;
+        private float _heightLastDrow;
+        private bool _scrollToDownLastDrow;
 
         public TextImageBox()
         {
             Panel = new PanelText();
-            Text = "";
+            Text = string.Empty;
         }
 
+        /// <summary>
+        /// Відмальовує текстову панель із підтримкою плавного скролу.
+        /// </summary>
         public void Drow(Rect chatAreaOuter, bool scrollToDown = false)
         {
-            var chatAreaInner = new Rect(0, 0, chatAreaOuter.width - ListBox<string>.WidthScrollLine, 0);
+            var chatAreaInner = new Rect(0, 0, chatAreaOuter.width - WidthScrollLine, 0);
             if (chatAreaInner.width <= 0) return;
 
-            var calcHeight = 0f;
-            if (TextLastDrow == Panel.PrintText && WidthLastDrow == chatAreaInner.width && HeightLastDrow > 0)
+            float calcHeight = 0f;
+            string currentText = Panel.PrintText;
+
+            // Швидка перевірка: чи збігається текст за посиланням або значенням, і чи не змінилася ширина
+            bool isSameText = ReferenceEquals(_textLastDrow, currentText) || _textLastDrow == currentText;
+            bool isSameWidth = Mathf.Abs(_widthLastDrow - chatAreaInner.width) < 0.1f;
+
+            if (isSameText && isSameWidth && _heightLastDrow > 0)
             {
-                //если размер уже вычеслен для этого текста, то устанавливаем его
-                chatAreaInner.height = HeightLastDrow;
-                if (ScrollToDownLastDrow)
+                // Якщо розмір уже розраховано для цього тексту та ширини — використовуємо його без перерахунку
+                chatAreaInner.height = _heightLastDrow;
+                if (_scrollToDownLastDrow)
                 {
                     scrollToDown = true;
-                    ScrollToDownLastDrow = false;
+                    _scrollToDownLastDrow = false;
                 }
             }
             else
             {
-                //если размер не известен, то выводим до конца
+                // Якщо розмір невідомий — розраховуємо з запасом і плануємо автоскрол на наступний кадр
                 calcHeight = 10000f;
                 chatAreaInner.height = chatAreaOuter.height;
-                //если была команда прокрутить, то передадим её на следующий фрейм, т.к. тут нет данных о высоте
-                ScrollToDownLastDrow = scrollToDown; 
+                _scrollToDownLastDrow = scrollToDown;
             }
 
-            if (scrollToDown)
+            if (scrollToDown && chatAreaInner.height > chatAreaOuter.height)
             {
                 ScrollPosition.y = chatAreaInner.height - chatAreaOuter.height;
             }
@@ -62,14 +70,12 @@ namespace RimWorldOnlineCity.UI
             ScrollPosition = GUI.BeginScrollView(chatAreaOuter, ScrollPosition, chatAreaInner);
             GUILayout.BeginArea(chatAreaInner);
 
-            HeightLastDrow = Panel.Drow(chatAreaInner, calcHeight);
-            WidthLastDrow = chatAreaInner.width;
-            TextLastDrow = Panel.PrintText;
+            _heightLastDrow = Panel.Drow(chatAreaInner, calcHeight);
+            _widthLastDrow = chatAreaInner.width;
+            _textLastDrow = currentText;
 
             GUILayout.EndArea();
             GUI.EndScrollView();
-
-
         }
     }
 }

@@ -6,40 +6,17 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
+    /// <summary>
+    /// Високопродуктивний компонент рендерингу розміченого тексту (RichText),
+    /// інтерактивних кнопок (<btn>), картинок (<img />) та локалізованих описів (<l>).
+    /// </summary>
     public class PanelText : DialogControlBase
     {
-        /*
-            Функции отрисовки GUI.* очень ограничены. Есть функция вывода красивого текста Rich Text (GUILayout.Label()), 
-        но в нем не хватает двух важных компонентов: вывода изображений и реакцию на клик.
-            Если встречается наш собственный тэг, то распознаем его. Это или картинка (самозакрытый тэг <img name="" />) 
-        или тэг с событием клика (<btn act="">...</btn>). Параметр только один у обоих тэгов, определяется так: 
-        значение между = (или с начала) и > (или />), потом Trim, потом убирать " если они с двух сторон.
-            Отдельно обрабатывается тэг <l></l> внутри которой фраза для локализации игрой. Также можно локализовать def'ы, 
-        например: <l>Ocean.label</l> будет "океан", <l>Ocean.description</l> будет "Открытый океан. Подходящее место для рыб, но не для вас."
-
-            Принимаемые данные: область Rect, строка текста с тэгами string, и два словаря имя-объект 
-        с данными по картинке, и имя-событие клика(в событие можно передать имя, порядковый номер тэга, 
-        возможно содержимое тэга, что под руку подвернется, можно ничего не передавать).
-
-            В объекте картинки будет сама текстура для вывода, и размер. Думаю при использовании такой готовый словарь иконок 
-        можно загрузить при старте и передавать в функцию из какого-нибудь статика всегда одинаковый набор.
-
-            По реализации: Этот компонент в заданной области отрисовывает текст с прямым контролем переносов. 
-        Или, другими словами мы берем текст, который принимает GUILayout.Label дробим его на слова
-        и отдельно вызываем эту функцию для каждого слова пока строка не кончится, после чего переходим на новую строку и продолжаем, 
-        пока полностью не выйдем за область печати.
-            Есть методы возвращающие размер, который займет текст: GUIStyle.CalcSize (можно ещё посмотреть ещё такой интересный класс как Verse.Text). 
-        Измеряем очередное слово, если помещается в строку рисуем, изменяем наше смещение, продолжаем.
-            Два варианта вывода, либо с коэф.: Text.CalcSize и Widgets.Label
-            Либо базовый: GUI.skin.textField.CalcSize и GUI.Label
-         */
-
         public string PrintText { get; set; }
 
         public static Dictionary<string, TagBtn> GlobalBtns { get; set; } = new Dictionary<string, TagBtn>();
@@ -49,238 +26,257 @@ namespace RimWorldOnlineCity.UI
 
         public static ConcurrentDictionary<string, string> LanguageInjections { get; set; } = new ConcurrentDictionary<string, string>();
 
-        private static ConcurrentDictionary<string, Tuple<ActionTree, float>> Optimization = new ConcurrentDictionary<string, Tuple<ActionTree, float>>();
+        /// <summary>
+        /// Структура ключа кешу без виділення пам'яті в купі (Zero GC Allocation Key).
+        /// Замінює важку конкатенацію рядків на кожному виклику OnGUI.
+        /// </summary>
+        private struct PanelCacheKey : IEquatable<PanelCacheKey>
+        {
+            public readonly int X;
+            public readonly int Y;
+            public readonly int Width;
+            public readonly int Height;
+            public readonly int DynamicHeight;
+            public readonly int TextHash;
+
+            public PanelCacheKey(Rect rect, float dynamicHeight, string text)
+            {
+                X = (int)rect.x;
+                Y = (int)rect.y;
+                Width = (int)rect.width;
+                Height = (int)rect.height;
+                DynamicHeight = (int)dynamicHeight;
+                TextHash = text != null ? text.GetHashCode() : 0;
+            }
+
+            public bool Equals(PanelCacheKey other)
+            {
+                return X == other.X && Y == other.Y && Width == other.Width && Height == other.Height
+                    && DynamicHeight == other.DynamicHeight && TextHash == other.TextHash;
+            }
+
+            public override bool Equals(object obj) => obj is PanelCacheKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = hash * 31 + X;
+                    hash = hash * 31 + Y;
+                    hash = hash * 31 + Width;
+                    hash = hash * 31 + Height;
+                    hash = hash * 31 + DynamicHeight;
+                    hash = hash * 31 + TextHash;
+                    return hash;
+                }
+            }
+        }
+
+        private class PanelCacheValue
+        {
+            public ActionTree Tree;
+            public float Height;
+        }
+
+        private static readonly ConcurrentDictionary<PanelCacheKey, PanelCacheValue> Optimization =
+            new ConcurrentDictionary<PanelCacheKey, PanelCacheValue>();
         private static DateTime OptimizationTime;
 
         private DateTime FirstCalcDrow = DateTime.MinValue;
-        private int FirstReady = 0;
 
         /// <summary>
-        /// Отрисовка компонента
+        /// Головна функція відмальовки компонента.
+        /// ОПТИМІЗАЦІЯ: миттєве виконання дерева команд ActionTree без перерахунку переносу слів.
         /// </summary>
-        /// <param name="inRect"></param>
-        /// <param name="dynamicHeight">Более приоритетная высота, до которой будет отрисовано</param>
-        /// <returns>Высота, которой достаточно для контента</returns>
         public float Drow(Rect inRect, float dynamicHeight = 0)
         {
-            if (PrintText == null
-                || PrintText.Length < 1
-                || inRect.width < 1f || inRect.height < 1f)
+            if (string.IsNullOrEmpty(PrintText) || inRect.width < 1f || inRect.height < 1f)
                 return 0f;
 
-            var key = inRect.ToString() + dynamicHeight.ToString() + PrintText.GetHashCode();
-
-            Tuple<ActionTree, float> res;
-
-            //if (FirstReady < 2 && FirstCalcDrow > DateTime.MinValue && FirstCalcDrow.AddSeconds(2) < DateTime.UtcNow)
-            //{
-            //    Log.Message("Recalc " + FirstReady);
-            //    //принудительно обновляем через 2 и через 6 секунд после первого отображения, для ожидания загрузки возможных картинок
-            //    FirstReady++; 
-            //    FirstCalcDrow = FirstCalcDrow.AddSeconds(6 - 2);
-
-            //    res = CalcDrow(inRect, dynamicHeight);
-            //    Optimization[key] = res;
-            //}
-            //else
+            // Періодичне очищення кешу раз на 60 секунд або при переповненні
+            if ((DateTime.UtcNow - OptimizationTime).TotalSeconds > 60 || Optimization.Count > 150)
             {
-                if ((DateTime.UtcNow - OptimizationTime).TotalSeconds > 60
-                    || Optimization.Count > 100)
-                {
-                    OptimizationTime = DateTime.UtcNow;
-                    Optimization = new ConcurrentDictionary<string, Tuple<ActionTree, float>>();
-                }
-                res = Optimization.GetOrAdd(key, k => CalcDrow(inRect, dynamicHeight));
+                OptimizationTime = DateTime.UtcNow;
+                Optimization.Clear();
             }
 
-            var act = res.Item1 as ActionTree;
-            do act.Act();
-            while ((act = act.Next) != null);
+            var key = new PanelCacheKey(inRect, dynamicHeight, PrintText);
+            if (!Optimization.TryGetValue(key, out var res))
+            {
+                res = CalcDrow(inRect, dynamicHeight);
+                Optimization[key] = res;
+            }
 
-            return res.Item2;
+            // Швидке послідовне виконання команд рендерингу
+            var act = res.Tree;
+            while (act != null)
+            {
+                act.Act();
+                act = act.Next;
+            }
+
+            return res.Height;
         }
 
-        private Tuple<ActionTree, float> CalcDrow(Rect inRect, float dynamicHeight = 0)
+        /// <summary>
+        /// Обчислення розташування слів, картинок та формування дерева команд малювання.
+        /// </summary>
+        private PanelCacheValue CalcDrow(Rect inRect, float dynamicHeight = 0)
         {
             if (FirstCalcDrow == DateTime.MinValue) FirstCalcDrow = DateTime.UtcNow;
 
-            //Text.Font = GameFont.Small;
-            //GUI.skin.textField.wordWrap = false;
             ActionTree startAction = new ATStart();
             ActionTree currentAction = startAction;
 
-            var log = inRect.ToString() + Environment.NewLine;
+            float iconHeightDefault = TextHeight;
 
-            var iconHeightDefault = Text.CalcSize("H").y;
+            // Нормалізація переносу рядків лише за необхідності
+            string text = PrintText;
+            if (text.IndexOf('\r') >= 0)
+            {
+                text = text.Replace("\r", "");
+            }
 
-            var text = PrintText.Replace("\r", "");
-            var width = inRect.width;
-            var height = dynamicHeight <= 0 ? inRect.height : dynamicHeight;
+            float width = inRect.width;
+            float height = dynamicHeight <= 0 ? inRect.height : dynamicHeight;
 
-            //информация по открытому тэгу l
-            //var tagLStartX = 0f; //относительная координата в строке начала действия
+            TagBtn tagBtnAct = null;
+            string tagBtnArg = null;
+            float tagBtnStartX = 0f;
 
-            //информация по открытому тэгу btn
-            TagBtn tagBtnAct = null; //название в словаре, по которому определяется действие (и визуальное и событие)
-            string tagBtnArg = null; //если указан атрибут arg=
-            var tagBtnStartX = 0f; //относительная координата в строке начала действия
-
-            var totalChars = 0;
-            var currentWord = "";
+            int totalChars = 0;
+            string currentWord = "";
             Vector2 currentWordSize = new Vector2();
-            var curY = 0f;
-            var curX = 0f; //позиция вывода до собираемого текста currentWorld
-            var curHeight = 0f;
+            float curY = 0f;
+            float curX = 0f;
+            float curHeight = 0f;
+
             Action printCurrent = () =>
             {
                 if (currentWord.Length > 0)
                 {
-                    //Widgets.Label(new Rect(inRect.x + curX, inRect.y + curY, currentWordSize.x, currentWordSize.y), currentWord.Replace("\n", ""));
-                    currentAction.Next = new ATLabel()
+                    currentAction.Next = new ATLabel
                     {
                         rect = new Rect(inRect.x + curX, inRect.y + curY, currentWordSize.x, currentWordSize.y),
-                        label = currentWord.Replace("\n", ""),
+                        label = currentWord.IndexOf('\n') >= 0 ? currentWord.Replace("\n", "") : currentWord
                     };
                     currentAction = currentAction.Next;
 
                     curX += currentWordSize.x;
-                    if (curHeight < currentWordSize.y) curHeight = currentWordSize.y; 
-                    log += $" B({curX})print({currentWord.Length}) " + currentWord.Replace("\n", "");
+                    if (curHeight < currentWordSize.y) curHeight = currentWordSize.y;
                     currentWord = "";
                     currentWordSize = new Vector2();
                 }
             };
+
             Action printBtnAct = () =>
             {
                 if (tagBtnAct != null && tagBtnStartX != curX && curHeight > 0)
                 {
-                    log += $" btn({tagBtnStartX}-{curX}, {tagBtnArg})";
                     var tagRect = new Rect(inRect.x + tagBtnStartX, inRect.y + curY, curX - tagBtnStartX, curHeight);
-                    //if (Mouse.IsOver(tagRect))
-                    //{
-                    //    if (tagBtnAct.HighlightIsOver) Widgets.DrawHighlight(tagRect);
-                    //    if (tagBtnAct.ActionIsOver != null) tagBtnAct.ActionIsOver(tagBtnArg);
-                    //}
-                    //if (Widgets.ButtonInvisible(tagRect))
-                    //{
-                    //    if (tagBtnAct.ActionClick != null) tagBtnAct.ActionClick(tagBtnArg);
-                    //}
-                    //if (!string.IsNullOrEmpty(tagBtnAct.Tooltip))
-                    //    TooltipHandler.TipRegion(tagRect, tagBtnAct.Tooltip);
-                    currentAction.Next = new ATBtnAct()
+                    currentAction.Next = new ATBtnAct
                     {
-                        tagRect = tagRect, tagBtnArg = tagBtnArg, tagBtnAct = tagBtnAct
+                        tagRect = tagRect,
+                        tagBtnArg = tagBtnArg,
+                        tagBtnAct = tagBtnAct
                     };
                     currentAction = currentAction.Next;
                 }
             };
-            //перед нормальным анализом применяем локализацию отдельно обрабатываем тэги <l>
-            while (true)
+
+            // ОПТИМІЗАЦІЯ: обробка тегів локалізації <l> через StringBuilder лише при їхній наявності
+            if (text.IndexOf("<l>", StringComparison.Ordinal) >= 0)
             {
-                var posB = text.IndexOf("<l>");
-                if (posB < 0) break;
-                var posE = text.IndexOf("</l>", posB);
-                if (posE < 0) break;
-                string tr;
-
-                var sub = text.Substring(posB + 3, posE - posB - 3);
-                tr = ChatController.ServerCharTranslate(sub, true);
-
-                //если перевод не сработал, то переводим через свойства дефов
-                if (tr.Contains("."))
+                var sb = new StringBuilder(text.Length + 32);
+                int lastIndex = 0;
+                while (true)
                 {
-                    tr = LanguageInjections.GetOrAdd(tr, (k) =>
+                    int posB = text.IndexOf("<l>", lastIndex, StringComparison.Ordinal);
+                    if (posB < 0) break;
+                    int posE = text.IndexOf("</l>", posB + 3, StringComparison.Ordinal);
+                    if (posE < 0) break;
+
+                    sb.Append(text, lastIndex, posB - lastIndex);
+                    string sub = text.Substring(posB + 3, posE - posB - 3);
+                    string tr = ChatController.ServerCharTranslate(sub, true);
+
+                    if (tr.Contains("."))
+                    {
+                        tr = LanguageInjections.GetOrAdd(tr, k =>
                             LanguageDatabase.activeLanguage.defInjections
-                                .Select(di => di.injections.FirstOrDefault(dii => dii.Value.path.ToLower() == tr.ToLower()).Value?.injection)
+                                .Select(di => di.injections.FirstOrDefault(dii => dii.Value.path.Equals(k, StringComparison.OrdinalIgnoreCase)).Value?.injection)
                                 .FirstOrDefault(dii => dii != null)
                         ) ?? tr;
+                    }
+
+                    sb.Append(tr.TranslateCache());
+                    lastIndex = posE + 4;
                 }
 
-                tr = tr.TranslateCache();
-
-                text = text.Substring(0, posB) + tr + text.Substring(posE + 4);
+                if (lastIndex < text.Length)
+                {
+                    sb.Append(text, lastIndex, text.Length - lastIndex);
+                }
+                text = sb.ToString();
             }
+
             try
             {
                 foreach (var word in ParceText(text))
                 {
-                    log += Environment.NewLine + $"{curY} {curX} {currentWord.Length}. \"{word}\"";
-
                     totalChars += word.Length;
-                    var lastLoop = totalChars == text.Length;
+                    bool lastLoop = totalChars == text.Length;
 
-                    //проверяем нужно ли обрабатывать этот тэг, или пропускаем дальше как текст
-                    if (word[0] == '<' && word.Length > 1)
+                    // Обробка тегів розмітки
+                    if (word.Length > 1 && word[0] == '<')
                     {
-                        /*if (word.ToLower().StartsWith("<l"))
-                        {
-                            printCurrent();
-                            tagLStartX = curX;
-                        }
-                        else if (word.ToLower().StartsWith("</l"))
-                        {
-                            word = ChatController.ServerCharTranslate(currentWord)
-                                + " " + currentWord.TranslateCache()
-                                + " " + currentWord;
-                            Loger.Log("test:" + currentWord);
-                            currentWord = "";
-                            currentWordSize = new Vector2();
-                        }
-                        else*/
-                        if (word.ToLower().StartsWith("<btn "))
+                        if (word.StartsWith("<btn ", StringComparison.OrdinalIgnoreCase))
                         {
                             printCurrent();
                             tagBtnStartX = curX;
                             tagBtnAct = null;
                             tagBtnArg = null;
                             string name = null;
-                            var className = "";
-                            var d = "";
-                            foreach (var arg in ParceAttributes(word))
+                            string className = "";
+                            string d = "";
+
+                            foreach (var arg in ParseAttributes(word))
                             {
-                                if (arg.Second == "")
+                                if (string.IsNullOrEmpty(arg.Second))
                                 {
                                     name = arg.First;
                                 }
-                                else if (arg.First.ToLower() == "name")
+                                else if (arg.First.Equals("name", StringComparison.OrdinalIgnoreCase) || arg.First.Equals("act", StringComparison.OrdinalIgnoreCase))
                                 {
                                     name = arg.Second;
                                 }
-                                else if (arg.First.ToLower() == "act")
-                                {
-                                    name = arg.Second;
-                                }
-                                else if (arg.First.ToLower() == "arg")
+                                else if (arg.First.Equals("arg", StringComparison.OrdinalIgnoreCase))
                                 {
                                     tagBtnArg = arg.Second;
                                 }
-                                else if (arg.First.ToLower() == "class")
+                                else if (arg.First.Equals("class", StringComparison.OrdinalIgnoreCase))
                                 {
                                     className = arg.Second;
                                 }
-                                else if (arg.First.ToLower() == "d")
+                                else if (arg.First.Equals("d", StringComparison.OrdinalIgnoreCase))
                                 {
                                     d = arg.Second;
                                 }
                             }
-                            if (!Btns.TryGetValue(name, out tagBtnAct))
+
+                            if (!Btns.TryGetValue(name, out tagBtnAct) && !GlobalBtns.TryGetValue(name, out tagBtnAct))
                             {
-                                if (!GlobalBtns.TryGetValue(name, out tagBtnAct))
+                                if (!string.IsNullOrEmpty(className))
                                 {
-                                    if (string.IsNullOrEmpty(className))
-                                        tagBtnAct = null;
-                                    else
-                                    {
-                                        //создаем объект по данным в тэгах class и d
-                                        tagBtnAct = TagBtn.GetByClass(className, d, tagBtnArg);
-                                        Btns.Add(name, tagBtnAct);
-                                    }
+                                    tagBtnAct = TagBtn.GetByClass(className, d, tagBtnArg);
+                                    Btns[name] = tagBtnAct;
                                 }
                             }
 
                             continue;
                         }
-                        else if (word.ToLower().StartsWith("</btn"))
+                        else if (word.StartsWith("</btn", StringComparison.OrdinalIgnoreCase))
                         {
                             printCurrent();
                             printBtnAct();
@@ -288,37 +284,37 @@ namespace RimWorldOnlineCity.UI
                             tagBtnArg = null;
                             continue;
                         }
-                        else if (word.ToLower().StartsWith("<img "))
+                        else if (word.StartsWith("<img ", StringComparison.OrdinalIgnoreCase))
                         {
                             printCurrent();
 
                             Func<Texture2D> getIcon = null;
                             Texture2D icon = null;
-                            var name = "";
-                            var h = 0;
-                            var w = 0;
-                            foreach (var agr in ParceAttributes(word))
+                            string name = "";
+                            int h = 0;
+                            int w = 0;
+
+                            foreach (var agr in ParseAttributes(word))
                             {
-                                if (agr.Second == "")
+                                if (string.IsNullOrEmpty(agr.Second))
                                 {
                                     name = agr.First;
                                 }
-                                else if (agr.First.ToLower() == "name")
+                                else if (agr.First.Equals("name", StringComparison.OrdinalIgnoreCase))
                                 {
                                     name = agr.Second;
                                 }
-                                else if (agr.First.ToLower() == "defName".ToLower())
+                                else if (agr.First.Equals("defName", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    var defName = agr.Second;
-                                    icon = GeneralTexture.Get.GetDefTexture(defName);
+                                    icon = GeneralTexture.Get.GetDefTexture(agr.Second);
                                 }
-                                else if (agr.First.ToLower() == "height")
+                                else if (agr.First.Equals("height", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    if (int.TryParse(agr.Second, out int nvi)) h = nvi;
+                                    int.TryParse(agr.Second, out h);
                                 }
-                                else if (agr.First.ToLower() == "width")
+                                else if (agr.First.Equals("width", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    if (int.TryParse(agr.Second, out int nvi)) w = nvi;
+                                    int.TryParse(agr.Second, out w);
                                 }
                             }
 
@@ -330,31 +326,25 @@ namespace RimWorldOnlineCity.UI
                                     getIcon = () => GeneralTexture.Get.ByName(name);
                                     icon = getIcon();
                                 }
-                                else if (!Imgs.TryGetValue(name, out icon))
+                                else if (!Imgs.TryGetValue(name, out icon) && !GlobalImgs.TryGetValue(name, out icon))
                                 {
-                                    if (!GlobalImgs.TryGetValue(name, out icon))
+                                    try
                                     {
-                                        try
-                                        {
-                                            icon = ContentFinder<Texture2D>.Get(name, false);
-                                        }
-                                        catch
-                                        {
-                                            icon = null;
-                                        }
-                                        if (icon != null) GlobalImgs.Add(name, icon);
+                                        icon = ContentFinder<Texture2D>.Get(name, false);
                                     }
+                                    catch
+                                    {
+                                        icon = null;
+                                    }
+                                    if (icon != null) GlobalImgs[name] = icon;
                                 }
                             }
                             if (icon == null) continue;
 
+                            float iconHeight = h > 0 ? h : iconHeightDefault;
+                            float iconWidth = w > 0 ? w : icon.width * iconHeight / icon.height;
 
-                            var iconHeight = h > 0 ? h : iconHeightDefault;
-                            var iconWidth = w > 0 ? w : icon.width * iconHeight / icon.height;
-
-                            log += $" img({w}, {h})->({iconWidth}, {iconHeight}) " + word;
-
-                            //перевод на новую строку, если текущая не пустая и в неё не умещаемся
+                            // Перенос на новий рядок, якщо іконка не вміщується
                             if (curX > 0 && curX + iconWidth > width)
                             {
                                 printBtnAct();
@@ -363,19 +353,17 @@ namespace RimWorldOnlineCity.UI
                                 curX = 0;
                                 curY += curHeight;
                                 curHeight = 0f;
-                                //нужно ли завершить вывод
+
                                 if (curY >= height)
                                 {
-                                    log += " {return0} " + curY;
-                                    return new Tuple<ActionTree, float>(startAction, curY);
+                                    return new PanelCacheValue { Tree = startAction, Height = curY };
                                 }
                             }
 
-                            //GUI.DrawTexture(new Rect(inRect.x + curX, inRect.y + curY, iconWidth, iconHeight), icon);
-                            currentAction.Next = new ATDrawTexture()
+                            currentAction.Next = new ATDrawTexture
                             {
                                 position = new Rect(inRect.x + curX, inRect.y + curY, iconWidth, iconHeight),
-                                image = getIcon ?? (() => icon),
+                                image = getIcon ?? (() => icon)
                             };
                             currentAction = currentAction.Next;
 
@@ -385,67 +373,57 @@ namespace RimWorldOnlineCity.UI
                             if (lastLoop)
                             {
                                 printBtnAct();
-
                                 tagBtnStartX = 0;
                                 curX = 0;
                                 curY += curHeight;
                                 curHeight = 0f;
-                                log += " {lastLoop img} ";
                             }
                             continue;
                         }
                     }
 
-                    //определяем нужно ли завершить строку до слова
-                    //var size = GUI.skin.textField.CalcSize(new GUIContent((currentWorld + word).Replace("\n", "")));
-                    var size = Text.CalcSize((currentWord + word).Replace("\n", ""));
-                    //нужно ли присоединить новую часть до печати (всегда, только если влазиет по длинне)
-                    var concat = curX + size.x <= width || currentWord == "" && curX == 0;
+                    // Розрахунок розміру слова та обробка переносу
+                    string testWord = (currentWord + word).Replace("\n", "");
+                    var size = Text.CalcSize(testWord);
+
+                    bool concat = curX + size.x <= width || (currentWord == "" && curX == 0);
                     if (concat)
                     {
                         currentWord += word;
                         currentWordSize = size;
                     }
-                    //нужно ли напечатать собранное
-                    var newLine = curX + size.x > width || currentWord[currentWord.Length - 1] == '\n' || lastLoop;
+
+                    bool newLine = curX + size.x > width || currentWord[currentWord.Length - 1] == '\n' || lastLoop;
                     if (newLine)
                     {
-                        log += " {newLine} ";
                         printCurrent();
-                    }
-                    //нужно ли завершить строку
-                    if (newLine)
-                    {
                         printBtnAct();
 
                         tagBtnStartX = 0;
                         curX = 0;
                         curY += curHeight;
                         curHeight = 0f;
+
                         if (lastLoop)
                         {
                             printCurrent();
                             printBtnAct();
                         }
-                        //нужно ли завершить вывод
+
                         if (curY >= height)
                         {
-                            log += " {return1} " + curY;
-                            return new Tuple<ActionTree, float>(startAction, curY);
+                            return new PanelCacheValue { Tree = startAction, Height = curY };
                         }
                     }
-                    //если мы не присоединяли строку до вывода, то присоединяем сейчас
+
                     if (!concat)
                     {
-                        log += " {!concat} ";
                         currentWord += word;
-                        //currentWorldSize = GUI.skin.textField.CalcSize(new GUIContent(currentWorld.Replace("\n", "")));
                         currentWordSize = Text.CalcSize(currentWord.Replace("\n", ""));
 
-                        //повторно проверяем нужно ли переносить после этого добавления
                         newLine = currentWord[currentWord.Length - 1] == '\n';
                         if (newLine) printCurrent();
-                        //копия блока выше: нужно ли завершить строку
+
                         if (newLine)
                         {
                             printBtnAct();
@@ -454,16 +432,16 @@ namespace RimWorldOnlineCity.UI
                             curX = 0;
                             curY += curHeight;
                             curHeight = 0f;
+
                             if (lastLoop)
                             {
                                 printCurrent();
                                 printBtnAct();
                             }
-                            //нужно ли завершить вывод
+
                             if (curY >= height)
                             {
-                                log += " {return2} " + curY;
-                                return new Tuple<ActionTree, float>(startAction, curY);
+                                return new PanelCacheValue { Tree = startAction, Height = curY };
                             }
                         }
                     }
@@ -471,23 +449,20 @@ namespace RimWorldOnlineCity.UI
             }
             finally
             {
-                //Text.Font = GameFont.Tiny;
                 currentAction.Next = new ATFinish();
-                currentAction = currentAction.Next;
-
-                inRect.y += 100;
-                //Widgets.Label(inRect, log);
-                //Loger.Log("PanelText " + log);
             }
-            //Loger.Log(" {return3} " + curY);
-            return new Tuple<ActionTree, float>(startAction, curY);
+
+            return new PanelCacheValue { Tree = startAction, Height = curY };
         }
+
+        #region Дерево команд рендерингу (ActionTree)
 
         private abstract class ActionTree
         {
-            public ActionTree Next = null;
+            public ActionTree Next;
             public abstract void Act();
         }
+
         private class ATStart : ActionTree
         {
             public override void Act()
@@ -496,6 +471,7 @@ namespace RimWorldOnlineCity.UI
                 GUI.skin.textField.wordWrap = false;
             }
         }
+
         private class ATLabel : ActionTree
         {
             public Rect rect;
@@ -505,36 +481,46 @@ namespace RimWorldOnlineCity.UI
                 Widgets.Label(rect, label);
             }
         }
+
         private class ATBtnAct : ActionTree
         {
             public Rect tagRect;
             public string tagBtnArg;
             public TagBtn tagBtnAct;
+
             public override void Act()
             {
                 if (Mouse.IsOver(tagRect))
                 {
                     if (tagBtnAct.HighlightIsOver) Widgets.DrawHighlight(tagRect);
-                    if (tagBtnAct.ActionIsOver != null) tagBtnAct.ActionIsOver(tagBtnArg);
+                    tagBtnAct.ActionIsOver?.Invoke(tagBtnArg);
                 }
                 if (Widgets.ButtonInvisible(tagRect))
                 {
-                    //Loger.Log("TestTagBtn 3 ButtonInvisible " + tagRect);
-                    if (tagBtnAct.ActionClick != null) tagBtnAct.ActionClick(tagBtnArg);
+                    tagBtnAct.ActionClick?.Invoke(tagBtnArg);
                 }
                 if (!string.IsNullOrEmpty(tagBtnAct.Tooltip))
+                {
                     TooltipHandler.TipRegion(tagRect, tagBtnAct.Tooltip);
+                }
             }
         }
+
         private class ATDrawTexture : ActionTree
         {
             public Rect position;
             public Func<Texture2D> image;
+
             public override void Act()
             {
-                GUI.DrawTexture(position, image());
+                var tex = image?.Invoke();
+                if (tex != null)
+                {
+                    GUI.DrawTexture(position, tex);
+                }
             }
         }
+
         private class ATFinish : ActionTree
         {
             public override void Act()
@@ -543,56 +529,73 @@ namespace RimWorldOnlineCity.UI
             }
         }
 
-        private IEnumerable<Pair<string, string>> ParceAttributes(string fullTag)
+        #endregion
+
+        /// <summary>
+        /// Швидкий парсер атрибутів тегу без створення проміжних масивів від Split().
+        /// </summary>
+        private static List<Pair<string, string>> ParseAttributes(string fullTag)
         {
-            var si = fullTag.IndexOf(" ");
-            if (si < 0) yield break;
+            var result = new List<Pair<string, string>>();
+            int si = fullTag.IndexOf(' ');
+            if (si < 0) return result;
 
-            var args = fullTag.Substring(si, fullTag.Length - si - 1);
-            if (args[args.Length - 1] == '/') args = args.Remove(args.Length - 1, 1);
-            args = args.Trim();
-
-            if (!args.Contains("="))
+            int end = fullTag.Length - 1;
+            while (end > si && (fullTag[end] == '>' || fullTag[end] == '/' || char.IsWhiteSpace(fullTag[end])))
             {
-                if (!string.IsNullOrEmpty(args)) yield return new Pair<string, string>(args, "");
-                yield break;
+                end--;
             }
 
-            foreach (var arg in args.Split(' '))
+            if (end <= si) return result;
+
+            int i = si + 1;
+            while (i <= end)
             {
-                var nv = arg.Split(new char[] { '=' }, 2);
-                if (nv.Length < 2)
-                    yield return new Pair<string, string>(arg, "");
+                while (i <= end && char.IsWhiteSpace(fullTag[i])) i++;
+                if (i > end) break;
+
+                int tokenStart = i;
+                while (i <= end && !char.IsWhiteSpace(fullTag[i])) i++;
+                int tokenLen = i - tokenStart;
+
+                string token = fullTag.Substring(tokenStart, tokenLen);
+                int eqIndex = token.IndexOf('=');
+                if (eqIndex < 0)
+                {
+                    result.Add(new Pair<string, string>(token, string.Empty));
+                }
                 else
-                    yield return new Pair<string, string>(nv[0], nv[1]);
+                {
+                    string key = token.Substring(0, eqIndex);
+                    string val = token.Substring(eqIndex + 1);
+                    if (val.Length >= 2 && ((val[0] == '"' && val[val.Length - 1] == '"') || (val[0] == '\'' && val[val.Length - 1] == '\'')))
+                    {
+                        val = val.Substring(1, val.Length - 2);
+                    }
+                    result.Add(new Pair<string, string>(key, val));
+                }
             }
+
+            return result;
         }
 
         /// <summary>
-        /// Разбиваем текст на слова. Возвращаемые части строк точно соответствуют исходной.
-        /// Слово заканчивается, если следующий символ пробел, \n или '<'
-        /// При этом пробел и \n добавляются к слову, а '<' нет
-        /// Получается, что пробел и \n могут быть в начале только если слово из 1 символа, а
-        /// '<' всегда может быть только в начале, в этом случае: слово заканчивается на символе '>' (включитльно),
-        /// либо оно длинной 1 символ, если символа '>' нет дальше в строке.
-        /// Результат не может быть меньше 1 символа
+        /// Розбиває вхідний рядок на окремі токени та слова.
         /// </summary>
         private IEnumerable<string> ParceText(string text)
         {
-            //text = (text ?? "").Replace("\r", "");
-            var index = 0;
+            int index = 0;
             int iNewLine = -1;
             int iSpace = -1;
             int iTag = -1;
+
             while (index < text.Length)
             {
-                //если текущий символ начало тэга, то ищим его конец
                 if (text[index] == '<')
                 {
-                    var p1 = text.IndexOf('>', index);
+                    int p1 = text.IndexOf('>', index);
                     if (p1 < 0)
                     {
-                        //нет окончания тэга, печатаем как отдельный символ
                         yield return "<";
                         index++;
                         continue;
@@ -603,12 +606,11 @@ namespace RimWorldOnlineCity.UI
                     continue;
                 }
 
-                //определяем чем кончается текущее слово (начинающиеся с позиции index)
                 if (iNewLine < index) iNewLine = text.IndexOf('\n', index);
                 if (iSpace < index) iSpace = text.IndexOf(' ', index);
                 if (iTag < index) iTag = text.IndexOf('<', index);
 
-                int iNext; //позиция символа после текущего слова
+                int iNext;
                 if (iNewLine >= 0 && (uint)iNewLine <= (uint)iSpace && (uint)iNewLine <= (uint)iTag)
                 {
                     iNext = iNewLine + 1;
@@ -630,6 +632,5 @@ namespace RimWorldOnlineCity.UI
                 index = iNext;
             }
         }
-
     }
 }
