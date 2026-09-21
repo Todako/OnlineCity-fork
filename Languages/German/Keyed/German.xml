@@ -63,6 +63,10 @@ Börsenwert: {4}</OCity_Caravan_Other>
 	<OC_Hash_Downloading_Finish>Heruntergeladen </OC_Hash_Downloading_Finish>
 	<OC_Mods_Wait>Bitte vor dem Online-Spiel warten...</OC_Mods_Wait>
 	<OC_Mods_Complete>Abgeschlossen:</OC_Mods_Complete>
+	<OC_Hash_ConfirmReplace_Title>Dateisynchronisation</OC_Hash_ConfirmReplace_Title>
+	<OC_Hash_ConfirmReplace_Text>Spiel- oder Modifikationsdateien weichen von den auf dem Server installierten ab.\n\nFür die Verbindung ist eine vollständige Übereinstimmung der Dateien erforderlich.\nDas Spiel startet nach der Aktualisierung deiner Dateien automatisch neu.\nDateien synchronisieren oder Verbindung abbrechen und zum Hauptmenü zurückkehren?</OC_Hash_ConfirmReplace_Text>
+	<OC_Hash_Btn_Replace>Dateien synchronisieren</OC_Hash_Btn_Replace>
+	<OC_Hash_Btn_Cancel>Zum Hauptmenü</OC_Hash_Btn_Cancel>
 	<OC_HashCheckerResult_VersionErr>Spielversion weicht ab. Du hast {0}, benötigt wird {1}</OC_HashCheckerResult_VersionErr>
 	<OC_HashCheckerResult_NeedMods>Erforderliche Mods sind nicht aktiviert:</OC_HashCheckerResult_NeedMods>
 	<OC_HashCheckerResult_ExcessMods>Überflüssige Mods sind aktiviert:</OC_HashCheckerResult_ExcessMods>

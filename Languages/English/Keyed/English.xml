@@ -63,6 +63,10 @@ Exchange wealth: {4}</OCity_Caravan_Other>
 	<OC_Hash_Downloading_Finish>Downloaded </OC_Hash_Downloading_Finish>
 	<OC_Mods_Wait>Please wait before playing online...</OC_Mods_Wait>
 	<OC_Mods_Complete>Completed:</OC_Mods_Complete>
+	<OC_Hash_ConfirmReplace_Title>File Synchronization</OC_Hash_ConfirmReplace_Title>
+  	<OC_Hash_ConfirmReplace_Text>The game or mod files differ from those installed on the server.\n\nFull file compatibility is required to connect.\nThe game will automatically restart after your files are updated.\nDo you want to synchronize the files or disconnect and return to the main menu?</OC_Hash_ConfirmReplace_Text>
+  	<OC_Hash_Btn_Replace>Synchronize files</OC_Hash_Btn_Replace>
+	<OC_Hash_Btn_Cancel>Main menu</OC_Hash_Btn_Cancel>
 	<OC_HashCheckerResult_VersionErr>Game version mismatch. You have {0}, but {1} is required</OC_HashCheckerResult_VersionErr>
 	<OC_HashCheckerResult_NeedMods>Required mods are not enabled:</OC_HashCheckerResult_NeedMods>
 	<OC_HashCheckerResult_ExcessMods>Extra mods are enabled:</OC_HashCheckerResult_ExcessMods>

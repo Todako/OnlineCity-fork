@@ -63,6 +63,10 @@
 	<OC_Hash_Downloading_Finish>다운로드 완료 </OC_Hash_Downloading_Finish>
 	<OC_Mods_Wait>온라인 플레이 전 잠시 기다려 주세요...</OC_Mods_Wait>
 	<OC_Mods_Complete>완료:</OC_Mods_Complete>
+	<OC_Hash_ConfirmReplace_Title>파일 동기화</OC_Hash_ConfirmReplace_Title>
+	<OC_Hash_ConfirmReplace_Text>게임 또는 모드 파일이 서버에 설치된 파일과 일치하지 않습니다.\n\n접속하려면 파일이 완전히 일치해야 합니다.\n파일 업데이트 후 게임이 자동으로 재시작됩니다.\n파일을 동기화하시겠습니까, 아니면 연결을 취소하고 메인 메뉴로 돌아가시겠습니까?</OC_Hash_ConfirmReplace_Text>
+	<OC_Hash_Btn_Replace>파일 동기화</OC_Hash_Btn_Replace>
+	<OC_Hash_Btn_Cancel>메인 메뉴로</OC_Hash_Btn_Cancel>
 	<OC_HashCheckerResult_VersionErr>게임 버전이 일치하지 않습니다. 현재 버전: {0}, 필요 버전: {1}</OC_HashCheckerResult_VersionErr>
 	<OC_HashCheckerResult_NeedMods>필수 모드가 활성화되지 않았습니다:</OC_HashCheckerResult_NeedMods>
 	<OC_HashCheckerResult_ExcessMods>불필요한 모드가 활성화되어 있습니다:</OC_HashCheckerResult_ExcessMods>

@@ -63,6 +63,10 @@ Valeur en bourse : {4}</OCity_Caravan_Other>
 	<OC_Hash_Downloading_Finish>Téléchargé </OC_Hash_Downloading_Finish>
 	<OC_Mods_Wait>Veuillez patienter avant de jouer en ligne...</OC_Mods_Wait>
 	<OC_Mods_Complete>Terminé :</OC_Mods_Complete>
+	<OC_Hash_ConfirmReplace_Title>Synchronisation des fichiers</OC_Hash_ConfirmReplace_Title>
+	<OC_Hash_ConfirmReplace_Text>Les fichiers du jeu ou des mods diffèrent de ceux installés sur le serveur.\n\nUne correspondance exacte des fichiers est requise pour la connexion.\nLe jeu redémarrera automatiquement après la mise à jour de vos fichiers.\nSynchroniser les fichiers ou annuler la connexion et revenir au menu principal ?</OC_Hash_ConfirmReplace_Text>
+	<OC_Hash_Btn_Replace>Synchroniser les fichiers</OC_Hash_Btn_Replace>
+	<OC_Hash_Btn_Cancel>Retour au menu principal</OC_Hash_Btn_Cancel>
 	<OC_HashCheckerResult_VersionErr>Version du jeu différente. Vous avez {0}, mais {1} est requis</OC_HashCheckerResult_VersionErr>
 	<OC_HashCheckerResult_NeedMods>Les mods requis ne sont pas activés :</OC_HashCheckerResult_NeedMods>
 	<OC_HashCheckerResult_ExcessMods>Des mods superflus sont activés :</OC_HashCheckerResult_ExcessMods>

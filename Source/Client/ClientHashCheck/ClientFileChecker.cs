@@ -220,44 +220,52 @@ namespace RimWorldOnlineCity.ClientHashCheck
                 }
             }
 
+            // ОПТИМІЗАЦІЯ: 1 екземпляр SHA512 на кожен потік замість створення на кожен файл
             if (misses.Count > 0)
             {
                 cacheDirty = true;
                 var newHashed = new ConcurrentBag<(ModelFileInfo Mfi, FileHashCacheEntry Entry)>();
 
-                Parallel.ForEach(misses, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) }, item =>
-                {
-                    try
+                Parallel.ForEach(
+                    misses,
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
+                    () => SHA512.Create(),
+                    (item, loopState, sha) =>
                     {
-                        using (var sha = SHA512.Create())
-                        using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
+                        try
                         {
-                            var hash = sha.ComputeHash(stream);
-                            var size = stream.Length;
-
-                            var mfi = new ModelFileInfo
+                            using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
                             {
-                                FileName = item.RelPath,
-                                Hash = hash,
-                                Size = size
-                            };
+                                var hash = sha.ComputeHash(stream);
+                                var size = stream.Length;
 
-                            var entry = new FileHashCacheEntry
-                            {
-                                RelativePath = item.RelPath,
-                                LastWriteTimeUtcTicks = item.Info.LastWriteTimeUtc.Ticks,
-                                FileSize = size,
-                                Hash = hash
-                            };
+                                var mfi = new ModelFileInfo
+                                {
+                                    FileName = item.RelPath,
+                                    Hash = hash,
+                                    Size = size
+                                };
 
-                            newHashed.Add((mfi, entry));
+                                var entry = new FileHashCacheEntry
+                                {
+                                    RelativePath = item.RelPath,
+                                    LastWriteTimeUtcTicks = item.Info.LastWriteTimeUtc.Ticks,
+                                    FileSize = size,
+                                    Hash = hash
+                                };
+
+                                newHashed.Add((mfi, entry));
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        Loger.Log($"Error hashing file {item.FullPath}: {ex.Message}", Loger.LogLevel.WARNING);
-                    }
-                });
+                        catch (Exception ex)
+                        {
+                            Loger.Log($"Error hashing file {item.FullPath}: {ex.Message}", Loger.LogLevel.WARNING);
+                        }
+
+                        return sha;
+                    },
+                    sha => sha?.Dispose()
+                );
 
                 foreach (var pair in newHashed)
                 {

@@ -63,6 +63,10 @@
 	<OC_Hash_Downloading_Finish>Завантажено </OC_Hash_Downloading_Finish>
 	<OC_Mods_Wait>Зачекайте перед грою онлайн...</OC_Mods_Wait>
 	<OC_Mods_Complete>Завершено:</OC_Mods_Complete>
+  	<OC_Hash_ConfirmReplace_Title>Синхронізація файлів</OC_Hash_ConfirmReplace_Title>
+  	<OC_Hash_ConfirmReplace_Text>Файли гри або модифікацій відрізняються від встановлених на сервері.\n\nДля підключення потрібна повна відповідність файлів.\nГра автоматично перезавантажиться після оновлення ваших файлів.\nСинхронізувати файли чи скасувати підключення та повернутися в головне меню?</OC_Hash_ConfirmReplace_Text>
+  	<OC_Hash_Btn_Replace>Синхронізувати файли</OC_Hash_Btn_Replace>
+  	<OC_Hash_Btn_Cancel>В головне меню</OC_Hash_Btn_Cancel>
 	<OC_HashCheckerResult_VersionErr>Відрізняється версія гри. У вас {0}, а потрібно {1}</OC_HashCheckerResult_VersionErr>
 	<OC_HashCheckerResult_NeedMods>Не ввімкнено необхідні моди:</OC_HashCheckerResult_NeedMods>
 	<OC_HashCheckerResult_ExcessMods>Увімкнено зайві моди:</OC_HashCheckerResult_ExcessMods>
