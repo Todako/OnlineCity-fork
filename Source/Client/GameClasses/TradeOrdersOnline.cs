@@ -4,9 +4,7 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using Transfer;
 using UnityEngine;
 using Verse;
@@ -14,48 +12,82 @@ using Verse;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Зелёное яблоко - список сделок
+    /// Зелене яблуко - список активних торгових угод на біржі.
     /// </summary>
     [StaticConstructorOnStartup]
     public class TradeOrdersOnline : WorldObjectBaseOnline
     {
-        public override IModelPlace Place => TradeOrders[0];
+        public override IModelPlace Place => TradeOrders != null && TradeOrders.Count > 0 ? TradeOrders[0] : null;
 
         /// <summary>
-        /// Список ордеров для биржи. Может быть пустым только если это TradeThingsOnline
-        /// Изначально заполняется легковесными TradeWorldObjectEntry, для деталей нужно обновить экземпляры до TradeOrder
+        /// Список ордерів для біржі.
         /// </summary>
         public List<TradeOrderShort> TradeOrders { get; set; } = new List<TradeOrderShort>();
 
+        private static string _cachedLabel;
         public override string Label
         {
             get
             {
-                return "OC_TradeOrdersOnline_Orders".Translate();
+                if (_cachedLabel == null)
+                {
+                    _cachedLabel = "OC_TradeOrdersOnline_Orders".Translate();
+                }
+                return _cachedLabel;
             }
         }
 
+        // Кеш інспектора для усунення перерахунку щокадру
+        private int _lastInspectOrderCount = -1;
+        private string _cachedInspectString;
+
         public override string GetInspectString()
         {
-            return "OC_TradeOrdersOnline_Orders".Translate() + " " + TradeOrders.Count;
+            int currentCount = TradeOrders?.Count ?? 0;
+            if (_lastInspectOrderCount != currentCount || _cachedInspectString == null)
+            {
+                _lastInspectOrderCount = currentCount;
+                _cachedInspectString = Label + " " + _lastInspectOrderCount;
+            }
+            return _cachedInspectString;
         }
 
+        /// <summary>
+        /// Формування повного опису біржі.
+        /// ОПТИМІЗАЦІЯ: ліквідовано O(N^2) LINQ Aggregate.
+        /// </summary>
         public override string GetDescription()
         {
-            var res = base.GetDescription();
-            res += Environment.NewLine
-                + Environment.NewLine
-                + "OC_TradeOrdersOnline_Orders".Translate()
-                + (TradeOrders.Count == 0 ? ""
-                    : (TradeOrders[0] is TradeOrderShort ? Environment.NewLine + "OC_TradeOrdersOnline_OpenForInfo".Translate().ToString()
-                    : TradeOrders.Aggregate("", (r, i) => r + Environment.NewLine + i))
-                    );
-            return res;
+            var sb = new StringBuilder(256);
+            sb.Append(base.GetDescription());
+            sb.AppendLine();
+            sb.AppendLine();
+            sb.Append(Label);
+
+            if (TradeOrders != null && TradeOrders.Count > 0)
+            {
+                if (TradeOrders[0] is TradeOrderShort)
+                {
+                    sb.AppendLine();
+                    sb.Append("OC_TradeOrdersOnline_OpenForInfo".Translate());
+                }
+                else
+                {
+                    for (int i = 0; i < TradeOrders.Count; i++)
+                    {
+                        sb.AppendLine();
+                        sb.Append(TradeOrders[i]);
+                    }
+                }
+            }
+
+            return sb.ToString();
         }
 
         public override string ToString()
         {
-            return TradeOrders.Aggregate("", (r, i) => r + Environment.NewLine + i);
+            if (TradeOrders == null || TradeOrders.Count == 0) return string.Empty;
+            return string.Join(Environment.NewLine, TradeOrders);
         }
 
         public override IEnumerable<Gizmo> GetGizmos()
@@ -65,48 +97,42 @@ namespace RimWorldOnlineCity
                 yield return gizmo;
             }
 
-            Command_Action command_Action = new Command_Action();
-            command_Action.defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate();
-            command_Action.defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate();
-            command_Action.icon = GeneralTexture.TradeButtonIcon;
-            command_Action.action = delegate
+            Command_Action command_Action = new Command_Action
             {
-                Find.WindowStack.Add(new Dialog_Exchenge(this));
+                defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                icon = GeneralTexture.TradeButtonIcon,
+                action = delegate
+                {
+                    Find.WindowStack.Add(new Dialog_Exchenge(this));
+                }
             };
             yield return command_Action;
         }
 
         #region Icons
         private static Material MatTradeOnlineIcon;
-        private static Texture2D TradeOnlineIcon = ContentFinder<Texture2D>.Get("GreenApple");
+        private static readonly Texture2D TradeOnlineIcon = ContentFinder<Texture2D>.Get("GreenApple");
 
         public override Material Material
         {
             get
             {
-                if (MatTradeOnlineIcon == null) MatTradeOnlineIcon = MaterialPool.MatFrom(TradeOnlineIcon
-                    , ShaderDatabase.WorldOverlayTransparentLit
-                    , Color.white
-                    , WorldMaterials.WorldObjectRenderQueue);
+                if (MatTradeOnlineIcon == null)
+                {
+                    MatTradeOnlineIcon = MaterialPool.MatFrom(
+                        TradeOnlineIcon,
+                        ShaderDatabase.WorldOverlayTransparentLit,
+                        Color.white,
+                        WorldMaterials.WorldObjectRenderQueue);
+                }
                 return MatTradeOnlineIcon;
             }
         }
 
-        public override Texture2D ExpandingIcon
-        {
-            get
-            {
-                return TradeOnlineIcon;
-            }
-        }
+        public override Texture2D ExpandingIcon => TradeOnlineIcon;
 
-        public override string ExpandingIconName
-        {
-            get
-            {
-                return "GreenApple";
-            }
-        }
+        public override string ExpandingIconName => "GreenApple";
         #endregion
     }
 }
