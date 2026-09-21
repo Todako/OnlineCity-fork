@@ -2,7 +2,6 @@
 using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Verse;
 
@@ -12,7 +11,6 @@ namespace RimWorldOnlineCity
     {
         public Player Public { get; set; }
 
-        //повторить логику на сервере тут: PlayerServer
         public bool Online =>
             Public.LastOnlineTime == DateTime.MinValue ? Public.LastSaveTime > DateTime.UtcNow.AddMinutes(-17) :
             Public.LastOnlineTime > (DateTime.UtcNow + SessionClientController.Data.ServetTimeDelta).AddSeconds(-10);
@@ -30,10 +28,17 @@ namespace RimWorldOnlineCity
         private string TextInfoExtended = "";
         private DateTime TextInfoTime = DateTime.MinValue;
 
+        /// <summary>
+        /// Швидке оновлення посилання на гравця з кешу.
+        /// ОПТИМІЗАЦІЯ: замінено подвійний пошук (ContainsKey + []) на швидкий TryGetValue.
+        /// </summary>
         public PlayerClient Refrash()
         {
-            if (!SessionClientController.Data.Players.ContainsKey(Public.Login)) return this;
-            return SessionClientController.Data.Players[Public.Login];
+            if (Public?.Login != null && SessionClientController.Data.Players.TryGetValue(Public.Login, out var player))
+            {
+                return player;
+            }
+            return this;
         }
 
         public string GetTextInfoExtended()
@@ -54,59 +59,120 @@ namespace RimWorldOnlineCity
         private WorldObjectsValues AllWorldObjects = null;
         private DateTime AllWorldObjectsTime = DateTime.MinValue;
 
+        /// <summary>
+        /// Розрахунок загальної вартості караванів і поселень гравця.
+        /// ОПТИМІЗАЦІЯ: ліквідовано конкатенацію рядків у циклі через StringBuilder.
+        /// </summary>
         public WorldObjectsValues CostWorldObjects(long serverId = 0)
         {
             var values = new WorldObjectsValues();
-            if (WObjects != null)
+            if (WObjects != null && WObjects.Count > 0)
             {
-                foreach (var wo in WObjects)
+                var detailsSb = new StringBuilder(WObjects.Count * 64);
+                var detailsExtSb = new StringBuilder(WObjects.Count * 64);
+
+                for (int i = 0; i < WObjects.Count; i++)
                 {
+                    var wo = WObjects[i];
+                    if (wo?.OnlineWObject == null) continue;
                     if (serverId != 0 && wo.OnlineWObject.PlaceServerId != serverId) continue;
+
                     values.MarketValue += wo.OnlineWObject.MarketValue;
                     values.MarketValuePawn += wo.OnlineWObject.MarketValuePawn;
                     values.MarketValueBalance += wo.OnlineWObject.MarketValueBalance;
                     values.MarketValueStorage += wo.OnlineWObject.MarketValueStorage;
-                    
+
                     if (wo is BaseOnline)
                     {
                         values.BaseCount++;
                     }
                     else
+                    {
                         values.CaravanCount++;
-                    values.Details += Environment.NewLine + Environment.NewLine + wo.GetInspectString();
-                    values.DetailsExtended += Environment.NewLine + Environment.NewLine + wo.GetInspectExtendedString();
+                    }
+
+                    detailsSb.AppendLine();
+                    detailsSb.AppendLine();
+                    detailsSb.Append(wo.GetInspectString());
+
+                    detailsExtSb.AppendLine();
+                    detailsExtSb.AppendLine();
+                    detailsExtSb.Append(wo.GetInspectExtendedString());
                 }
+
+                values.Details = detailsSb.ToString();
+                values.DetailsExtended = detailsExtSb.ToString();
             }
             return values;
         }
 
+        /// <summary>
+        /// Формування опису профілю гравця з кешуванням на 5 секунд.
+        /// ОПТИМІЗАЦІЯ: збирання рядків через StringBuilder без зайвих проміжних об'єктів.
+        /// </summary>
         private void UpdateTextInfoCalc()
         {
             if (TextInfoTime >= DateTime.UtcNow.AddSeconds(-5)) return;
 
-            var info1 = string.IsNullOrEmpty(Public.StateName) ? "" :
-                "OC_PlayerClient_In".Translate().ToString() + " " + Public.StateName
-                //todo Константой вывести статус главы
-                + (string.IsNullOrEmpty(Public.StatePositionName) ? "" : " " + "OC_PlayerClient_Position".Translate().ToString() + " " + Public.StatePositionName)
-                + Environment.NewLine;
+            var sb = new StringBuilder(512);
+            var sbExt = new StringBuilder(512);
 
-            var info1Extended = string.IsNullOrEmpty(Public.StateName) ? "" :
-                "<:world_map height=18:> " + "OC_PlayerClient_In".Translate().ToString() + $" <@{Public.StateName}>" //ChatController.PrepareShortTag
-                //todo Константой вывести статус главы, вывести ссылку на государство
-                + (string.IsNullOrEmpty(Public.StatePositionName) ? "" : " " + "OC_PlayerClient_Position".Translate().ToString() + " " + Public.StatePositionName)
-                + Environment.NewLine;
+            // Блок 1: Інформація про державу
+            if (!string.IsNullOrEmpty(Public.StateName))
+            {
+                string statePos = string.IsNullOrEmpty(Public.StatePositionName)
+                    ? string.Empty
+                    : " " + "OC_PlayerClient_Position".Translate().ToString() + " " + Public.StatePositionName;
 
-            var info2 = (SessionClientController.Data.GeneralSettings.EnablePVP 
-                    ? (Public.EnablePVP ? "OCity_PlayerClient_InvolvedInPVP".Translate() : "OCity_PlayerClient_NotInvolvedInPVP".Translate()).ToString() + Environment.NewLine
-                    : "")
-                + (string.IsNullOrEmpty(Public.DiscordUserName) ? "" : "OCity_PlayerClient_Discord".Translate().ToString() + Public.DiscordUserName + Environment.NewLine)
-                + (string.IsNullOrEmpty(Public.EMail) ? "" : "OCity_PlayerClient_Email".Translate().ToString() + Public.EMail + Environment.NewLine)
-                + (string.IsNullOrEmpty(Public.AboutMyText) ? "" : "OCity_PlayerClient_AboutMyself".Translate().ToString() + Environment.NewLine + Public.AboutMyText + Environment.NewLine)
-                + Environment.NewLine;
+                sb.Append("OC_PlayerClient_In".Translate().ToString());
+                sb.Append(' ');
+                sb.Append(Public.StateName);
+                sb.Append(statePos);
+                sb.AppendLine();
+
+                sbExt.Append("<:world_map height=18:> ");
+                sbExt.Append("OC_PlayerClient_In".Translate().ToString());
+                sbExt.Append(" <@");
+                sbExt.Append(Public.StateName);
+                sbExt.Append('>');
+                sbExt.Append(statePos);
+                sbExt.AppendLine();
+            }
+
+            // Блок 2: Контактні дані та статус PVP
+            var info2Sb = new StringBuilder(256);
+            if (SessionClientController.Data.GeneralSettings.EnablePVP)
+            {
+                info2Sb.AppendLine((Public.EnablePVP ? "OCity_PlayerClient_InvolvedInPVP".Translate() : "OCity_PlayerClient_NotInvolvedInPVP".Translate()).ToString());
+            }
+
+            if (!string.IsNullOrEmpty(Public.DiscordUserName))
+            {
+                info2Sb.Append("OCity_PlayerClient_Discord".Translate().ToString());
+                info2Sb.AppendLine(Public.DiscordUserName);
+            }
+
+            if (!string.IsNullOrEmpty(Public.EMail))
+            {
+                info2Sb.Append("OCity_PlayerClient_Email".Translate().ToString());
+                info2Sb.AppendLine(Public.EMail);
+            }
+
+            if (!string.IsNullOrEmpty(Public.AboutMyText))
+            {
+                info2Sb.AppendLine("OCity_PlayerClient_AboutMyself".Translate().ToString());
+                info2Sb.AppendLine(Public.AboutMyText);
+            }
+            info2Sb.AppendLine();
+
+            string info2 = info2Sb.ToString();
+            sb.Append(info2);
+            sbExt.Append(info2);
 
             AllWorldObjectsTime = DateTime.UtcNow;
             AllWorldObjects = CostWorldObjects();
 
+            // Блок 3: Статистика поселень та ринкова вартість
             string s = "OCity_PlayerClient_LastTick".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_LastSaveTime".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_baseCount".Translate() + Environment.NewLine
@@ -114,35 +180,44 @@ namespace RimWorldOnlineCity
                 + "OCity_PlayerClient_marketValue".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_marketValuePawn".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_marketValueTrading".Translate();
-            var info3 = (s)
-                .Translate(
-                        Public.LastTick / 3600000
-                        , Public.LastTick / 60000
-                        , Public.LastSaveTime == DateTime.MinValue ? "OCity_PlayerClient_LastSaveTimeNon".Translate() : new TaggedString (Public.LastSaveTime.ToGoodUtcString())
-                        , AllWorldObjects.BaseCount
-                        , AllWorldObjects.CaravanCount
-                        , AllWorldObjects.MarketValue.ToStringMoney()
-                        , AllWorldObjects.MarketValuePawn.ToStringMoney()
-                        , (AllWorldObjects.MarketValueBalance + AllWorldObjects.MarketValueStorage).ToStringMoney()
-                    )
-                .ToString();
-            var info3Extended = (s)
-                .Translate(
-                        Public.LastTick / 3600000
-                        , Public.LastTick / 60000
-                        , Public.LastSaveTime == DateTime.MinValue ? "OCity_PlayerClient_LastSaveTimeNon".Translate() : new TaggedString(Public.LastSaveTime.ToGoodUtcString())
-                        , AllWorldObjects.BaseCount
-                        , AllWorldObjects.CaravanCount
-                        , "<:money_bag height=16:> " + AllWorldObjects.MarketValue.ToStringMoney()
-                        , "<:busts_in_silhouette height=16:> " + AllWorldObjects.MarketValuePawn.ToStringMoney()
-                        , "<:chart_increasing height=16:> " + (AllWorldObjects.MarketValueBalance + AllWorldObjects.MarketValueStorage).ToStringMoney()
-                    )
-                .ToString();
 
-            TextInfo = info1 + info2 + info3 + AllWorldObjects.Details;
-            TextInfoExtended = ChatController.PrepareShortTag(info1Extended + info2 + info3Extended + AllWorldObjects.DetailsExtended); //.Replace("<", "#(").Replace(">", ")#");
+            TaggedString lastSaveStr = Public.LastSaveTime == DateTime.MinValue
+                ? "OCity_PlayerClient_LastSaveTimeNon".Translate()
+                : new TaggedString(Public.LastSaveTime.ToGoodUtcString());
+
+            float totalTrading = AllWorldObjects.MarketValueBalance + AllWorldObjects.MarketValueStorage;
+
+            string info3 = s.Translate(
+                Public.LastTick / 3600000,
+                Public.LastTick / 60000,
+                lastSaveStr,
+                AllWorldObjects.BaseCount,
+                AllWorldObjects.CaravanCount,
+                AllWorldObjects.MarketValue.ToStringMoney(),
+                AllWorldObjects.MarketValuePawn.ToStringMoney(),
+                totalTrading.ToStringMoney()
+            ).ToString();
+
+            string info3Extended = s.Translate(
+                Public.LastTick / 3600000,
+                Public.LastTick / 60000,
+                lastSaveStr,
+                AllWorldObjects.BaseCount,
+                AllWorldObjects.CaravanCount,
+                "<:money_bag height=16:> " + AllWorldObjects.MarketValue.ToStringMoney(),
+                "<:busts_in_silhouette height=16:> " + AllWorldObjects.MarketValuePawn.ToStringMoney(),
+                "<:chart_increasing height=16:> " + totalTrading.ToStringMoney()
+            ).ToString();
+
+            sb.Append(info3);
+            sb.Append(AllWorldObjects.Details);
+
+            sbExt.Append(info3Extended);
+            sbExt.Append(AllWorldObjects.DetailsExtended);
+
+            TextInfo = sb.ToString();
+            TextInfoExtended = ChatController.PrepareShortTag(sbExt.ToString());
             TextInfoTime = DateTime.UtcNow;
         }
-
     }
 }

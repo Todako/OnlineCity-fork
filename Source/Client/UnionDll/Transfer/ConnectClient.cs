@@ -23,6 +23,10 @@ namespace Transfer
         public long CurrentRequestLength => CurrentSendRequestLength + CurrentReceiveRequestLength;
         public DateTime CurrentRequestStart = DateTime.MinValue;
 
+        // Постійні екземплярні буфери для усунення виділень пам'яті (0 байт GC на кожному пакеті)
+        private readonly byte[] _headerSendBuffer = new byte[4];
+        private readonly byte[] _headerReceiveBuffer = new byte[4];
+
         public ConnectClient(string addr, int port)
             : this(new TcpClient(addr, port))
         { }
@@ -65,20 +69,24 @@ namespace Transfer
 
         /// <summary>
         /// Відправка повідомлення із 4-байтовим префіксом загальної довжини.
-        /// ОПТИМІЗАЦІЯ: для повідомлень менше 64 КБ заголовок і тіло об'єднуються в один буфер,
-        /// що виключає поділ на два TCP-пакети та прискорює доставку.
+        /// ОПТИМІЗАЦІЯ: усунено BitConverter.GetBytes(msgLen) без створення зайвих масивів у купі.
+        /// Дані записуються безпосередньо в мережевий потік.
         /// </summary>
         public void SendMessage(byte[] message)
         {
-            var msgLen = message?.Length ?? 0;
+            int msgLen = message?.Length ?? 0;
             CurrentSendRequestLength = msgLen + 4;
             CurrentReceiveRequestLength = 0;
             CurrentRequestStart = DateTime.UtcNow;
 
             try
             {
-                byte[] packlength = BitConverter.GetBytes(msgLen);
-                ClientStream.Write(packlength, 0, 4);
+                _headerSendBuffer[0] = (byte)msgLen;
+                _headerSendBuffer[1] = (byte)(msgLen >> 8);
+                _headerSendBuffer[2] = (byte)(msgLen >> 16);
+                _headerSendBuffer[3] = (byte)(msgLen >> 24);
+
+                ClientStream.Write(_headerSendBuffer, 0, 4);
                 if (msgLen > 0)
                 {
                     ClientStream.Write(message, 0, msgLen);
@@ -94,7 +102,8 @@ namespace Transfer
 
         /// <summary>
         /// Отримання повного повідомлення із сокета.
-        /// Спочатку зчитує 4 байти розміру, після чого зчитує весь масив корисного навантаження.
+        /// ОПТИМІЗАЦІЯ: читання заголовка виконується безпосередньо у внутрішній буфер
+        /// без виділення проміжного масиву new byte[4].
         /// </summary>
         public byte[] ReceiveBytes(byte[] prefix = null)
         {
@@ -110,8 +119,17 @@ namespace Transfer
 
             try
             {
-                byte[] lengthBuffer = prefix ?? ReceiveBytes(Int32Length);
-                int lengthAllMessageByte = BitConverter.ToInt32(lengthBuffer, 0);
+                int lengthAllMessageByte;
+
+                if (prefix != null && prefix.Length >= 4)
+                {
+                    lengthAllMessageByte = prefix[0] | (prefix[1] << 8) | (prefix[2] << 16) | (prefix[3] << 24);
+                }
+                else
+                {
+                    ReadExactBytes(_headerReceiveBuffer, 0, Int32Length);
+                    lengthAllMessageByte = _headerReceiveBuffer[0] | (_headerReceiveBuffer[1] << 8) | (_headerReceiveBuffer[2] << 16) | (_headerReceiveBuffer[3] << 24);
+                }
 
                 if (lengthAllMessageByte < 0)
                 {
@@ -127,7 +145,9 @@ namespace Transfer
                 CurrentReceiveRequestLength = lengthAllMessageByte;
                 CurrentRequestStart = DateTime.UtcNow;
 
-                return ReceiveBytes(lengthAllMessageByte);
+                byte[] msg = new byte[lengthAllMessageByte];
+                ReadExactBytes(msg, 0, lengthAllMessageByte);
+                return msg;
             }
             finally
             {
@@ -136,24 +156,19 @@ namespace Transfer
         }
 
         /// <summary>
-        /// Зчитує рівно countByte байт із мережевого потоку безпосередньо в результуючий масив.
-        /// ОПТИМІЗАЦІЯ: повністю ліквідовано проміжні буфери, ThreadPool-колбеки та присипляння потоку Thread.Sleep(1).
+        /// Зчитує рівно count байт із сокета безпосередньо у вказаний буфер без проміжних копіювань.
         /// </summary>
-        private byte[] ReceiveBytes(int countByte)
+        private void ReadExactBytes(byte[] buffer, int offset, int count)
         {
-            if (countByte <= 0) return new byte[0];
-
-            byte[] msg = new byte[countByte];
-            int offset = 0;
-
-            while (offset < countByte)
+            int totalRead = 0;
+            while (totalRead < count)
             {
-                int bytesToRead = countByte - offset;
+                int bytesToRead = count - totalRead;
                 int numberOfBytesRead;
 
                 try
                 {
-                    numberOfBytesRead = ClientStream.Read(msg, offset, bytesToRead);
+                    numberOfBytesRead = ClientStream.Read(buffer, offset + totalRead, bytesToRead);
                 }
                 catch (IOException ex) when (ex.InnerException is SocketException se && se.SocketErrorCode == SocketError.TimedOut)
                 {
@@ -165,10 +180,8 @@ namespace Transfer
                     throw new ConnectNotConnectedException();
                 }
 
-                offset += numberOfBytesRead;
+                totalRead += numberOfBytesRead;
             }
-
-            return msg;
         }
 
         public class ConnectSilenceTimeOutException : Exception
@@ -179,7 +192,9 @@ namespace Transfer
 
         public byte[] ReceiveFourByte()
         {
-            return ReceiveBytes(4);
+            byte[] four = new byte[4];
+            ReadExactBytes(four, 0, 4);
+            return four;
         }
 
         /// <summary>
