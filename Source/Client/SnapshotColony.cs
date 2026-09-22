@@ -20,36 +20,47 @@ namespace RimWorldOnlineCity
         public bool HighQuality = false;
         public bool Background = true;
 
+        // Прапорець фонового завантаження для запобігання перевантаженню мережевого сокета
+        private static volatile bool isUploading = false;
+
+        /// <summary>
+        /// Повертає true, якщо наразі триває створення знімка або його відправка на сервер.
+        /// </summary>
+        public static bool IsBusy => RenderMap.IsRendering || isUploading;
+
         /// <summary>
         /// Запуск процесу автоматичного рендерингу карти поселення.
         /// </summary>
         public void Exec(Settlement settlement)
         {
-            // Перевірка наявності поселення та завантаженої активної карти
+            ExecStatic(settlement, HighQuality, Background);
+        }
+
+        /// <summary>
+        /// Статична точка входу для рендерингу карти колонії без зайвих алокацій об'єкта.
+        /// </summary>
+        public static void ExecStatic(Settlement settlement, bool highQuality = false, bool background = true)
+        {
             if (settlement == null || settlement.Map == null)
             {
-                Loger.Log("SnapshotColony: поселення або його карта відсутні, скасування знімка", Loger.LogLevel.WARNING);
                 return;
             }
 
-            // Захист від накладання: якщо попередній рендер ще триває, новий не запускаємо
-            if (RenderMap.IsRendering)
+            // Захист від накладання: якщо рендер або передача попереднього знімка ще тривають — пропускаємо
+            if (IsBusy)
             {
-                Loger.Log("SnapshotColony: RenderMap уже виконує рендеринг, пропуск запиту", Loger.LogLevel.INFO);
+                Loger.Log("SnapshotColony: рендеринг або передача файлу вже триває, пропуск запиту", Loger.LogLevel.INFO);
                 return;
             }
 
-            var serverId = UpdateWorldController.GetMyByLocalId(settlement.ID)?.PlaceServerId ?? 0;
-            Loger.Log($"SnapshotColony serverId={serverId}");
-
+            var myWO = UpdateWorldController.GetMyByLocalId(settlement.ID);
+            var serverId = myWO?.PlaceServerId ?? 0;
             if (serverId == 0) return;
 
             var renderMap = new RenderMap();
 
-            // Логіка вибору якості:
-            // HighQuality = true: максимальна чіткість (30 px/клітинка, 86% якість) для красивих знімків на сервері.
-            // HighQuality = false: збалансований режим (16 px/клітинка, 75% якість) для відсутності фризів та економії місця.
-            if (HighQuality)
+            // Налаштування якості рендерингу
+            if (highQuality)
             {
                 renderMap.SettingsPixelOnCell = 30;
                 renderMap.SettingsQuality = 86;
@@ -60,23 +71,46 @@ namespace RimWorldOnlineCity
                 renderMap.SettingsQuality = 75;
             }
 
-            renderMap.ImageReady = (image) => SendToServer(image, serverId, Background);
+            renderMap.ImageReady = (imageFunc) => SendToServer(imageFunc, serverId);
 
             renderMap.Initialize(settlement.Map);
             renderMap.Render();
         }
 
         /// <summary>
-        /// Асинхронне кодування кадру в JPG та передача файлу на сервер у фоновому потоці.
+        /// Асинхронне отримання байтів кадру та передача файлу на сервер у фоновому потоці.
+        /// ОПТИМІЗАЦІЯ: безпечне отримання даних із головного потоку Unity у разі потреби та захист від NRE.
         /// </summary>
-        private static void SendToServer(Func<byte[]> getImage, long serverId, bool background)
+        private static void SendToServer(Func<byte[]> getImage, long serverId)
         {
+            if (getImage == null || isUploading) return;
+            isUploading = true;
+
             Task.Run(() =>
             {
                 try
                 {
-                    Loger.Log("SnapshotColony EncodeToJPG start");
-                    var data = getImage();
+                    byte[] data = null;
+                    try
+                    {
+                        data = getImage();
+                    }
+                    catch (Exception ex)
+                    {
+                        // Якщо виклик методів Unity (EncodeToJPG/Destroy) обмежений для фонових потоків, викликаємо синхронно в Unity
+                        Loger.Log($"SnapshotColony: фонове кодування викликало помилку ({ex.Message}), перемикання на головний потік", Loger.LogLevel.DEBUG);
+                        ModBaseData.RunMainThreadSync(() =>
+                        {
+                            try
+                            {
+                                data = getImage();
+                            }
+                            catch (Exception innerEx)
+                            {
+                                Loger.Log($"SnapshotColony MainThread getImage Exception: {innerEx.Message}", Loger.LogLevel.WARNING);
+                            }
+                        });
+                    }
 
                     if (data == null || data.Length == 0)
                     {
@@ -84,13 +118,20 @@ namespace RimWorldOnlineCity
                         return;
                     }
 
-                    Loger.Log($"SnapshotColony Send serverId={serverId} data.Len={data.Length}");
+                    var myLogin = SessionClientController.My?.Login;
+                    if (string.IsNullOrEmpty(myLogin)) return;
+
+                    var fileKey = myLogin + "@" + serverId;
+
+                    if (Loger.Enable && !MainHelper.OffAllLog)
+                    {
+                        Loger.Log($"SnapshotColony Send serverId={serverId} bytes={data.Length}");
+                    }
 
                     SessionClientController.Command((connect) =>
                     {
                         try
                         {
-                            var fileKey = SessionClientController.My.Login + "@" + serverId;
                             connect.FileSharingUpload(FileSharingCategory.ColonyScreen, fileKey, data);
                         }
                         catch (Exception ex)
@@ -101,10 +142,12 @@ namespace RimWorldOnlineCity
                 }
                 catch (Exception ex)
                 {
-                    Loger.Log($"SnapshotColony Encode/Send Exception: {ex.Message}", Loger.LogLevel.WARNING);
+                    Loger.Log($"SnapshotColony Send Exception: {ex.Message}", Loger.LogLevel.WARNING);
                 }
-
-                Loger.Log("SnapshotColony Send end");
+                finally
+                {
+                    isUploading = false;
+                }
             });
         }
     }
