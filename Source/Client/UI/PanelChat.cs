@@ -2,9 +2,7 @@
 using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
@@ -12,21 +10,19 @@ namespace RimWorldOnlineCity.UI
 {
     public class PanelChat : DialogControlBase
     {
-        private DateTime DataLastChatsTime; //время полученного пакета данных чата от сервера, которое выведено в интерфейс
-        private DateTime DataLastChatsTimeUpdateTime; //когда последний раз обновлялась информация в интерфейсе (перерисовывать раз в 5 сек)
+        private DateTime DataLastChatsTime; // час отриманого пакета даних чату від сервера
+        private DateTime DataLastChatsTimeUpdateTime; // час останнього оновлення списків в інтерфейсі (раз на 5 сек)
         private ListBox<string> lbCannals;
         private int lbCannalsLastSelectedIndex;
         private bool NeedUpdateChat;
         private float lbCannalsHeight = 0;
         private ListBox<ListBoxPlayerItem> lbPlayers;
-        private TextImageBox ChatBox = new TextImageBox();
+        private readonly TextImageBox ChatBox = new TextImageBox();
 
         private float PanelLastHeight = 0;
         private long UpdateLogHash;
-        private string lbCannalsGoToChat; //как только появиться этот чат перейти к нему
+        private string lbCannalsGoToChat;
         private bool NeedFockus = true;
-        //private string ChatText = "";
-        //private Vector2 ChatScrollPosition;
         private bool ChatScrollToDown = false;
         private DateTime ChatLastPostTime;
         public string ChatInputText = "";
@@ -38,72 +34,63 @@ namespace RimWorldOnlineCity.UI
             public string Tooltip;
             public bool InChat;
             public bool GroupTitle;
-            public override string ToString()
-            {
-                return Text;
-            }
+            public override string ToString() => Text;
         }
 
-        public Chat SelectCannal => lbCannals == null ? null : SessionClientController.Data.Chats[lbCannals.SelectedIndex];
+        public Chat SelectCannal => lbCannals == null || lbCannals.SelectedIndex < 0 || lbCannals.SelectedIndex >= SessionClientController.Data.Chats.Count
+            ? null
+            : SessionClientController.Data.Chats[lbCannals.SelectedIndex];
 
         public void Drow(Rect inRect)
         {
-            var leftPanelWidth = 200f;
-            var iconWidth = 25f;
-            var iconWidthSpase = 30f;
+            float leftPanelWidth = 200f;
+            float iconWidth = 25f;
+            float iconWidthSpace = 30f;
 
-            /// -----------------------------------------------------------------------------------------
-            /// Список каналов
-            ///
             if (SessionClientController.Data.Chats != null)
             {
                 lock (SessionClientController.Data.Chats)
                 {
-                    if (SessionClientController.Data.ChatNotReadPost > 0) SessionClientController.Data.ChatNotReadPost = 0;
+                    if (SessionClientController.Data.ChatNotReadPost > 0)
+                    {
+                        SessionClientController.Data.ChatNotReadPost = 0;
+                    }
 
-                    //Loger.Log("Client " + SessionClientController.Data.Chats.Count);
                     if (lbCannalsHeight == 0)
                     {
-                        var textHeight = new DialogControlBase().TextHeight;
-                        lbCannalsHeight = (float)Math.Round((decimal)(inRect.height / 2f / textHeight)) * textHeight;
+                        float textH = TextHeight;
+                        lbCannalsHeight = (float)Math.Round((decimal)(inRect.height / 2f / textH)) * textH;
                     }
-                    Widgets.Label(new Rect(inRect.x, inRect.y + iconWidthSpase + lbCannalsHeight, leftPanelWidth, 22f), "OCity_Dialog_Players".Translate());
+                    Widgets.Label(new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight, leftPanelWidth, 22f), "OCity_Dialog_Players".Translate());
 
                     if (lbCannals == null)
                     {
-                        //первый запуск
-                        lbCannals = new ListBox<string>();
-                        lbCannals.Area = new Rect(inRect.x
-                            , inRect.y + iconWidthSpase
-                            , leftPanelWidth
-                            , lbCannalsHeight);
-                        lbCannals.OnClick += (index, text) => DataLastChatsTime = DateTime.MinValue; //StatusTemp = text;
+                        lbCannals = new ListBox<string>
+                        {
+                            Area = new Rect(inRect.x, inRect.y + iconWidthSpace, leftPanelWidth, lbCannalsHeight)
+                        };
+                        lbCannals.OnClick += (index, text) => DataLastChatsTime = DateTime.MinValue;
                         lbCannals.SelectedIndex = 0;
                     }
 
                     if (lbPlayers == null)
                     {
-                        //первый запуск
-                        lbPlayers = new ListBox<ListBoxPlayerItem>();
-                        lbPlayers.UsePanelText = true;
+                        lbPlayers = new ListBox<ListBoxPlayerItem>
+                        {
+                            UsePanelText = true
+                        };
                         lbPlayers.OnClick += (index, item) =>
                         {
-                        //убираем выделение
-                        lbPlayers.SelectedIndex = -1;
-                        //вызываем контекстное меню
-                        PlayerItemMenu(item);
+                            lbPlayers.SelectedIndex = -1;
+                            PlayerItemMenu(item);
                         };
-
                         lbPlayers.Tooltip = (item) => item.Tooltip;
                     }
 
                     if (PanelLastHeight != inRect.height)
                     {
                         PanelLastHeight = inRect.height;
-                        lbPlayers.Area = new Rect(inRect.x
-                            , inRect.y + iconWidthSpase + lbCannalsHeight + 22f
-                            , leftPanelWidth
-                            , inRect.height - (iconWidthSpase + lbCannalsHeight + 22f));
+                        lbPlayers.Area = new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight + 22f, leftPanelWidth, inRect.height - (iconWidthSpace + lbCannalsHeight + 22f));
                     }
 
                     if (NeedUpdateChat)
@@ -112,148 +99,146 @@ namespace RimWorldOnlineCity.UI
                         NeedUpdateChat = false;
                     }
 
-                    var nowUpdateChat = DataLastChatsTime != SessionClientController.Data.ChatsTime.Time;
+                    bool nowUpdateChat = DataLastChatsTime != SessionClientController.Data.ChatsTime.Time;
                     if (nowUpdateChat)
                     {
                         Loger.Log("Client UpdateChats nowUpdateChat");
                         DataLastChatsTime = SessionClientController.Data.ChatsTime.Time;
-                        lbCannalsLastSelectedIndex = -1; //сброс для обновления содержимого окна
+                        lbCannalsLastSelectedIndex = -1;
                         NeedUpdateChat = true;
                     }
 
-                    if (nowUpdateChat
-                        || DataLastChatsTimeUpdateTime < DateTime.UtcNow.AddSeconds(-5))
+                    var chats = SessionClientController.Data.Chats;
+
+                    // Оновлення списків каналів та гравців раз на 5 секунд або при появі нових повідомлень
+                    if (nowUpdateChat || DataLastChatsTimeUpdateTime < DateTime.UtcNow.AddSeconds(-5))
                     {
                         DataLastChatsTimeUpdateTime = DateTime.UtcNow;
-                        //пишем в лог
-                        var updateLogHash = SessionClientController.Data.Chats.Count * 1000000
-                            + SessionClientController.Data.Chats.Sum(c => c.Posts.Count);
+
+                        // ОПТИМІЗАЦІЯ: швидкий підрахунок хешу логу без LINQ Sum
+                        int totalPosts = 0;
+                        for (int i = 0; i < chats.Count; i++)
+                        {
+                            if (chats[i].Posts != null) totalPosts += chats[i].Posts.Count;
+                        }
+                        long updateLogHash = chats.Count * 1000000L + totalPosts;
+
                         if (updateLogHash != UpdateLogHash)
                         {
                             UpdateLogHash = updateLogHash;
-                            Loger.Log("Client UpdateChats chats="
-                                + SessionClientController.Data.Chats.Count.ToString()
-                                + " players=" + SessionClientController.Data.Players.Count.ToString());
+                            Loger.Log($"Client UpdateChats chats={chats.Count} players={SessionClientController.Data.Players.Count}");
                         }
 
-                        //устанавливаем данные
-                        lbCannals.DataSource = SessionClientController.Data.Chats
-                            //.OrderBy(c => (c.OwnerMaker ? "2" : "1") + c.Name) нелья просто отсортировать, т.к. потом находим по индексу
-                            .Select(c => c.Name)
-                            .ToList();
+                        // ОПТИМІЗАЦІЯ: заповнення назв каналів без LINQ Select/ToList
+                        var cannalNames = new List<string>(chats.Count);
+                        for (int i = 0; i < chats.Count; i++)
+                        {
+                            cannalNames.Add(chats[i].Name);
+                        }
+                        lbCannals.DataSource = cannalNames;
+
                         if (lbCannalsGoToChat != null)
                         {
-                            var lbCannalsGoToChatIndex = lbCannals.DataSource.IndexOf(lbCannalsGoToChat);
-                            if (lbCannalsGoToChatIndex >= 0)
+                            int targetIndex = lbCannals.DataSource.IndexOf(lbCannalsGoToChat);
+                            if (targetIndex >= 0)
                             {
-                                lbCannals.SelectedIndex = lbCannalsGoToChatIndex;
+                                lbCannals.SelectedIndex = targetIndex;
                                 lbCannalsGoToChat = null;
                             }
                         }
 
-                        //Заполняем список игроков по группами {
-                        lbPlayers.DataSource = new List<ListBoxPlayerItem>();
-                        var allreadyLogin = new List<string>();
-                        Func<string, string, ListBoxPlayerItem> addPl = (login, text) =>
+                        // ОПТИМІЗАЦІЯ: заповнення списку гравців без виділення тимчасових Func/Action-делегатів
+                        var playersData = new List<ListBoxPlayerItem>(32);
+                        var alreadyLogin = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        if (lbCannals.SelectedIndex > 0 && chats.Count > lbCannals.SelectedIndex)
                         {
-                            allreadyLogin.Add(login);
-                            var n = new ListBoxPlayerItem()
+                            var selectCannal = chats[lbCannals.SelectedIndex];
+
+                            AddGroupTitle(playersData, alreadyLogin, "OCity_Dialog_Exchenge_Chat".Translate());
+
+                            // Власник каналу
+                            var ownerItem = AddPlayerItem(playersData, alreadyLogin, selectCannal.OwnerLogin,
+                                $"<img pl_{selectCannal.OwnerLogin}>" + FormatOnlineName(IsPlayerOnline(selectCannal.OwnerLogin), "★ " + selectCannal.OwnerLogin));
+                            ownerItem.Tooltip += "OCity_Dialog_ChennelOwn".Translate();
+                            ownerItem.InChat = true;
+
+                            // Учасники каналу
+                            if (selectCannal.PartyLogin != null)
                             {
-                                Login = login,
-                                Text = text,
-                                Tooltip = login
-                            };
-                            lbPlayers.DataSource.Add(n);
-                            return n;
-                        };
+                                var partyList = new List<string>(selectCannal.PartyLogin);
+                                partyList.Sort(StringComparer.OrdinalIgnoreCase);
 
-                        Action<string> addTit = (text) =>
-                        {
-                            if (lbPlayers.DataSource.Count > 0) addPl(null, " ").GroupTitle = true;
-                            addPl(null, " <i>– " + text + " –</i>  ").GroupTitle = true;
-                        };
-
-                        Func<string, bool> isOnline = (login) => login == SessionClientController.My.Login
-                            || SessionClientController.Data.Players.ContainsKey(login) && SessionClientController.Data.Players[login].Online;
-                        Func<bool, string, string> frameOnline = (online, txt) =>
-                            online
-                            ? "<b>" + txt + " </b>"
-                            : "<color=#888888ff>" + txt + "</color>";
-
-                        if (lbCannals.SelectedIndex > 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
-                        {
-                            var selectCannal = SessionClientController.Data.Chats[lbCannals.SelectedIndex];
-
-                            // в чате создатель
-                            addTit("OCity_Dialog_Exchenge_Chat".Translate());
-                            var n = addPl(selectCannal.OwnerLogin
-                                , $"<img pl_{selectCannal.OwnerLogin}>" + frameOnline(isOnline(selectCannal.OwnerLogin), "★ " + selectCannal.OwnerLogin));
-                            n.Tooltip += "OCity_Dialog_ChennelOwn".Translate();
-                            n.InChat = true;
-
-                            // в чате
-                            var offlinePartyLogin = new List<string>();
-                            var selectCannalPartyLogin = selectCannal.PartyLogin.OrderBy(x => x).ToList();
-                            for (int i = 0; i < selectCannalPartyLogin.Count; i++)
-                            {
-                                var lo = selectCannalPartyLogin[i];
-                                if (lo != "system" && lo != selectCannal.OwnerLogin)
+                                var offlineList = new List<string>(partyList.Count);
+                                for (int i = 0; i < partyList.Count; i++)
                                 {
-                                    if (isOnline(lo))
+                                    string lo = partyList[i];
+                                    if (lo != "system" && lo != selectCannal.OwnerLogin)
                                     {
-                                        n = addPl(lo, $"<img pl_{lo}>" + frameOnline(true, lo));
-                                        n.Tooltip += "OCity_Dialog_ChennelUser".Translate();
-                                        n.InChat = true;
+                                        if (IsPlayerOnline(lo))
+                                        {
+                                            var pi = AddPlayerItem(playersData, alreadyLogin, lo, $"<img pl_{lo}>" + FormatOnlineName(true, lo));
+                                            pi.Tooltip += "OCity_Dialog_ChennelUser".Translate();
+                                            pi.InChat = true;
+                                        }
+                                        else
+                                        {
+                                            offlineList.Add(lo);
+                                        }
+                                    }
+                                }
+
+                                for (int i = 0; i < offlineList.Count; i++)
+                                {
+                                    string lo = offlineList[i];
+                                    var pi = AddPlayerItem(playersData, alreadyLogin, lo, $"<img pl_{lo}>" + FormatOnlineName(false, lo));
+                                    pi.Tooltip += "OCity_Dialog_ChennelUser".Translate();
+                                    pi.InChat = true;
+                                }
+                            }
+                        }
+
+                        // Решта гравців на сервері (із загального чату)
+                        if (chats.Count > 0 && chats[0].PartyLogin != null)
+                        {
+                            var chat0Party = chats[0].PartyLogin;
+                            var other = new List<string>(chat0Party.Count);
+                            for (int i = 0; i < chat0Party.Count; i++)
+                            {
+                                string p = chat0Party[i];
+                                if (!string.IsNullOrEmpty(p) && p != "system" && !alreadyLogin.Contains(p))
+                                {
+                                    other.Add(p);
+                                }
+                            }
+
+                            if (other.Count > 0)
+                            {
+                                other.Sort(StringComparer.OrdinalIgnoreCase);
+                                AddGroupTitle(playersData, alreadyLogin, "OCity_Dialog_Exchenge_Gamers".Translate());
+
+                                var offlineOther = new List<string>(other.Count);
+                                for (int i = 0; i < other.Count; i++)
+                                {
+                                    string lo = other[i];
+                                    if (IsPlayerOnline(lo))
+                                    {
+                                        AddPlayerItem(playersData, alreadyLogin, lo, $"<img pl_{lo}>" + FormatOnlineName(true, lo));
                                     }
                                     else
-                                        offlinePartyLogin.Add(lo);
+                                    {
+                                        offlineOther.Add(lo);
+                                    }
                                 }
-                            }
 
-                            // в чате оффлайн
-                            //addTit("оффлайн".Translate());
-                            for (int i = 0; i < offlinePartyLogin.Count; i++)
-                            {
-                                var lo = offlinePartyLogin[i];
-                                n = addPl(lo, $"<img pl_{lo}>" + frameOnline(false, lo));
-                                n.Tooltip += "OCity_Dialog_ChennelUser".Translate();
-                                n.InChat = true;
-                            }
-                        }
-
-                        var other = SessionClientController.Data.Chats[0].PartyLogin == null
-                            ? new List<string>()
-                            : SessionClientController.Data.Chats[0].PartyLogin
-                            .Where(p => p != "" && p != "system" && !allreadyLogin.Any(al => al == p))
-                            .OrderBy(p => p)
-                            .ToList();
-                        if (other.Count > 0)
-                        {
-                            // игроки
-                            addTit("OCity_Dialog_Exchenge_Gamers".Translate());
-                            var offlinePartyLogin = new List<string>();
-                            for (int i = 0; i < other.Count; i++)
-                            {
-                                var lo = other[i];
-                                if (isOnline(lo))
+                                for (int i = 0; i < offlineOther.Count; i++)
                                 {
-                                    var n = addPl(lo, $"<img pl_{lo}>" + frameOnline(true, lo));
-                                    //n.Tooltip += "OCity_Dialog_ChennelUser".Translate();
+                                    AddPlayerItem(playersData, alreadyLogin, offlineOther[i], $"<img pl_{offlineOther[i]}>" + FormatOnlineName(false, offlineOther[i]));
                                 }
-                                else
-                                    offlinePartyLogin.Add(lo);
                             }
-
-                            // игроки оффлайн
-                            //addTit("оффлайн".Translate());
-                            for (int i = 0; i < offlinePartyLogin.Count; i++)
-                            {
-                                var lo = offlinePartyLogin[i];
-                                var n = addPl(lo, $"<img pl_{lo}>" + frameOnline(false, lo));
-                                //n.Tooltip += "OCity_Dialog_ChennelUser".Translate();
-                            }
-
                         }
+
+                        lbPlayers.DataSource = playersData;
                     }
 
                     lbCannals.Drow();
@@ -266,10 +251,9 @@ namespace RimWorldOnlineCity.UI
                         CannalAdd();
                     }
 
-                    if (lbCannals.SelectedIndex > 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
+                    if (lbCannals.SelectedIndex > 0 && chats.Count > lbCannals.SelectedIndex)
                     {
-                        //Если что-то выделено, и это не общий чат (строка 0)
-                        iconRect.x += iconWidthSpase;
+                        iconRect.x += iconWidthSpace;
                         TooltipHandler.TipRegion(iconRect, "OCity_Dialog_ChennelClose".Translate());
                         if (Widgets.ButtonImage(iconRect, GeneralTexture.IconDelTex))
                         {
@@ -277,9 +261,9 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    if (lbCannals.SelectedIndex >= 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
+                    if (lbCannals.SelectedIndex >= 0 && chats.Count > lbCannals.SelectedIndex)
                     {
-                        iconRect.x += iconWidthSpase;
+                        iconRect.x += iconWidthSpace;
                         TooltipHandler.TipRegion(iconRect, "OCity_Dialog_OthersFunctions".Translate());
                         if (Widgets.ButtonImage(iconRect, GeneralTexture.IconSubMenuTex))
                         {
@@ -287,41 +271,37 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    /// -----------------------------------------------------------------------------------------
-                    /// Чат
-                    ///
+                    // Оновлення тексту повідомлень активного каналу
                     if (lbCannalsLastSelectedIndex != lbCannals.SelectedIndex)
                     {
                         lbCannalsLastSelectedIndex = lbCannals.SelectedIndex;
-                        if (lbCannals.SelectedIndex >= 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
+                        if (lbCannals.SelectedIndex >= 0 && chats.Count > lbCannals.SelectedIndex)
                         {
-                            var selectCannal = SessionClientController.Data.Chats[lbCannals.SelectedIndex];
+                            var selectCannal = chats[lbCannals.SelectedIndex];
                             if (selectCannal.Posts != null && selectCannal.Posts.Count > 0)
                             {
-                                var chatLastPostTime = selectCannal.Posts.Max(p => p.Time);
+                                var chatLastPostTime = selectCannal.Posts[selectCannal.Posts.Count - 1].Time;
                                 if (ChatLastPostTime != chatLastPostTime)
                                 {
                                     ChatLastPostTime = chatLastPostTime;
-                                    Func<ChatPost, string> getPost = (cp) => "[" + cp.Time.ToGoodUtcString("HH:mm ") + ChatController.PrepareShortTag($"<@{cp.OwnerLogin}>") + "]: "+ cp.Message;
-
-                                    var totalLength = 0;
-                                    ChatBox.Text = selectCannal.Posts
-                                        .Reverse<ChatPost>()
-                                        .Where(i => (totalLength += i.Message.Length) < 5000)
-                                        .Aggregate("", (r, i) => getPost(i) + (r == "" ? "" : Environment.NewLine + r));
+                                    BuildChatBoxText(selectCannal);
                                     ChatScrollToDown = true;
                                 }
-                                //else ChatBox.Text = "";
                             }
-                            //else ChatBox.Text = "";
+                            else
+                            {
+                                ChatBox.Text = string.Empty;
+                            }
                         }
                         else
-                            ChatBox.Text = "";
+                        {
+                            ChatBox.Text = string.Empty;
+                        }
                     }
 
-                    if (lbCannals.SelectedIndex >= 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
+                    if (lbCannals.SelectedIndex >= 0 && chats.Count > lbCannals.SelectedIndex)
                     {
-                        var selectCannal = SessionClientController.Data.Chats[lbCannals.SelectedIndex];
+                        var selectCannal = chats[lbCannals.SelectedIndex];
                         var chatAreaOuter = new Rect(inRect.x + leftPanelWidth + 10f, inRect.y, inRect.width - leftPanelWidth - 10f, inRect.height - 30f);
                         Text.Font = GameFont.Small;
                         ChatBox.Drow(chatAreaOuter, ChatScrollToDown);
@@ -337,7 +317,7 @@ namespace RimWorldOnlineCity.UI
                         bool rrcklick = Widgets.ButtonInvisible(rrect);
                         Text.Anchor = anchor;
 
-                        if (ChatInputText != "")
+                        if (!string.IsNullOrEmpty(ChatInputText))
                         {
                             if (Mouse.IsOver(rrect))
                             {
@@ -345,22 +325,21 @@ namespace RimWorldOnlineCity.UI
                             }
 
                             var ev = Event.current;
-                            if (ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return
-                                || rrcklick)
+                            if ((ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return) || rrcklick)
                             {
-                                //SoundDefOf.RadioButtonClicked.PlayOneShotOnCamera();
                                 SessionClientController.Command((connect) =>
                                 {
                                     connect.PostingChat(selectCannal.Id, ChatInputText);
                                 });
-
-                                ChatInputText = "";
+                                ChatInputText = string.Empty;
                             }
                         }
 
                         GUI.SetNextControlName("StartTextField");
-                        ChatInputText = GUI.TextField(new Rect(inRect.x + leftPanelWidth + 10f, inRect.y + inRect.height - 25f, inRect.width - leftPanelWidth - 10f - 30f, 25f)
-                            , ChatInputText, 10000);
+                        ChatInputText = GUI.TextField(
+                            new Rect(inRect.x + leftPanelWidth + 10f, inRect.y + inRect.height - 25f, inRect.width - leftPanelWidth - 10f - 30f, 25f),
+                            ChatInputText,
+                            10000);
 
                         if (NeedFockus)
                         {
@@ -372,10 +351,91 @@ namespace RimWorldOnlineCity.UI
             }
         }
 
+        /// <summary>
+        /// Формування тексту чату в межах ліміту 5000 символів.
+        /// ОПТИМІЗАЦІЯ: повне усунення LINQ Reverse().Where().Aggregate() на користь прямого StringBuilder.
+        /// </summary>
+        private void BuildChatBoxText(Chat selectCannal)
+        {
+            var posts = selectCannal.Posts;
+            if (posts == null || posts.Count == 0)
+            {
+                ChatBox.Text = string.Empty;
+                return;
+            }
+
+            int startIndex = posts.Count - 1;
+            int totalLength = 0;
+            while (startIndex >= 0)
+            {
+                int msgLen = posts[startIndex].Message?.Length ?? 0;
+                if (totalLength + msgLen >= 5000)
+                {
+                    startIndex++;
+                    break;
+                }
+                totalLength += msgLen;
+                startIndex--;
+            }
+            if (startIndex < 0) startIndex = 0;
+
+            var sb = new StringBuilder(totalLength + (posts.Count - startIndex) * 64);
+            for (int i = startIndex; i < posts.Count; i++)
+            {
+                var cp = posts[i];
+                if (sb.Length > 0) sb.AppendLine();
+                sb.Append('[');
+                sb.Append(cp.Time.ToGoodUtcString("HH:mm "));
+                sb.Append(ChatController.PrepareShortTag("<@" + cp.OwnerLogin + ">"));
+                sb.Append("]: ");
+                sb.Append(cp.Message);
+            }
+            ChatBox.Text = sb.ToString();
+        }
+
+        private static ListBoxPlayerItem AddPlayerItem(List<ListBoxPlayerItem> dataSource, HashSet<string> alreadyLogin, string login, string text)
+        {
+            if (login != null) alreadyLogin.Add(login);
+            var item = new ListBoxPlayerItem
+            {
+                Login = login,
+                Text = text,
+                Tooltip = login
+            };
+            dataSource.Add(item);
+            return item;
+        }
+
+        private static void AddGroupTitle(List<ListBoxPlayerItem> dataSource, HashSet<string> alreadyLogin, string text)
+        {
+            if (dataSource.Count > 0)
+            {
+                var spacer = AddPlayerItem(dataSource, alreadyLogin, null, " ");
+                spacer.GroupTitle = true;
+            }
+            var title = AddPlayerItem(dataSource, alreadyLogin, null, " <i>– " + text + " –</i> ");
+            title.GroupTitle = true;
+        }
+
+        private static bool IsPlayerOnline(string login)
+        {
+            if (login == SessionClientController.My?.Login) return true;
+            if (SessionClientController.Data.Players != null &&
+                SessionClientController.Data.Players.TryGetValue(login, out var pClient))
+            {
+                return pClient.Online;
+            }
+            return false;
+        }
+
+        private static string FormatOnlineName(bool online, string txt)
+        {
+            return online ? "<b>" + txt + " </b>" : "<color=#888888ff>" + txt + "</color>";
+        }
+
         private void CannalsMenuShow()
         {
-            var listMenu = new List<FloatMenuOption>();
-            var myLogin = SessionClientController.My.Login;
+            var listMenu = new List<FloatMenuOption>(3);
 
             listMenu.Add(new FloatMenuOption("OCity_Dialog_ChennelCreate2".Translate(), CannalAdd));
 
@@ -386,8 +446,7 @@ namespace RimWorldOnlineCity.UI
                 listMenu.Add(new FloatMenuOption("OCity_Dialog_ChennelRen".Translate(), CannalRename));
 
             if (listMenu.Count == 0) return;
-            var menu = new FloatMenu(listMenu);
-            Find.WindowStack.Add(menu);
+            Find.WindowStack.Add(new FloatMenu(listMenu));
         }
 
         private void CannalAdd()
@@ -395,14 +454,13 @@ namespace RimWorldOnlineCity.UI
             var form = new Dialog_Input("OCity_Dialog_ChennelCreating".Translate(), "OCity_Dialog_ChennelCreateName".Translate(), "");
             form.PostCloseAction = () =>
             {
-                if (form.ResultOK && !string.IsNullOrEmpty(form.InputText) && form.InputText.Replace(" ", "") != "")
+                if (form.ResultOK && !string.IsNullOrEmpty(form.InputText) && form.InputText.Trim().Length > 0)
                 {
                     var mainCannal = SessionClientController.Data.Chats[0];
                     SessionClientController.Command((connect) =>
                     {
                         connect.PostingChat(mainCannal.Id, "/createChat '" + form.InputText.Replace("'", "''") + "'");
                     });
-                    //to do Сделать старт крутяшки до обновления чата
                 }
             };
             Find.WindowStack.Add(form);
@@ -420,7 +478,6 @@ namespace RimWorldOnlineCity.UI
                     {
                         connect.PostingChat(selectCannal.Id, "/exitChat");
                     });
-                    //to do Сделать старт крутяшки до обновления чата
                 }
             };
             Find.WindowStack.Add(form);
@@ -438,7 +495,6 @@ namespace RimWorldOnlineCity.UI
                     {
                         connect.PostingChat(selectCannal.Id, "/renameChat '" + form.InputText.Replace("'", "''") + "'");
                     });
-                    //to do Сделать старт крутяшки до обновления чата
                 }
             };
             Find.WindowStack.Add(form);
@@ -451,27 +507,29 @@ namespace RimWorldOnlineCity.UI
             var listMenu = new List<FloatMenuOption>();
             var myLogin = SessionClientController.My.Login;
 
-            if (SessionClientController.Data.Players.ContainsKey(item.Login))
+            if (SessionClientController.Data.Players != null && SessionClientController.Data.Players.ContainsKey(item.Login))
+            {
                 listMenu.Add(new FloatMenuOption("OCity_Dialog_ChennelPlayerInfo".Translate(), () =>
                 {
                     Dialog_InfoPlayer.ShowInfo(item.Login);
                 }));
+            }
 
-            ///Личное сообщение
             if (item.Login != myLogin)
             {
                 listMenu.Add(new FloatMenuOption("OCity_Dialog_PrivateMessage".Translate(), () =>
                 {
-                    var privateChat = String.Compare(myLogin, item.Login) < 0
+                    var privateChat = string.Compare(myLogin, item.Login, StringComparison.Ordinal) < 0
                         ? myLogin + " · " + item.Login
                         : item.Login + " · " + myLogin;
-                    var index = lbCannals.DataSource.IndexOf(privateChat);
+
+                    int index = lbCannals.DataSource.IndexOf(privateChat);
                     if (index >= 0)
                     {
                         lbCannals.SelectedIndex = index;
                         return;
                     }
-                    //создаем канал
+
                     var mainCannal = SessionClientController.Data.Chats[0];
                     SessionClientController.Command((connect) =>
                     {
@@ -482,7 +540,6 @@ namespace RimWorldOnlineCity.UI
                 }));
             }
 
-            ///Добавить участника
             if (lbCannals.SelectedIndex > 0 && SessionClientController.Data.Chats.Count > lbCannals.SelectedIndex)
             {
                 var selectCannal = SessionClientController.Data.Chats[lbCannals.SelectedIndex];
@@ -500,9 +557,7 @@ namespace RimWorldOnlineCity.UI
             }
 
             if (listMenu.Count == 0) return;
-            var menu = new FloatMenu(listMenu);
-            Find.WindowStack.Add(menu);
+            Find.WindowStack.Add(new FloatMenu(listMenu));
         }
-
     }
 }
