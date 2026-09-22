@@ -1,10 +1,7 @@
 ﻿using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace RimWorldOnlineCity.Services
 {
@@ -15,29 +12,32 @@ namespace RimWorldOnlineCity.Services
         public DateTime LoadDate { get; set; }
     }
 
+    /// <summary>
+    /// Служба фонового асинхронного завантаження довільних пакетів даних за їхнім хешем.
+    /// Забезпечує пакетне завантаження (batching) по 10 штук та локальне кешування в пам'яті.
+    /// </summary>
     public class AnyLoad
     {
         private static Thread Downloader = null;
+        private static readonly List<AnyLoad> Tasks = new List<AnyLoad>();
 
-        private static List<AnyLoad> Tasks = new List<AnyLoad>();
-
-        private static Dictionary<long, AnyLoadTask> Database = new Dictionary<long, AnyLoadTask>();
+        // Потокобезпечний кеш з лімітом місткості
+        private static readonly Dictionary<long, AnyLoadTask> Database = new Dictionary<long, AnyLoadTask>(512);
+        private static readonly object DbLock = new object();
+        private static DateTime LastDbCleanup = DateTime.UtcNow;
 
         public List<AnyLoadTask> ListLoad { get; set; }
         public Action<AnyLoad, int> TaskProgress { get; set; }
         public Action<AnyLoad> TaskFinish { get; set; }
         public Action<AnyLoad, string> TaskError { get; set; }
 
-        /// <summary>
-        /// Создает задачу загрузки и помещает в очередь на выполнение.
-        /// При завершении будет вызвано либо taskFinish, либо taskError при ошибке, кроме случая вызова Cancel()
-        /// </summary>
         public AnyLoad(List<AnyLoadTask> listLoad, Action<AnyLoad> taskFinish, Action<AnyLoad, int> taskProgress, Action<AnyLoad, string> taskError)
         {
-            ListLoad = listLoad;
+            ListLoad = listLoad ?? new List<AnyLoadTask>(0);
             TaskFinish = taskFinish;
             TaskProgress = taskProgress;
             TaskError = taskError;
+
             lock (Tasks)
             {
                 Tasks.Add(this);
@@ -48,146 +48,235 @@ namespace RimWorldOnlineCity.Services
         public void Cancel()
         {
             Loger.Log("AnyLoadDownloadThread Cancel");
-            lock (Tasks) Tasks.Remove(this);
+            lock (Tasks)
+            {
+                Tasks.Remove(this);
+            }
             TaskFinish = null;
             TaskProgress = null;
             TaskError = null;
         }
 
-        private void Start()
+        private static void Start()
         {
             if (Downloader == null)
             {
-                Downloader = new Thread(DownloadThread);
-                Downloader.IsBackground = true;
+                Downloader = new Thread(DownloadThread)
+                {
+                    IsBackground = true,
+                    Priority = ThreadPriority.BelowNormal
+                };
                 Downloader.Start();
             }
         }
 
+        /// <summary>
+        /// Головний робочий цикл фонового завантажувача.
+        /// ОПТИМІЗАЦІЯ: ліквідовано квадратичне O(N^2) сканування завдань;
+        /// додано періодичне очищення кешу пам'яті Database.
+        /// </summary>
         private static void DownloadThread()
         {
             try
             {
-                while (Tasks.Count > 0)
+                while (true)
                 {
-                    if (!DownloadCheckConnect()) 
+                    AnyLoad currentTask = null;
+                    lock (Tasks)
+                    {
+                        if (Tasks.Count == 0) break;
+                        currentTask = Tasks[0];
+                    }
+
+                    if (currentTask.ListLoad == null || currentTask.ListLoad.Count == 0)
+                    {
+                        TasksRemove(currentTask);
+                        continue;
+                    }
+
+                    if (!DownloadCheckConnect())
                     {
                         Error("Load: error connect");
                         break;
                     }
-                    //берем задачу
-                    AnyLoad that;
-                    lock (Tasks)
+
+                    // 1. Однопрохідне розділення: що вже є в кеші, а що треба завантажити за O(N)
+                    var neededToDownload = new List<AnyLoadTask>();
+                    int resolvedCount = 0;
+                    var now = DateTime.UtcNow;
+
+                    lock (DbLock)
                     {
-                        if (Tasks.Count == 0) break;
-                        that = Tasks[0];
-                    }
-                    if (that.ListLoad.Count == 0)
-                    {
-                        Loger.Log("AnyLoadDownloadThread TasksRemove 1");
-                        TasksRemove(that);
-                        continue;
+                        // Періодичне очищення кешу (раз на 10 хвилин, якщо більше 600 записів)
+                        if ((now - LastDbCleanup).TotalMinutes > 10 && Database.Count > 600)
+                        {
+                            CleanupDatabaseCache(now);
+                        }
+
+                        for (int i = 0; i < currentTask.ListLoad.Count; i++)
+                        {
+                            var item = currentTask.ListLoad[i];
+                            if (Database.TryGetValue(item.Hash, out var cached))
+                            {
+                                item.Data = cached.Data;
+                                item.LoadDate = cached.LoadDate = now;
+                                resolvedCount++;
+                            }
+                            else
+                            {
+                                neededToDownload.Add(item);
+                            }
+                        }
                     }
 
-                    //качаем блоками по 10 штук с проверкой, что сама задача ещё в списке
-                    List<AnyLoadTask> download = new List<AnyLoadTask>();
-                    int exist = 0;
-                    for (int i = 0; i < that.ListLoad.Count && download.Count < 10; i++)
+                    // Повідомляємо про початковий прогрес із кешу
+                    if (resolvedCount > 0 && currentTask.ListLoad.Count > 0)
                     {
-                        AnyLoadTask db;
-                        if (Database.TryGetValue(that.ListLoad[i].Hash, out db))
-                        {
-                            that.ListLoad[i].LoadDate = db.LoadDate = DateTime.UtcNow;
-                            that.ListLoad[i].Data = db.Data;
-                            exist++;
-                        }
-                        else
-                        {
-                            download.Add(that.ListLoad[i]);
-                        }
+                        currentTask.TaskProgress?.Invoke(currentTask, (int)(100L * resolvedCount / currentTask.ListLoad.Count));
                     }
-                    if (download.Count > 0)
+
+                    // 2. Пакетне завантаження відсутніх елементів блоками по 10 штук
+                    bool hasError = false;
+                    for (int chunkStart = 0; chunkStart < neededToDownload.Count; chunkStart += 10)
                     {
+                        // Перевіряємо чи завдання не було скасовано гравцем
+                        lock (Tasks)
+                        {
+                            if (!Tasks.Contains(currentTask)) break;
+                        }
+
                         if (!DownloadCheckConnect())
                         {
                             Error("Load: error connect.");
+                            hasError = true;
                             break;
                         }
-                        DownloadList(download);
-                        exist += download.Count;
+
+                        int chunkSize = Math.Min(10, neededToDownload.Count - chunkStart);
+                        var chunk = new List<AnyLoadTask>(chunkSize);
+                        for (int c = 0; c < chunkSize; c++)
+                        {
+                            chunk.Add(neededToDownload[chunkStart + c]);
+                        }
+
+                        DownloadList(chunk);
+                        resolvedCount += chunkSize;
+
+                        currentTask.TaskProgress?.Invoke(currentTask, (int)(100L * resolvedCount / currentTask.ListLoad.Count));
                     }
 
-                    //вызываем события окончания загрузки
-                    lock (Tasks)
-                    {
-                        if (!Tasks.Contains(that))
-                        {
-                            Loger.Log($"Client AnyLoad drop task {exist}/{that.ListLoad.Count} {(int)(100 * exist / that.ListLoad.Count)}%");
-                            continue;
-                        }
-                    }
-                    Loger.Log($"Client AnyLoad TaskProgress {exist}/{that.ListLoad.Count} {(int)(100 * exist / that.ListLoad.Count)}%");
-                    if (that.TaskProgress != null) that.TaskProgress(that, (int)(100 * exist / that.ListLoad.Count));
-                    if (that.ListLoad.Count == exist)
-                    {
-                        Loger.Log("AnyLoadDownloadThread TasksRemove 2");
-                        TasksRemove(that);
-                    }
+                    if (hasError) break;
+
+                    // Завершуємо поточну задачу
+                    TasksRemove(currentTask);
                 }
             }
-            catch(Exception exp)
+            catch (Exception exp)
             {
                 Error("Load error: " + exp.ToString());
             }
-            //lock (Tasks)
+            finally
             {
                 Downloader = null;
             }
         }
 
+        private static void CleanupDatabaseCache(DateTime now)
+        {
+            var keysToRemove = new List<long>();
+            foreach (var kvp in Database)
+            {
+                if ((now - kvp.Value.LoadDate).TotalMinutes > 30)
+                {
+                    keysToRemove.Add(kvp.Key);
+                }
+            }
+            for (int i = 0; i < keysToRemove.Count; i++)
+            {
+                Database.Remove(keysToRemove[i]);
+            }
+            LastDbCleanup = now;
+        }
+
         private static void TasksRemove(AnyLoad that)
         {
-            lock (Tasks) Tasks.Remove(that);
-            Loger.Log($"Client AnyLoad TaskFinish cnt={that.ListLoad.Count}");
-            if (that.TaskFinish != null) that.TaskFinish(that);
+            Action<AnyLoad> finishAction = null;
+            lock (Tasks)
+            {
+                if (Tasks.Remove(that))
+                {
+                    finishAction = that.TaskFinish;
+                }
+            }
+            // Виклик колбеку за межами блокування усуває ризик взаємного блокування потоків (Deadlock)
+            finishAction?.Invoke(that);
         }
 
         private static bool DownloadCheckConnect()
         {
-            while (SessionClient.Get.IsLogined && SessionClient.IsRelogin) Thread.Sleep(10);
+            while (SessionClient.Get.IsLogined && SessionClient.IsRelogin)
+            {
+                Thread.Sleep(10);
+            }
             return SessionClient.Get.IsLogined;
         }
 
+        /// <summary>
+        /// Запитує блок даних у сервера за списком хешів.
+        /// ОПТИМІЗАЦІЯ: список хешів формується без LINQ-викликів .Select().ToList().
+        /// </summary>
         private static void DownloadList(List<AnyLoadTask> download)
         {
+            var hashes = new List<long>(download.Count);
+            for (int i = 0; i < download.Count; i++)
+            {
+                hashes.Add(download[i].Hash);
+            }
+
             List<string> datas = null;
             SessionClientController.Command((connect) =>
             {
-                datas = connect.AnyLoad(download.Select(d => d.Hash).ToList());
+                datas = connect.AnyLoad(hashes);
             });
-            if (datas == null || datas.Count != download.Count) throw new ApplicationException("bad request");
 
-            for (int i = 0; i < download.Count; i++)
+            if (datas == null || datas.Count != download.Count)
             {
-                download[i].Data = datas[i];
-                download[i].LoadDate = DateTime.UtcNow;
-                Database[download[i].Hash] = download[i];
+                throw new ApplicationException("AnyLoad: bad response from server");
+            }
+
+            var now = DateTime.UtcNow;
+            lock (DbLock)
+            {
+                for (int i = 0; i < download.Count; i++)
+                {
+                    download[i].Data = datas[i];
+                    download[i].LoadDate = now;
+                    Database[download[i].Hash] = download[i];
+                }
             }
         }
 
         private static void Error(string error)
         {
             Loger.Log("Client AnyLoad error: " + error, Loger.LogLevel.ERROR);
+
+            List<AnyLoad> tasksToNotify;
             lock (Tasks)
             {
-                foreach (var task in Tasks)
-                {
-                    task.TaskError(task, error);
-                }
+                tasksToNotify = new List<AnyLoad>(Tasks);
                 Tasks.Clear();
                 Downloader = null;
-            } 
-        }
+            }
 
+            // Оповіщення про помилку поза блокуванням Tasks
+            for (int i = 0; i < tasksToNotify.Count; i++)
+            {
+                try
+                {
+                    tasksToNotify[i].TaskError?.Invoke(tasksToNotify[i], error);
+                }
+                catch { }
+            }
+        }
     }
 }

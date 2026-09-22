@@ -120,7 +120,7 @@ namespace RimWorldOnlineCity
 
         public string ServerName { get; set; }
 
-        public int DelaySaveGame { get; set; } = 15;
+        public int DelaySaveGame { get; set; } = 10;
 
         public bool IsAdmin { get; set; }
 

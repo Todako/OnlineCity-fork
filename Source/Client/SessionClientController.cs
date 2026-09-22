@@ -1115,8 +1115,13 @@ namespace RimWorldOnlineCity
             My = serverInfo.My;
             Data.ServerName = serverInfo.ServerName;
             Data.DelaySaveGame = serverInfo.DelaySaveGame;
-            if (Data.DelaySaveGame == 0) Data.DelaySaveGame = 15;
+
+            // ЗМІНЕНО: якщо від сервера прийшло 0 (значення за замовчуванням), ставимо 10 хв замість 15
+            if (Data.DelaySaveGame == 0) Data.DelaySaveGame = 10;
+
+            // Мінімально допустимий інтервал (захист від занадто частого збереження)
             if (Data.DelaySaveGame < 5) Data.DelaySaveGame = 5;
+
             Data.IsAdmin = serverInfo.IsAdmin;
             Data.DisableDevMode = !serverInfo.IsAdmin && serverInfo.DisableDevMode;
             Data.MinutesIntervalBetweenPVP = serverInfo.MinutesIntervalBetweenPVP;
