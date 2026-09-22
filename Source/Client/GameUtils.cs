@@ -22,7 +22,6 @@ namespace RimWorldOnlineCity
 {
     public static class ScribeSaverHelper
     {
-        // ОПТИМІЗАЦІЯ: прямий IL-доступ до приватного поля writer замість важкої рефлексії на кожному сейві
         private static readonly AccessTools.FieldRef<ScribeSaver, XmlWriter> WriterRef =
             AccessTools.FieldRefAccess<ScribeSaver, XmlWriter>("writer");
 
@@ -70,9 +69,13 @@ namespace RimWorldOnlineCity
             DravLineThing(rect, thing, withInfo, Color.white);
         }
 
+        /// <summary>
+        /// Відмальовка іконки та підказки для ThingTrade.
+        /// ОПТИМІЗАЦІЯ: усунено щокадровий виклик thing.ToString() в OnGUI.
+        /// </summary>
         public static void DravLineThing(Rect rect, ThingTrade thing, bool withInfo, Color labelColor, float xi = 24f, float yi = 0)
         {
-            if (ExceptionDravLineThing.Contains(thing.ToString())) return;
+            if (ExceptionDravLineThing.Count > 0 && ExceptionDravLineThing.Contains(thing.ToString())) return;
             try
             {
                 if (thing.Def?.race?.Humanlike ?? false)
@@ -110,7 +113,6 @@ namespace RimWorldOnlineCity
         public static void DravLineThing(Rect rect, Thing thing, bool withInfo, float xi = 24f, float yi = 0)
         {
             if (thing == null) return;
-            if (thing is Corpse) Loger.Log("DravLineThing is Corpse");
             Widgets.ThingIcon(rect, thing);
             if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing);
 
@@ -176,9 +178,6 @@ namespace RimWorldOnlineCity
             }, localThing.GetHashCode()));
         }
 
-        /// <summary>
-        /// Повертає список усіх об'єктів планети без створення проміжних масивів і LINQ.
-        /// </summary>
         public static List<WorldObject> GetAllWorldObjects()
         {
             var raw = Find.WorldObjects.AllWorldObjects;
@@ -191,9 +190,6 @@ namespace RimWorldOnlineCity
             return list;
         }
 
-        /// <summary>
-        /// Об'єднує однакові речі в список всередині одного контейнера TransferableOneWay.
-        /// </summary>
         public static List<TransferableOneWay> DistinctToTransferableOneWays(this IEnumerable<Thing> things)
         {
             var transferables = new List<TransferableOneWay>();
@@ -213,10 +209,6 @@ namespace RimWorldOnlineCity
             return transferables;
         }
 
-        /// <summary>
-        /// Розгортає список TransferableOneWay до словника (річ -> кількість).
-        /// ОПТИМІЗАЦІЯ: заповнення за один прохід без SelectMany і тимчасових списків Pair.
-        /// </summary>
         public static Dictionary<Thing, int> TransferableOneWaysToDictionary(this IEnumerable<TransferableOneWay> selectByGroup, bool selectAll = false)
         {
             var dict = new Dictionary<Thing, int>();
@@ -286,32 +278,67 @@ namespace RimWorldOnlineCity
             }
         }
 
+        /// <summary>
+        /// Компаратор для сортування речей без конкатенації рядків та виділення пам'яті в купі (Zero GC).
+        /// </summary>
+        private sealed class TradeThingComparer : IComparer<Thing>
+        {
+            public static readonly TradeThingComparer Instance = new TradeThingComparer();
+
+            public int Compare(Thing x, Thing y)
+            {
+                if (ReferenceEquals(x, y)) return 0;
+                if (x == null) return -1;
+                if (y == null) return 1;
+
+                int cmp = string.CompareOrdinal(x.def.defName, y.def.defName);
+                if (cmp != 0) return cmp;
+
+                QualityUtility.TryGetQuality(x, out var qX);
+                QualityUtility.TryGetQuality(y, out var qY);
+                cmp = ((int)qX).CompareTo((int)qY);
+                if (cmp != 0) return cmp;
+
+                cmp = (10000 - x.HitPoints).CompareTo(10000 - y.HitPoints);
+                if (cmp != 0) return cmp;
+
+                return x.stackCount.CompareTo(y.stackCount);
+            }
+        }
+
+        /// <summary>
+        /// Перевірка можливості торгової угоди.
+        /// ОПТИМІЗАЦІЯ: повністю ліквідовано створення анонімних об'єктів та конкатенацію рядків під час сортування.
+        /// </summary>
         private static List<TransferableOneWay> ChechToTradeDo(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, ref int rate, bool setRect, bool incomplete = false, bool setTradeCount = true)
         {
             bool result = true;
             var selects = new List<TransferableOneWay>();
-            var source = allThings.ToDictionary(i => i, i => i.stackCount);
 
-            var sourceKeys = source.Keys
-                .Select(t =>
-                {
-                    QualityUtility.TryGetQuality(t, out QualityCategory qq);
-                    return new { thing = t, q = qq };
-                })
-                .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
-                .Select(t => t.thing)
-                .ToList();
+            var source = new Dictionary<Thing, int>();
+            var sourceKeys = new List<Thing>();
+            foreach (var item in allThings)
+            {
+                if (item == null) continue;
+                source[item] = item.stackCount;
+                sourceKeys.Add(item);
+            }
+            sourceKeys.Sort(TradeThingComparer.Instance);
 
-            var sourcealt = altThings?.ToDictionary(i => i, i => i.stackCount);
-            var sourcealtKeys = sourcealt?.Keys
-                .Select(t =>
+            Dictionary<Thing, int> sourcealt = null;
+            List<Thing> sourcealtKeys = null;
+            if (altThings != null)
+            {
+                sourcealt = new Dictionary<Thing, int>();
+                sourcealtKeys = new List<Thing>();
+                foreach (var item in altThings)
                 {
-                    QualityUtility.TryGetQuality(t, out QualityCategory qq);
-                    return new { thing = t, q = qq };
-                })
-                .OrderBy(t => t.thing.def.defName + "#" + ((int)t.q).ToString() + (10000 - t.thing.HitPoints).ToString() + t.thing.stackCount.ToString().PadLeft(6))
-                .Select(t => t.thing)
-                .ToList();
+                    if (item == null) continue;
+                    sourcealt[item] = item.stackCount;
+                    sourcealtKeys.Add(item);
+                }
+                sourcealtKeys.Sort(TradeThingComparer.Instance);
+            }
 
             foreach (var target in targets)
             {
@@ -329,8 +356,9 @@ namespace RimWorldOnlineCity
                 var select = new TransferableOneWay();
                 var selectalt = new TransferableOneWay();
 
-                foreach (var thing in sourceKeys)
+                for (int i = 0; i < sourceKeys.Count; i++)
                 {
+                    var thing = sourceKeys[i];
                     if (!setTradeCount && target.Count <= select.CountToTransfer) break;
                     if (source[thing] == 0) continue;
                     if (target.MatchesThing(thing))
@@ -346,10 +374,11 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                if (altThings != null)
+                if (sourcealt != null && sourcealtKeys != null)
                 {
-                    foreach (var thing in sourcealtKeys)
+                    for (int i = 0; i < sourcealtKeys.Count; i++)
                     {
+                        var thing = sourcealtKeys[i];
                         if (!setTradeCount && target.Count <= select.CountToTransfer) break;
                         if (sourcealt[thing] == 0) continue;
                         if (target.MatchesThing(thing))
@@ -398,10 +427,6 @@ namespace RimWorldOnlineCity
             return SessionClientController.My.LastTick < 3600000 / 2 || costAll.MarketValueTotal < MainHelper.MinCostForTrade;
         }
 
-        /// <summary>
-        /// Фільтрує речі перед відправкою на сервер.
-        /// ОПТИМІЗАЦІЯ: безпечний доступ до налаштувань та прямий обхід без ланцюжків IEnumerable.Where.
-        /// </summary>
         internal static List<Thing> FilterBeforeSendServer(this IEnumerable<Thing> list)
         {
             if (UpdateWorldController.ExistsEnemyPawns || list == null) return new List<Thing>(0);
@@ -415,13 +440,12 @@ namespace RimWorldOnlineCity
                     var r = allRoles[i];
                     if (r.def.defName == "IdeoRole_Leader" || r.def.defName == "IdeoRole_Moralist")
                     {
-                        if (roles == null) roles = new List<Precept_Role>();
+                        if (roles == null) roles = new List<Precept_Role>(2);
                         roles.Add(r);
                     }
                 }
             }
 
-            // Безпечне отримання заборонених предметів зі структури GeneralSettings
             var data = SessionClientController.Data;
             var forbidden = data != null ? data.GeneralSettings.ExchengeForbiddenDefNamesList : null;
             bool isNovice = IsProtectingNovice();
@@ -455,9 +479,6 @@ namespace RimWorldOnlineCity
             return result;
         }
 
-        /// <summary>
-        /// Повертає всі речі каравану без Concat та зайвих копіювань.
-        /// </summary>
         public static List<Thing> GetAllThings(Caravan caravan, bool thingOnPawn = false, bool withTransferFilter = true)
         {
             var rawPawns = caravan.PawnsListForReading;
@@ -482,9 +503,6 @@ namespace RimWorldOnlineCity
             return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
         }
 
-        /// <summary>
-        /// Повертає всі речі карти.
-        /// </summary>
         public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true)
         {
             var rawPawns = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer);
@@ -503,10 +521,6 @@ namespace RimWorldOnlineCity
             return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
         }
 
-        /// <summary>
-        /// Витягнути всі речі пішака (зброя, одяг, інвентар, предмет у руках).
-        /// ОПТИМІЗАЦІЯ: обхід IEnumerable<Thing> через простий foreach без викликів LINQ.
-        /// </summary>
         private static List<Thing> GetThingOnPawn(IEnumerable<Thing> pawns)
         {
             var result = new List<Thing>();
@@ -530,7 +544,7 @@ namespace RimWorldOnlineCity
 
         public static List<Thing> GetAllThings(TradeThingsOnline storage)
         {
-            using (GameUtils.NormalGameError())
+            using (NormalGameError())
             {
                 var things = storage.TradeThings.Things;
                 var res = new List<Thing>(things.Count);
@@ -582,6 +596,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Пошук клітинки для вивантаження вантажу.
+        /// ОПТИМІЗАЦІЯ: прямий розрахунок середнього за O(N) замість LINQ Aggregate.
         /// </summary>
         public static IntVec3 GetTradeCell(Map map)
         {
@@ -616,10 +631,19 @@ namespace RimWorldOnlineCity
 
             if (bestZone == null) return map.Center;
 
-            var res = bestZone.Cells.Aggregate(new IntVec3(), (a, cell) => { a.x += cell.x; a.z += cell.z; return a; });
-            res.x /= bestZone.Cells.Count;
-            res.z /= bestZone.Cells.Count;
-            return res;
+            var cells = bestZone.Cells;
+            int count = cells.Count;
+            if (count == 0) return map.Center;
+
+            int sumX = 0;
+            int sumZ = 0;
+            for (int i = 0; i < count; i++)
+            {
+                sumX += cells[i].x;
+                sumZ += cells[i].z;
+            }
+
+            return new IntVec3(sumX / count, 0, sumZ / count);
         }
 
         public static Func<IntVec3> GetAttackCells(Map map)
@@ -849,35 +873,67 @@ namespace RimWorldOnlineCity
             Text.Anchor = TextAnchor.UpperLeft;
         }
 
+        /// <summary>
+        /// Пошук та вибір речей заданого def на домашніх картах гравця.
+        /// ОПТИМІЗАЦІЯ: ліквідовано зайві виклики LINQ Where, Sum, OrderByDescending.
+        /// </summary>
         public static int FindThings(ThingDef def, int select, bool getMaxByMap, out Dictionary<Thing, int> thingsSelect)
         {
             int countAll = 0;
             int countMax = 0;
-            List<Pair<List<Thing>, int>> maps = new List<Pair<List<Thing>, int>>();
+            var maps = new List<Pair<List<Thing>, int>>();
             var gameMaps = Current.Game.Maps;
+
             for (int i = 0; i < gameMaps.Count; i++)
             {
                 var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    List<Thing> things = GameUtils.GetAllThings(m).Where(t => t.def == def).ToList();
-                    var c = things.Sum(t => t.stackCount);
+                    var allMThings = GetAllThings(m);
+                    var things = new List<Thing>();
+                    int c = 0;
+                    for (int j = 0; j < allMThings.Count; j++)
+                    {
+                        var t = allMThings[j];
+                        if (t.def == def)
+                        {
+                            things.Add(t);
+                            c += t.stackCount;
+                        }
+                    }
+
                     maps.Add(new Pair<List<Thing>, int>(things, c));
                     countAll += c;
                     if (countMax < c) countMax = c;
                 }
             }
+
             int count = getMaxByMap ? countMax : countAll;
             if (select == 0 || select > count) select = count;
             thingsSelect = new Dictionary<Thing, int>();
+
             if (select > 0)
             {
                 var selectProcess = select;
                 while (maps.Count > 0 && selectProcess > 0)
                 {
-                    var m = maps.OrderByDescending(p => p.Second).First();
-                    foreach (Thing thing in m.First)
+                    int bestIdx = 0;
+                    int bestVal = maps[0].Second;
+                    for (int j = 1; j < maps.Count; j++)
                     {
+                        if (maps[j].Second > bestVal)
+                        {
+                            bestVal = maps[j].Second;
+                            bestIdx = j;
+                        }
+                    }
+
+                    var m = maps[bestIdx];
+                    maps.RemoveAt(bestIdx);
+
+                    for (int j = 0; j < m.First.Count; j++)
+                    {
+                        var thing = m.First[j];
                         var sc = thing.stackCount;
                         if (sc < selectProcess)
                         {
@@ -900,29 +956,56 @@ namespace RimWorldOnlineCity
         {
             int countAll = 0;
             int countMax = 0;
-            List<Pair<List<Thing>, int>> maps = new List<Pair<List<Thing>, int>>();
+            var maps = new List<Pair<List<Thing>, int>>();
             var gameMaps = Current.Game.Maps;
+
             for (int i = 0; i < gameMaps.Count; i++)
             {
                 var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    List<Thing> things = GameUtils.GetAllThings(m).Where(t => t.def == def).ToList();
-                    var c = things.Sum(t => t.stackCount);
+                    var allMThings = GetAllThings(m);
+                    var things = new List<Thing>();
+                    int c = 0;
+                    for (int j = 0; j < allMThings.Count; j++)
+                    {
+                        var t = allMThings[j];
+                        if (t.def == def)
+                        {
+                            things.Add(t);
+                            c += t.stackCount;
+                        }
+                    }
+
                     maps.Add(new Pair<List<Thing>, int>(things, c));
                     countAll += c;
                     if (countMax < c) countMax = c;
                 }
             }
+
             int count = getMaxByMap ? countMax : countAll;
             if (destroy > 0 && destroy < count)
             {
                 var destroyProcess = destroy;
                 while (maps.Count > 0 && destroyProcess > 0)
                 {
-                    var m = maps.OrderByDescending(p => p.Second).First();
-                    foreach (Thing thing in m.First)
+                    int bestIdx = 0;
+                    int bestVal = maps[0].Second;
+                    for (int j = 1; j < maps.Count; j++)
                     {
+                        if (maps[j].Second > bestVal)
+                        {
+                            bestVal = maps[j].Second;
+                            bestIdx = j;
+                        }
+                    }
+
+                    var m = maps[bestIdx];
+                    maps.RemoveAt(bestIdx);
+
+                    for (int j = 0; j < m.First.Count; j++)
+                    {
+                        var thing = m.First[j];
                         if (thing.stackCount < destroyProcess)
                         {
                             destroyProcess -= thing.stackCount;
@@ -940,9 +1023,6 @@ namespace RimWorldOnlineCity
             return count;
         }
 
-        /// <summary>
-        /// Повертає оповідача за ім'ям без виділення enumerator-ів.
-        /// </summary>
         public static StorytellerDef GetStorytallerByName(string name)
         {
             var defs = DefDatabase<StorytellerDef>.AllDefsListForReading;
