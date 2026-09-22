@@ -22,6 +22,13 @@ namespace RimWorldOnlineCity
         private static bool InOnlineGame;
         internal static PanelChat MainPanelChat;
 
+        // Кеші для усунення виділень рядків під час розбору розмітки та перекладів
+        private static readonly Dictionary<string, string> TranslatedTokenCache = new Dictionary<string, string>(128, StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> ShortTagEmojiCache = new Dictionary<string, string>(64, StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> ShortTagPlayerCache = new Dictionary<string, string>(64, StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> ShortTagDefCache = new Dictionary<string, string>(128, StringComparer.Ordinal);
+        private static readonly Dictionary<int, string> ShortTagTileCache = new Dictionary<int, string>(128);
+
         /// <summary>
         /// Ініціалізація обробників чату.
         /// </summary>
@@ -31,15 +38,29 @@ namespace RimWorldOnlineCity
             InOnlineGame = inOnlineGame;
             connect.OnPostingChatAfter = After;
             connect.OnPostingChatBefore = Before;
+
+            // Очищення специфічних для карти кешів
+            ShortTagTileCache.Clear();
         }
 
         public static void AddToInputChat(string text, bool activeChat = false)
         {
             if (activeChat) Dialog_MainOnlineCity.ShowChat();
             if (MainPanelChat == null) return;
-            if (MainPanelChat.ChatInputText == null) MainPanelChat.ChatInputText = "";
-            MainPanelChat.ChatInputText += (MainPanelChat.ChatInputText.Length == 0 || MainPanelChat.ChatInputText[MainPanelChat.ChatInputText.Length - 1] == ' ' ? "" : " ")
-                + text;
+            if (string.IsNullOrEmpty(MainPanelChat.ChatInputText))
+            {
+                MainPanelChat.ChatInputText = text;
+                return;
+            }
+
+            if (MainPanelChat.ChatInputText[MainPanelChat.ChatInputText.Length - 1] == ' ')
+            {
+                MainPanelChat.ChatInputText += text;
+            }
+            else
+            {
+                MainPanelChat.ChatInputText += " " + text;
+            }
         }
 
         public static string ServerTranslate(this string textChat, bool onlyTranslate = false)
@@ -47,7 +68,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Локалізація серверних ключів OC_ у тексті повідомлення.
-        /// ОПТИМІЗАЦІЯ: швидкий вихід, якщо префікса OC_ немає; відмова від 8 проміжних Replace().
+        /// ОПТИМІЗАЦІЯ: кешування результатів перекладу токенів без повторних викликів Translate().ToString().
         /// </summary>
         public static string ServerCharTranslate(string textChat, bool onlyTranslate = false)
         {
@@ -56,7 +77,7 @@ namespace RimWorldOnlineCity
             if (!onlyTranslate) textChat = PrepareShortTag(textChat);
 
             int pos = textChat.IndexOf("OC_", StringComparison.Ordinal);
-            if (pos < 0) return textChat; // Якщо ключів перекладу немає — нуль виділень пам'яті
+            if (pos < 0) return textChat;
 
             var sb = new StringBuilder(textChat.Length + 32);
             int lastPos = 0;
@@ -65,24 +86,31 @@ namespace RimWorldOnlineCity
             {
                 sb.Append(textChat, lastPos, pos - lastPos);
 
-                // Знаходження кінця токена без створення копій рядків
                 int ep = pos + 3;
                 while (ep < textChat.Length && !IsTokenDelimiter(textChat[ep]))
                 {
                     ep++;
                 }
 
-                var sub = textChat.Substring(pos, ep - pos);
-                var tr = sub.Translate().ToString();
+                int len = ep - pos;
+                var sub = textChat.Substring(pos, len);
 
-                if (!tr.StartsWith("OC_", StringComparison.Ordinal))
+                // ОПТИМІЗАЦІЯ: швидкий пошук у кеші готових перекладів
+                if (!TranslatedTokenCache.TryGetValue(sub, out var tr))
                 {
-                    sb.Append(tr);
+                    tr = sub.Translate().ToString();
+                    if (!tr.StartsWith("OC_", StringComparison.Ordinal))
+                    {
+                        TranslatedTokenCache[sub] = tr;
+                    }
+                    else
+                    {
+                        tr = sub;
+                        TranslatedTokenCache[sub] = tr;
+                    }
                 }
-                else
-                {
-                    sb.Append(sub);
-                }
+
+                sb.Append(tr);
 
                 lastPos = ep;
                 pos = textChat.IndexOf("OC_", lastPos, StringComparison.Ordinal);
@@ -103,7 +131,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Розбір та перетворення коротких тегів у формат розмітки RichText.
-        /// ОПТИМІЗАЦІЯ: однопрохідна збірка через StringBuilder без повторних Substring() + Substring().
+        /// ОПТИМІЗАЦІЯ: однопрохідна збірка через StringBuilder з кешуванням повторюваних тегів.
         /// </summary>
         public static string PrepareShortTag(string textChat)
         {
@@ -128,7 +156,7 @@ namespace RimWorldOnlineCity
                     continue;
                 }
 
-                // Перевірка коментаря: <!-- без виділення підрядків
+                // Перевірка коментаря: <!--
                 if (pos + 2 < textChat.Length && textChat[pos + 1] == '!' && textChat[pos + 2] == '-')
                 {
                     current = posE + 1;
@@ -171,7 +199,6 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            // Якщо жодного тегу не замінено — повертаємо оригінальний рядок
             if (lastPos == 0)
             {
                 return textChat;
@@ -189,13 +216,23 @@ namespace RimWorldOnlineCity
         {
             if (content.EndsWith(":")) content = content.Substring(0, content.Length - 1);
             content = content.Trim();
-            return $"<img Emoji/Emoji_{content}>";
+
+            if (ShortTagEmojiCache.TryGetValue(content, out var cached)) return cached;
+
+            var res = $"<img Emoji/Emoji_{content}>";
+            ShortTagEmojiCache[content] = res;
+            return res;
         }
 
         private static string ShortTagPlayer(string content)
         {
             content = content.Trim();
-            return $"<btn name=pl{content} class=player arg={content}><img pl_{content}> " + content + "</btn>";
+
+            if (ShortTagPlayerCache.TryGetValue(content, out var cached)) return cached;
+
+            var res = $"<btn name=pl{content} class=player arg={content}><img pl_{content}> {content}</btn>";
+            ShortTagPlayerCache[content] = res;
+            return res;
         }
 
         private static string ShortTagTile(string content)
@@ -203,6 +240,8 @@ namespace RimWorldOnlineCity
             content = content.Trim();
             if (!int.TryParse(content, out int tile)) return null;
             if (Find.WorldGrid == null || tile < 0 || tile >= Find.WorldGrid.tiles.Count) return null;
+
+            if (ShortTagTileCache.TryGetValue(tile, out var cached)) return cached;
 
             var biome = Find.WorldGrid[tile].biome;
             Vector2 vector = Find.WorldGrid.LongLatOf(tile);
@@ -213,14 +252,21 @@ namespace RimWorldOnlineCity
                 msg += $" (<l>{GameUtils.GetHillinessLabel(Find.WorldGrid[tile].hilliness)}</l>)";
             }
 
-            return $"<btn name=tile{tile} class=tile d={tile} arg={tile}>" + msg + "</btn>";
+            var res = $"<btn name=tile{tile} class=tile d={tile} arg={tile}>{msg}</btn>";
+            ShortTagTileCache[tile] = res;
+            return res;
         }
 
         private static string ShortTagDef(string content)
         {
             content = content.Trim();
-            return (content == "Human" ? "<img IconHuman />" : $"<img defName={content} />")
+
+            if (ShortTagDefCache.TryGetValue(content, out var cached)) return cached;
+
+            var res = (content == "Human" ? "<img IconHuman />" : $"<img defName={content} />")
                 + $"<l>{content}.label</l>";
+            ShortTagDefCache[content] = res;
+            return res;
         }
 
         private static string ShortTagServerId(string content)
@@ -228,7 +274,7 @@ namespace RimWorldOnlineCity
             content = content.Trim();
             if (!int.TryParse(content, out int serverId)) return null;
 
-            var tile = 0;
+            int tile = 0;
             string player = null;
             var msg = "<img name=Waypoint />";
             var myObj = UpdateWorldController.GetMyByServerId(serverId);
@@ -252,14 +298,25 @@ namespace RimWorldOnlineCity
                 + (player == null ? "" : " " + ShortTagPlayer(player));
         }
 
+        /// <summary>
+        /// Перевіряє початок команди без виділення пам'яті методом TrimStart().
+        /// </summary>
+        private static bool StartsWithCommand(string msg, string command)
+        {
+            if (string.IsNullOrEmpty(msg)) return false;
+            int i = 0;
+            while (i < msg.Length && char.IsWhiteSpace(msg[i])) i++;
+            if (msg.Length - i < command.Length) return false;
+            return string.Compare(msg, i, command, 0, command.Length, StringComparison.OrdinalIgnoreCase) == 0;
+        }
+
         private static ModelStatus Before(int chatId, string msg)
         {
-            var trimmed = msg.TrimStart();
-            if (trimmed.StartsWith("/call", StringComparison.OrdinalIgnoreCase))
+            if (StartsWithCommand(msg, "/call"))
             {
                 return BeforeStartIncident(chatId, msg);
             }
-            if (trimmed.StartsWith("/debug", StringComparison.OrdinalIgnoreCase))
+            if (StartsWithCommand(msg, "/debug"))
             {
                 return Debug(chatId, msg);
             }
@@ -268,7 +325,7 @@ namespace RimWorldOnlineCity
 
         private static void After(int chatId, string msg, ModelStatus stat)
         {
-            if (msg.TrimStart().StartsWith("/call", StringComparison.OrdinalIgnoreCase))
+            if (StartsWithCommand(msg, "/call"))
             {
                 AfterStartIncident(chatId, msg, stat);
             }
@@ -356,26 +413,25 @@ namespace RimWorldOnlineCity
                 }
                 var newThingsByMaps = new Dictionary<int, Dictionary<string, int>>();
 
-                var allWorldObjects = GameUtils.GetAllWorldObjects();
-                var wObjects = allWorldObjects
-                    .Where(o => (o.Faction?.IsPlayer ?? false) && (o is Settlement || o is Caravan))
-                    .ToList();
+                // ОПТИМІЗАЦІЯ: пряме використання оптимізованого методу WorldObjectsPlayer()
+                var wObjects = ExchengeUtils.WorldObjectsPlayer();
 
                 for (int i = 0; i < wObjects.Count; i++)
                 {
-                    if (!(wObjects[i] is Settlement settlement)) continue;
-                    var m = settlement.Map;
-                    if (!m.IsPlayerHome) continue;
-                    var worldObject = m.Parent;
+                    if (wObjects[i] is Settlement settlement)
+                    {
+                        var m = settlement.Map;
+                        if (!m.IsPlayerHome) continue;
+                        var worldObject = m.Parent;
 
-                    var allt = GameUtils.GetAllThings(m, true, false);
-                    DebugGetThingsByWO(allt, newThingsByMaps, worldObject, "Map", needSave, needDiffNew, needDiffOld);
-                }
-                for (int i = 0; i < wObjects.Count; i++)
-                {
-                    if (!(wObjects[i] is Caravan caravan)) continue;
-                    var allt = GameUtils.GetAllThings(caravan, true, false);
-                    DebugGetThingsByWO(allt, newThingsByMaps, caravan, "Caravan", needSave, needDiffNew, needDiffOld);
+                        var allt = GameUtils.GetAllThings(m, true, false);
+                        DebugGetThingsByWO(allt, newThingsByMaps, worldObject, "Map", needSave, needDiffNew, needDiffOld);
+                    }
+                    else if (wObjects[i] is Caravan caravan)
+                    {
+                        var allt = GameUtils.GetAllThings(caravan, true, false);
+                        DebugGetThingsByWO(allt, newThingsByMaps, caravan, "Caravan", needSave, needDiffNew, needDiffOld);
+                    }
                 }
 
                 if (needDiffOld && AllThingsByMaps != null)
