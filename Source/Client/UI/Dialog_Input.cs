@@ -1,11 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
 using UnityEngine;
 using Verse;
-using Verse.Sound;
 
 namespace RimWorldOnlineCity
 {
@@ -16,15 +11,13 @@ namespace RimWorldOnlineCity
         private string TitleText;
         private string PrintText;
         private bool NeedFockus = true;
+        private bool isClosed = false;
 
         public string InputText = "";
         public bool ResultOK = false;
         public Action PostCloseAction;
 
-        public override Vector2 InitialSize
-        {
-            get { return new Vector2(400f, 300f); }
-        }
+        public override Vector2 InitialSize => new Vector2(400f, 300f);
 
         public Dialog_Input()
         {
@@ -34,30 +27,16 @@ namespace RimWorldOnlineCity
             doCloseX = true;
             forcePause = true;
             absorbInputAroundWindow = true;
-            //if (GameStarter.AfterStart == null) layer = WindowLayer.SubSuper;
-            /*
-            closeOnEscapeKey = true;
-            doCloseButton = false;
-            doCloseX = true;
-            resizeable = false;
-            draggable = true;
-            */
         }
 
-        /// <summary>
-        /// Старт в режиме ввода значения
-        /// </summary>
         public Dialog_Input(string title, string printText, string inputTextStart)
             : this()
         {
             TitleText = title;
             PrintText = printText;
-            InputText = inputTextStart;
+            InputText = inputTextStart ?? "";
         }
-        
-        /// <summary>
-        /// Старт в режиме Да/Нет
-        /// </summary>
+
         public Dialog_Input(string title, string printText, bool modeOkOnly = false)
             : this()
         {
@@ -70,17 +49,23 @@ namespace RimWorldOnlineCity
         public override void PreOpen()
         {
             base.PreOpen();
+            isClosed = false;
+            ResultOK = false;
         }
 
         public override void PostClose()
         {
             base.PostClose();
+            isClosed = true;
             if (!ResultOK) InputText = null;
             if (PostCloseAction != null) PostCloseAction();
         }
 
         public override void DoWindowContents(Rect inRect)
         {
+            // ЗАХИСТ: якщо вікно закрито в цьому ж кадрі, не малюємо вміст
+            if (isClosed) return;
+
             const float mainListingSpacing = 6f;
 
             var btnSize = new Vector2(140f, 40f);
@@ -88,15 +73,18 @@ namespace RimWorldOnlineCity
 
             var ev = Event.current;
             if (Widgets.ButtonText(new Rect(0, buttonYStart, btnSize.x, btnSize.y), "OCity_DialogInput_Ok".Translate())
-                || ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return)
+                || (ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return))
             {
                 ResultOK = true;
                 Close();
+                return;
             }
 
             if (!ModeOkOnly && Widgets.ButtonText(new Rect(inRect.width - btnSize.x, buttonYStart, btnSize.x, btnSize.y), "OCity_DialogInput_Cancele".Translate()))
             {
+                ResultOK = false;
                 Close();
+                return;
             }
 
             var mainListing = new Listing_Standard();
@@ -109,14 +97,13 @@ namespace RimWorldOnlineCity
             mainListing.GapLine();
             mainListing.Gap();
 
-            var textEditSize = new Vector2(150f, 25f);
-
             Widgets.Label(new Rect(0, 70f, inRect.width, 120f), PrintText);
 
             if (!ModeOkCancel && !ModeOkOnly)
             {
                 GUI.SetNextControlName("StartTextField");
-                InputText = GUI.TextField(new Rect(0, 70f + 90f, 300f, 25f), InputText, 1000);
+                // ЗАХИСТ: InputText ?? "" гарантує, що Unity не викине NullReferenceException
+                InputText = GUI.TextField(new Rect(0, 70f + 90f, 300f, 25f), InputText ?? "", 1000);
             }
 
             if (NeedFockus)
@@ -127,6 +114,5 @@ namespace RimWorldOnlineCity
 
             mainListing.End();
         }
-        
     }
 }
