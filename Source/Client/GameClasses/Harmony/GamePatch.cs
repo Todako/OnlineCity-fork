@@ -7,7 +7,6 @@ using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using UnityEngine;
@@ -19,9 +18,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     // Контроль режиму розробника (DevMode)
     // ====================================================================================
 
-    /// <summary>
-    /// Блокує несанкціоноване увімкнення режиму розробника в налаштуваннях гри, якщо на сервері діє заборона.
-    /// </summary>
     [HarmonyPatch(typeof(PrefsData))]
     [HarmonyPatch("Apply")]
     internal class PrefsData_Apply_Patch
@@ -40,9 +36,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    /// <summary>
-    /// Приховує налаштування модифікацій під час мережевої гри або після натискання кнопки підключення.
-    /// </summary>
     [HarmonyPatch(typeof(Dialog_Options))]
     [HarmonyPatch("DoModOptions")]
     internal class Dialog_Options_DoModOptions_Patch
@@ -69,10 +62,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    /// <summary>
-    /// Забороняє ігнорування обмежень генотипів у редакторі ксенотипів, якщо DevMode вимкнено.
-    /// ОПТИМІЗАЦІЯ: прямий доступ через FieldRef замість важкого Traverse.
-    /// </summary>
     [HarmonyPatch(typeof(Dialog_CreateXenotype))]
     [HarmonyPatch("PostXenotypeOnGUI")]
     internal class Dialog_CreateXenotype_PostXenotypeOnGUI_Patch
@@ -92,9 +81,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    /// <summary>
-    /// Логує на сервер спроби відкриття інструментів режиму розробника.
-    /// </summary>
     [HarmonyPatch(typeof(DebugTool))]
     [HarmonyPatch("DebugToolOnGUI")]
     internal class DebugTool_DebugToolOnGUI_Patch
@@ -168,28 +154,22 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     // Ігрова дата та синхронізація часу
     // ====================================================================================
 
-    /// <summary>
-    /// Коригує стартовий ігровий рік колонії згідно з налаштуваннями сервера.
-    /// </summary>
     [HarmonyPatch(typeof(GenDate), "Year")]
     internal class GenDatePatch
     {
         public static void Postfix(long absTicks, float longitude, ref int __result)
         {
             if (!SessionClient.Get.IsLogined) return;
+            if (SessionClientController.Data == null) return;
 
             int needYear = SessionClientController.Data.GeneralSettings.StartGameYear;
             if (needYear < 0 || needYear == 5500) return;
 
-            var longAdj = GenDate.TimeZoneAt(longitude) * 2500L;
-            __result = needYear + (int)((absTicks + longAdj) / 3600000f);
+            long longAdj = GenDate.TimeZoneAt(longitude) * 2500L;
+            __result = needYear + (int)((absTicks + longAdj) / 3600000L);
         }
     }
 
-    /// <summary>
-    /// Оптимізоване злиття перехресних посилань (CrossRefs) під час завантаження об'єктів з XML.
-    /// ОПТИМІЗАЦІЯ: замінено важкий O(N * M) LINQ-перебір на HashSet O(N + M).
-    /// </summary>
     [HarmonyPatch(typeof(CrossRefHandler))]
     [HarmonyPatch("ResolveAllCrossReferences")]
     public class CrossRefHandler_ResolveAllCrossReferences_Patch
@@ -216,7 +196,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     }
                 }
 
-                ThingEntry.crossReferencingExposables = new List<IExposable>();
+                toAdd.Clear();
             }
 
             return true;
@@ -224,7 +204,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     }
 
     // ====================================================================================
-    // Відображення віджета статусу мережі в правому нижньому кутку
+    // Віджет статусу мережі в правому нижньому кутку
     // ====================================================================================
 
     [HarmonyPatch(typeof(GlobalControlsUtility))]
@@ -237,7 +217,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         public static Texture2D OutInLastLine = null;
         public static DateTime Update;
 
-        // Поля кешування розмірів для усунення розрахунків у OnGUI
         public static float CachedWidth = 0f;
         private static TipSignal CachedTipSignal;
         private static string CachedTipText;
@@ -263,7 +242,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 var height = 22 + 26 * (outText.Count - 1);
                 Rect dateRect = new Rect(leftX, curBaseY - height, width, height);
 
-                // ОПТИМІЗАЦІЯ: розрахунок ширини виконується один раз, а не щокадру
                 if (CachedWidth <= 0f)
                 {
                     Text.Font = GameFont.Small;
@@ -278,7 +256,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
                 dateRect.xMin = dateRect.xMax - CachedWidth;
 
-                if (Mouse.IsOver(dateRect))
+                bool isOver = Mouse.IsOver(dateRect);
+                if (isOver)
                 {
                     Widgets.DrawHighlight(dateRect);
                 }
@@ -309,8 +288,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 Text.Anchor = TextAnchor.UpperLeft;
                 GUI.EndGroup();
 
-                // ОПТИМІЗАЦІЯ: кешування TipSignal
-                if (TooltipText != null && Mouse.IsOver(dateRect))
+                if (TooltipText != null && isOver)
                 {
                     if (CachedTipText != TooltipText)
                     {
@@ -328,7 +306,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     }
 
     // ====================================================================================
-    // Виправлення збоїв текстурних атласів (GlobalTextureAtlasManager)
+    // Оптимізація текстурних атласів пешок (GlobalTextureAtlasManager)
     // ====================================================================================
 
     [HarmonyPatch(typeof(GlobalTextureAtlasManager))]
@@ -340,10 +318,11 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         [HarmonyPrefix]
         public static bool Prefix()
         {
+            // ОПТИМІЗАЦІЯ: швидкий пошук поля виконується лише 1 раз при першому виклику
             if (pawnTextureAtlases == null)
             {
-                var that = Traverse.Create(typeof(GlobalTextureAtlasManager));
-                pawnTextureAtlases = that.Field("pawnTextureAtlases").GetValue<List<PawnTextureAtlas>>();
+                pawnTextureAtlases = AccessTools.Field(typeof(GlobalTextureAtlasManager), "pawnTextureAtlases")
+                    ?.GetValue(null) as List<PawnTextureAtlas>;
             }
 
             if (GlobalTextureAtlasManager.rebakeAtlas)
@@ -355,7 +334,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             if (pawnTextureAtlases == null) return false;
 
-            // ОПТИМІЗАЦІЯ: цикл for замість foreach для усунення алокацій перелічувача щокадру
+            // ОПТИМІЗАЦІЯ: цикл for замість foreach для усунення щокадрових алокацій
             for (int i = 0; i < pawnTextureAtlases.Count; i++)
             {
                 var pawnTextureAtlase = pawnTextureAtlases[i];
@@ -397,13 +376,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             foreach (var value in values) yield return value;
 
-            // Перевірка 1: активна мережева сесія
             if (!SessionClient.Get.IsLogined) yield break;
-
-            // Перевірка 2: показувати кнопки ЛИШЕ для поселень гравця (відсікає NPC-поселення)
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
-
-            // Перевірка 3: біржа увімкнена в налаштуваннях сервера
             if (SessionClientController.Data?.GeneralSettings != null && !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
             var command_Action = new Command_Action
@@ -432,13 +406,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             foreach (var value in values) yield return value;
 
-            // Перевірка 1: активна мережева сесія
             if (!SessionClient.Get.IsLogined) yield break;
-
-            // Перевірка 2: показувати кнопки ЛИШЕ для караванів гравця
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
-
-            // Перевірка 3: біржа увімкнена в налаштуваннях сервера
             if (SessionClientController.Data?.GeneralSettings != null && !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
             var command_Action = new Command_Action
@@ -476,11 +445,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    /// <summary>
-    /// Коригує загальну вартість поселення.
-    /// ОПТИМІЗАЦІЯ: повністю усунуто рефлексію через Traverse у гарячому гетері!
-    /// Застосовано прямий IL-доступ через AccessTools.FieldRefAccess.
-    /// </summary>
     [HarmonyPatch(typeof(WealthWatcher))]
     [HarmonyPatch("WealthTotal", MethodType.Getter)]
     internal class WealthWatcher_WealthTotal_Patch
@@ -503,9 +467,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    /// <summary>
-    /// Ін'єкція вартості онлайнового майна у вікно статистики історії гри.
-    /// </summary>
     [HarmonyPatch(typeof(MainTabWindow_History))]
     [HarmonyPatch("DoStatisticsPage")]
     internal class MainTabWindow_DoStatisticsPage_Patch
@@ -582,8 +543,13 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
             }
 
-            toTargetThing = toTargetThing.FilterBeforeSendServer().ToList();
-            var toTargetEntry = toTargetThing.Select(t => ThingTrade.CreateTrade(t, t.stackCount)).ToList();
+            var filteredThings = toTargetThing.FilterBeforeSendServer();
+            var toTargetEntry = new List<ThingTrade>(filteredThings.Count);
+            for (int i = 0; i < filteredThings.Count; i++)
+            {
+                var t = filteredThings[i];
+                toTargetEntry.Add(ThingTrade.CreateTrade(t, t.stackCount));
+            }
 
             Loger.Log("Client TravelingTransportPods SaveGame and ExchengeStorage 2", Loger.LogLevel.EXCHANGE);
 
