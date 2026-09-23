@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "dgSpecHash": "jsCjUrXUUdk=",
+  "success": true,
+  "projectFilePath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\User\\.nuget\\packages\\sharpziplib\\0.86.0\\sharpziplib.0.86.0.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1902",
+      "level": "Warning",
+      "message": "Package 'SharpZipLib' 0.86.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-cqj4-m2pc-v9m5",
+      "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+      "warningLevel": 1,
+      "filePath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+      "libraryId": "SharpZipLib",
+      "targetGraphs": [
+        ".NETFramework,Version=v4.7.2",
+        ".NETFramework,Version=v4.7.2/win",
+        ".NETFramework,Version=v4.7.2/win-arm64",
+        ".NETFramework,Version=v4.7.2/win-x64",
+        ".NETFramework,Version=v4.7.2/win-x86"
+      ]
+    },
+    {
+      "code": "NU1903",
+      "level": "Warning",
+      "message": "Package 'SharpZipLib' 0.86.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-m22m-h4rf-pwq3",
+      "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+      "warningLevel": 1,
+      "filePath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+      "libraryId": "SharpZipLib",
+      "targetGraphs": [
+        ".NETFramework,Version=v4.7.2",
+        ".NETFramework,Version=v4.7.2/win",
+        ".NETFramework,Version=v4.7.2/win-arm64",
+        ".NETFramework,Version=v4.7.2/win-x64",
+        ".NETFramework,Version=v4.7.2/win-x86"
+      ]
+    }
+  ]
+}

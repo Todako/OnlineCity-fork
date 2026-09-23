@@ -120,7 +120,6 @@
     <Compile Include="GameClasses\Harmony\GamePresetFiles.cs" />
     <Compile Include="GameClasses\Harmony\GameSaveLoadInMem.cs" />
     <Compile Include="GameClasses\Incident\IncidentAcid.cs" />
-    <Compile Include="GameClasses\Incident\IncidentAcid_NEW.cs" />
     <Compile Include="GameClasses\Incident\IncidentBombing.cs" />
     <Compile Include="GameClasses\Incident\IncidentByDef.cs" />
     <Compile Include="GameClasses\Incident\IncidentEclipse.cs" />
@@ -135,7 +134,6 @@
     <Compile Include="GameClasses\Incident\IncidentsEMP.cs" />
     <Compile Include="GameClasses\Incident\IncidentStorm.cs" />
     <Compile Include="GameClasses\Incident\OCIncident.cs" />
-    <Compile Include="GameClasses\MainTabTestButton.cs" />
     <Compile Include="GameClasses\Incident\OCIncidentFactory.cs" />
     <Compile Include="ExchengeUtils.cs" />
     <Compile Include="GameAttackHost.cs" />
@@ -159,7 +157,6 @@
     <Compile Include="Services\SetPlayerInfo.cs" />
     <Compile Include="SessionClient.cs" />
     <Compile Include="SnapshotColony.cs" />
-    <Compile Include="TestClass.cs" />
     <Compile Include="UI\DevelopTest.cs" />
     <Compile Include="GameAttacker.cs" />
     <Compile Include="GameClasses\Harmony\GameAttackTrigger.cs" />
@@ -270,20 +267,15 @@
     <Copy SourceFiles="@(ClientOneOneFiles)" DestinationFiles="@(ClientOneOneFiles->'$(ClientPackageDir)\1.1\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <!-- Exact client runtime files. -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\Lib\0System.Drawing.dll" DestinationFolder="$(ClientAssembliesDir)" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll" 
-          DestinationFolder="$(ClientAssembliesDir)" 
-          Condition="Exists('$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll" 
-          DestinationFolder="$(ClientAssembliesDir)" 
-          Condition="Exists('$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll" DestinationFolder="$(ClientAssembliesDir)" Condition="Exists('$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll" DestinationFolder="$(ClientAssembliesDir)" Condition="Exists('$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" />
     <Copy SourceFiles="$(ISharpZipLibSource)" DestinationFolder="$(ClientAssembliesDir)" Condition="'$(ISharpZipLibSource)' != ''" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientAssembliesDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\BuildOutput\Union\Release\OCUnion.dll" DestinationFolder="$(ClientAssembliesDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\ClientAncillary\bin\Release\ClientAncillary.exe" DestinationFolder="$(ClientAssembliesDir)" />
     <Error Condition="'$(ISharpZipLibSource)' == ''" Text="ISharpZipLib.dll не знайдено. Перевір Source\Client\Lib, Source\BuildOutput\Client\Release або 1.1\Assemblies." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Lib\0System.Drawing.dll')" Text="0System.Drawing.dll не знайдено в Source\Client\Lib." />
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll') and !Exists('$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" 
-      Text="ICSharpCode.SharpZipLib.dll не знайдено ні в Client\packages, ні в Source\packages." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll') and !Exists('$(MSBuildProjectDirectory)\..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll')" Text="ICSharpCode.SharpZipLib.dll не знайдено ні в Client\packages, ні в Source\packages." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\BuildOutput\Union\Release\OCUnion.dll')" Text="OCUnion.dll не знайдено. Перевір збірку UnionDll." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\ClientAncillary\bin\Release\ClientAncillary.exe')" Text="ClientAncillary.exe не знайдено. Перевір збірку ClientAncillary." />
     <Message Importance="high" Text="OnlineCity Client package: $(ClientPackageDir)" />

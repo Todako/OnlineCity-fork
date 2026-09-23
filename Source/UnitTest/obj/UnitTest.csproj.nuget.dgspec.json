@@ -1,0 +1,396 @@
+{
+  "format": 1,
+  "restore": {
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\UnitTest\\UnitTest.csproj": {}
+  },
+  "projects": {
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj",
+        "projectName": "RimWorldOnlineCity",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\obj\\",
+        "projectStyle": "PackageReference",
+        "skipContentFileWrite": true,
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net472"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj"
+              }
+            }
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472",
+          "dependencies": {
+            "Lib.Harmony": {
+              "target": "Package",
+              "version": "[2.0.4, )"
+            },
+            "UnlimitedHugs.Rimworld.HugsLib": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "UnlimitedHugs.Rimworld.HugsLibChecker": {
+              "target": "Package",
+              "version": "[5.0.0, )"
+            }
+          }
+        }
+      },
+      "runtimes": {
+        "win": {
+          "#import": []
+        },
+        "win-arm64": {
+          "#import": []
+        },
+        "win-x64": {
+          "#import": []
+        },
+        "win-x86": {
+          "#import": []
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+        "projectName": "OCUnion",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\obj\\",
+        "projectStyle": "PackageReference",
+        "skipContentFileWrite": true,
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net472"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {}
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472",
+          "dependencies": {
+            "SharpZipLib": {
+              "target": "Package",
+              "version": "[0.86.0, )"
+            }
+          }
+        }
+      },
+      "runtimes": {
+        "win": {
+          "#import": []
+        },
+        "win-arm64": {
+          "#import": []
+        },
+        "win-x64": {
+          "#import": []
+        },
+        "win-x86": {
+          "#import": []
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\DiscordBotServer.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\DiscordBotServer.csproj",
+        "projectName": "DiscordBotServer",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\DiscordBotServer.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "netcoreapp3.1"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netcoreapp3.1": {
+            "framework": "netcoreapp3.1",
+            "targetAlias": "netcoreapp3.1",
+            "projectReferences": {
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj"
+              },
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\GuideTestGUI\\GuideTestGUI.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\GuideTestGUI\\GuideTestGUI.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.400"
+      },
+      "frameworks": {
+        "netcoreapp3.1": {
+          "framework": "netcoreapp3.1",
+          "targetAlias": "netcoreapp3.1",
+          "dependencies": {
+            "Discord.Net": {
+              "target": "Package",
+              "version": "[2.3.0, )"
+            },
+            "Microsoft.EntityFrameworkCore.Analyzers": {
+              "target": "Package",
+              "version": "[3.1.7, )"
+            },
+            "Microsoft.EntityFrameworkCore.Design": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[3.1.7, )"
+            },
+            "Microsoft.EntityFrameworkCore.Sqlite": {
+              "target": "Package",
+              "version": "[3.1.7, )"
+            },
+            "Microsoft.EntityFrameworkCore.Tools": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[3.1.7, )"
+            },
+            "SQLitePCLRaw.bundle_green": {
+              "target": "Package",
+              "version": "[2.0.3, )"
+            },
+            "SQLitePCLRaw.lib.e_sqlite3.linux": {
+              "target": "Package",
+              "version": "[1.1.14, )"
+            },
+            "SQLitePCLRaw.lib.e_sqlite3.osx": {
+              "target": "Package",
+              "version": "[1.1.14, )"
+            },
+            "SQLitePCLRaw.lib.e_sqlite3.v110_xp": {
+              "target": "Package",
+              "version": "[1.1.14, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401\\RuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\GuideTestGUI\\GuideTestGUI.csproj": {
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\GuideTestGUI\\GuideTestGUI.csproj",
+        "projectName": "GuideTestGUI",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\GuideTestGUI\\GuideTestGUI.csproj",
+        "UsingMicrosoftNETSdk": false,
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {}
+          }
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472"
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Server\\Server.csproj": {
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Server\\Server.csproj",
+        "projectName": "Server",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Server\\Server.csproj",
+        "UsingMicrosoftNETSdk": false,
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj"
+              }
+            }
+          }
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472"
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\UnitTest\\UnitTest.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\UnitTest\\UnitTest.csproj",
+        "projectName": "UnitTest",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\UnitTest\\UnitTest.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\UnitTest\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "netcoreapp3.1"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netcoreapp3.1": {
+            "framework": "netcoreapp3.1",
+            "targetAlias": "netcoreapp3.1",
+            "projectReferences": {
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj"
+              },
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj"
+              },
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\DiscordBotServer.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\DiscordChatBotServer\\DiscordBotServer.csproj"
+              },
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Server\\Server.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Server\\Server.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.400"
+      },
+      "frameworks": {
+        "netcoreapp3.1": {
+          "framework": "netcoreapp3.1",
+          "targetAlias": "netcoreapp3.1",
+          "dependencies": {
+            "MSTest.TestAdapter": {
+              "target": "Package",
+              "version": "[2.0.0, )"
+            },
+            "MSTest.TestFramework": {
+              "target": "Package",
+              "version": "[2.0.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401\\RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "format": 1,
+  "restore": {
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj": {}
+  },
+  "projects": {
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj",
+        "projectName": "RimWorldOnlineCity",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\Client.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\obj\\",
+        "projectStyle": "PackageReference",
+        "skipContentFileWrite": true,
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net472"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {
+              "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+                "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj"
+              }
+            }
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472",
+          "dependencies": {
+            "Lib.Harmony": {
+              "target": "Package",
+              "version": "[2.0.4, )"
+            },
+            "UnlimitedHugs.Rimworld.HugsLib": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "UnlimitedHugs.Rimworld.HugsLibChecker": {
+              "target": "Package",
+              "version": "[5.0.0, )"
+            }
+          }
+        }
+      },
+      "runtimes": {
+        "win": {
+          "#import": []
+        },
+        "win-arm64": {
+          "#import": []
+        },
+        "win-x64": {
+          "#import": []
+        },
+        "win-x86": {
+          "#import": []
+        }
+      }
+    },
+    "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+        "projectName": "OCUnion",
+        "projectPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\UnionDll.csproj",
+        "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
+        "outputPath": "D:\\RimWorld\\GitHub\\OnlineCity-fork\\Source\\Client\\UnionDll\\obj\\",
+        "projectStyle": "PackageReference",
+        "skipContentFileWrite": true,
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\User\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net472"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net472": {
+            "framework": "net472",
+            "projectReferences": {}
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "framework": "net472",
+          "dependencies": {
+            "SharpZipLib": {
+              "target": "Package",
+              "version": "[0.86.0, )"
+            }
+          }
+        }
+      },
+      "runtimes": {
+        "win": {
+          "#import": []
+        },
+        "win-arm64": {
+          "#import": []
+        },
+        "win-x64": {
+          "#import": []
+        },
+        "win-x86": {
+          "#import": []
+        }
+      }
+    }
+  }
+}
