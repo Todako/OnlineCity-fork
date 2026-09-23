@@ -20,7 +20,7 @@ namespace RimWorldOnlineCity
         public string OnlinePlayerLogin => OnlineWObject?.LoginOwner;
         public string OnlineName => OnlineWObject == null ? string.Empty : OnlineWObject.Name;
 
-        public PlayerClient Player => SessionClientController.Data?.Players?.TryGetValue(OnlinePlayerLogin);
+        public PlayerClient Player => SessionClientController.Data?.Players != null && !string.IsNullOrEmpty(OnlinePlayerLogin) && SessionClientController.Data.Players.TryGetValue(OnlinePlayerLogin, out var pl) ? pl : null;
         public bool IsOnline => Player != null && Player.Online;
 
         public WorldObjectEntry OnlineWObject;
@@ -46,11 +46,12 @@ namespace RimWorldOnlineCity
             }
         }
 
-        #region Кешування InspectString (усуває важке форматування 60-144 рази на секунду)
+        #region Кешування InspectString
 
         private float _lastInspectStringTime = -999f;
         private string _cachedInspectString;
         private bool _lastInspectIsOnline;
+        private static string _cachedInspectTemplate;
 
         public override string GetInspectString()
         {
@@ -75,13 +76,17 @@ namespace RimWorldOnlineCity
                 return "OCity_Caravan_Player".Translate(OnlineName, OnlinePlayerLogin) + Environment.NewLine;
             }
 
-            var template = "OCity_Caravan_Player".Translate() + Environment.NewLine + "OCity_Caravan_Other".Translate();
+            if (_cachedInspectTemplate == null)
+            {
+                _cachedInspectTemplate = "OCity_Caravan_Player".Translate() + Environment.NewLine + "OCity_Caravan_Other".Translate();
+            }
+
             var statusOnline = online ? " Online!" : "";
             var totalTrading = (OnlineWObject.MarketValueBalance + OnlineWObject.MarketValueStorage).ToStringMoney();
 
             var sb = new StringBuilder(256);
             sb.AppendFormat(
-                template,
+                _cachedInspectTemplate,
                 OnlineName,
                 OnlinePlayerLogin + statusOnline + " (sId:" + OnlineWObject.PlaceServerId + ")",
                 OnlineWObject.MarketValue.ToStringMoney(),
@@ -109,6 +114,7 @@ namespace RimWorldOnlineCity
         private float _lastInspectExtendedTime = -999f;
         private string _cachedInspectExtendedString;
         private bool _lastInspectExtendedIsOnline;
+        private static string _cachedInspectExtendedTemplate;
 
         public virtual string GetInspectExtendedString()
         {
@@ -133,13 +139,17 @@ namespace RimWorldOnlineCity
                 return "OCity_Caravan_Player".Translate(OnlineName, OnlinePlayerLogin) + Environment.NewLine;
             }
 
-            var template = "OCity_Caravan_Player".Translate() + Environment.NewLine + "OCity_Caravan_Other".Translate();
+            if (_cachedInspectExtendedTemplate == null)
+            {
+                _cachedInspectExtendedTemplate = "OCity_Caravan_Player".Translate() + Environment.NewLine + "OCity_Caravan_Other".Translate();
+            }
+
             var statusOnline = online ? "<:check_mark_button height=16:> Online!" : "<:zzz height=16:> ";
             var totalTrading = (OnlineWObject.MarketValueBalance + OnlineWObject.MarketValueStorage).ToStringMoney();
 
             var sb = new StringBuilder(256);
             sb.AppendFormat(
-                template,
+                _cachedInspectExtendedTemplate,
                 $"<&{OnlineWObject.PlaceServerId}> ",
                 statusOnline + " (sId:" + OnlineWObject.PlaceServerId + ")",
                 "<:money_bag height=16:> " + OnlineWObject.MarketValue.ToStringMoney(),
@@ -210,7 +220,6 @@ namespace RimWorldOnlineCity
             }
             yield return fmoTrade;
 
-            // Меню атаки на іншого гравця
             if (SessionClientController.My.EnablePVP
                 && this is BaseOnline
                 && GameAttacker.CanStart)
@@ -281,8 +290,9 @@ namespace RimWorldOnlineCity
         }
 
         #region Icons
-        private Material MatCaravanOn;
-        private Material MatCaravanOff;
+        // ОПТИМІЗАЦІЯ: спільні статичні матеріали для всіх караванів на планеті
+        private static Material MatCaravanOn;
+        private static Material MatCaravanOff;
 
         private static readonly Texture2D CaravanOn = ContentFinder<Texture2D>.Get("CaravanOn");
         private static readonly Texture2D CaravanOff = ContentFinder<Texture2D>.Get("CaravanOff");
@@ -295,27 +305,27 @@ namespace RimWorldOnlineCity
             {
                 if (IsOnline)
                 {
-                    if (this.MatCaravanOn == null)
+                    if (MatCaravanOn == null)
                     {
-                        this.MatCaravanOn = MaterialPool.MatFrom(
+                        MatCaravanOn = MaterialPool.MatFrom(
                             CaravanOn,
                             ShaderDatabase.WorldOverlayTransparentLit,
                             Color.white,
                             WorldMaterials.WorldObjectRenderQueue);
                     }
-                    return this.MatCaravanOn;
+                    return MatCaravanOn;
                 }
                 else
                 {
-                    if (this.MatCaravanOff == null)
+                    if (MatCaravanOff == null)
                     {
-                        this.MatCaravanOff = MaterialPool.MatFrom(
+                        MatCaravanOff = MaterialPool.MatFrom(
                             CaravanOff,
                             ShaderDatabase.WorldOverlayTransparentLit,
                             Color.white,
                             WorldMaterials.WorldObjectRenderQueue);
                     }
-                    return this.MatCaravanOff;
+                    return MatCaravanOff;
                 }
             }
         }

@@ -2,13 +2,10 @@
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
+using RimWorldOnlineCity.GameClasses;
 using RimWorldOnlineCity.Services;
 using RimWorldOnlineCity.UI;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
@@ -23,7 +20,7 @@ namespace RimWorldOnlineCity
         private string Input_DelaySaveGame;
         private string Input_DiscordUserName;
         private string Input_EMail;
-        private TextBox Input_AboutMyTextBox = new TextBox() { Editable = true };
+        private readonly TextBox Input_AboutMyTextBox = new TextBox { Editable = true };
 
         public void Init()
         {
@@ -31,18 +28,17 @@ namespace RimWorldOnlineCity
             Player = SessionClientController.My;
             Input_EnablePVP = Player.EnablePVP;
             Input_DelaySaveGame = SessionClientController.Data.DelaySaveGame.ToString();
-            Input_DiscordUserName = Player.DiscordUserName ?? "";
-            Input_EMail = Player.EMail ?? "";
-            Input_AboutMyTextBox.Text = Player.AboutMyText ?? "";
+            Input_DiscordUserName = Player.DiscordUserName ?? string.Empty;
+            Input_EMail = Player.EMail ?? string.Empty;
+            Input_AboutMyTextBox.Text = Player.AboutMyText ?? string.Empty;
         }
-
 
         public bool Validate()
         {
-            if (!int.TryParse(Input_DelaySaveGame, out int delaySaveGame)
-                || delaySaveGame < 5
-                ) return false;
-
+            if (!int.TryParse(Input_DelaySaveGame, out int delaySaveGame) || delaySaveGame < 5)
+            {
+                return false;
+            }
             return true;
         }
 
@@ -56,7 +52,7 @@ namespace RimWorldOnlineCity
             var delaySaveGame = int.Parse(Input_DelaySaveGame);
 
             var spi = new SetPlayerInfo(SessionClient.Get);
-            spi.GenerateRequestAndDoJob(new ModelPlayerInfo()
+            spi.GenerateRequestAndDoJob(new ModelPlayerInfo
             {
                 DelaySaveGame = delaySaveGame,
                 EnablePVP = Input_EnablePVP,
@@ -79,18 +75,14 @@ namespace RimWorldOnlineCity
         public void Drow(Rect inRect)
         {
             if (!Inited) Init();
-            /*
-             * 24 высота строки
-             * 4 между строк
-            */
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(inRect, "OCity_PlayerClient_Settings".Translate().ToString() + " " + Player.Login);
+            Widgets.Label(inRect, "OCity_PlayerClient_Settings".Translate() + " " + Player.Login);
             Text.Font = GameFont.Small;
-            float topOffset = 30;
+            float topOffset = 30f;
             Rect rect;
 
-            /// Я учавствую в PVP
+            // Налаштування участі в PVP
             if (SessionClientController.Data.GeneralSettings.EnablePVP || Player.EnablePVP)
             {
                 rect = new Rect(inRect.x + 30f, inRect.y + topOffset, 250f, 25f);
@@ -108,23 +100,23 @@ namespace RimWorldOnlineCity
             }
             topOffset += 30f;
 
-            ///Аватарка
-            //var avWidth = inRect.width - 30f - 270f;
-            //if (avWidth > 256) avWidth = 256;
-            //rect = new Rect(inRect.x + 30f + 270f, inRect.y + topOffset, avWidth, avWidth);
-            var avWidth = 256;
-            rect = new Rect(inRect.x + inRect.width - avWidth - 5, inRect.y + 5, avWidth, avWidth);
+            // Аватарка гравця
+            const float avWidth = 256f;
+            rect = new Rect(inRect.x + inRect.width - avWidth - 5f, inRect.y + 5f, avWidth, avWidth);
 
-            var iconImage = GeneralTexture.Get.ByName("pl_" + SessionClientController.My.Login);
-            GUI.DrawTexture(rect, iconImage);
+            var iconImage = GameInterfaceHelper.GetPlayerIcon(SessionClientController.My?.Login);
+            if (iconImage != null)
+            {
+                GUI.DrawTexture(rect, iconImage);
+            }
 
             rect.y += rect.height + 5f;
             rect.height = 30f;
             rect.width = 200f;
-            rect.x += (avWidth - rect.width) / 2f; //центруем
+            rect.x += (avWidth - rect.width) / 2f;
             if (Widgets.ButtonText(rect, "OCity_SetAvatar".Translate()))
             {
-                Find.WindowStack.Add(new Dialog_InputImage()
+                Find.WindowStack.Add(new Dialog_InputImage
                 {
                     SelectImageAction = (img, data) =>
                     {
@@ -143,54 +135,15 @@ namespace RimWorldOnlineCity
                 });
             }
 
-            /*
-            ///Аватарка клана
-            //var avWidth = inRect.width - 30f - 270f;
-            //if (avWidth > 256) avWidth = 256;
-            //rect = new Rect(inRect.x + 30f + 270f, inRect.y + topOffset, avWidth, avWidth);
-            avWidth = 256;
-            rect = new Rect(inRect.x + inRect.width - avWidth - 5, inRect.y + 5 + 256f + 15f + 30f, avWidth, avWidth);
-
-            iconImage = GeneralTexture.Get.ByName("pl_" + SessionClientController.My.Login);
-            GUI.DrawTexture(rect, iconImage);
-
-            rect.y += rect.height + 5f;
-            rect.height = 30f;
-            rect.width = 200f;
-            rect.x += (avWidth - rect.width) / 2f; //центруем
-            if (Widgets.ButtonText(rect, "OCity_SetAvatar".Translate()))
-            {
-                Find.WindowStack.Add(new Dialog_InputImage()
-                {
-                    SelectImageAction = (img, data) =>
-                    {
-                        SessionClientController.Command((connect) =>
-                        {
-                            connect.FileSharingUpload(FileSharingCategory.PlayerIcon, SessionClientController.My.Login, data);
-                            var p = connect.FileSharingDownload(FileSharingCategory.PlayerIcon, SessionClientController.My.Login);
-
-                            GeneralTexture.Clear();
-
-                            var msg = data?.Length > 0 && p?.Data?.Length > 0
-                                ? "OCity_Successfully".Translate() : "OCity_Error".Translate();
-                            Find.WindowStack.Add(new Dialog_MessageBox(msg));
-                        });
-                    }
-                });
-            }
-            */
-
-            /// Интервал сохранений в минутах
-            //rect = new Rect(inRect.x + 30f, inRect.y + topOffset, inRect.width - 30f, 25f);
+            // Інтервал автозбереження
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, 250f, 46f);
             Widgets.Label(rect, "OCity_PlayerClient_SaveInterval".Translate());
-            //topOffset += 25f;
             topOffset += 46f;
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, 250f, 25f);
             Input_DelaySaveGame = GUI.TextField(rect, Input_DelaySaveGame, 1000);
             topOffset += 30f;
 
-            /// Мой дискорд
+            // Discord
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, inRect.width - 30f, 25f);
             Widgets.Label(rect, "OCity_PlayerClient_Discord".Translate());
             topOffset += 25f;
@@ -198,7 +151,7 @@ namespace RimWorldOnlineCity
             Input_DiscordUserName = GUI.TextField(rect, Input_DiscordUserName, 1000);
             topOffset += 30f;
 
-            /// Почта
+            // Email
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, inRect.width - 30f, 25f);
             Widgets.Label(rect, "OCity_PlayerClient_Email".Translate());
             topOffset += 25f;
@@ -206,20 +159,19 @@ namespace RimWorldOnlineCity
             Input_EMail = GUI.TextField(rect, Input_EMail, 1000);
             topOffset += 30f;
 
-            /// Обо мне
+            // Опис "Про себе"
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, inRect.width - 30f, 25f);
             Widgets.Label(rect, "OCity_PlayerClient_AboutMyself".Translate());
             topOffset += 25f;
             rect = new Rect(inRect.x + 30f, inRect.y + topOffset, inRect.width - 50f, inRect.height - topOffset - 50f);
             Input_AboutMyTextBox.Drow(rect);
             topOffset = inRect.height - 50f;
-            
+
             rect = new Rect(inRect.x + 70f, inRect.y + topOffset, 200f, 30f);
             if (Widgets.ButtonText(rect, "OCity_PlayerClient_Save".Translate()))
             {
                 Save();
             }
-
         }
     }
 }
