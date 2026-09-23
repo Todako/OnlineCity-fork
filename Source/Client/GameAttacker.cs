@@ -6,7 +6,6 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Verse;
 using Verse.AI;
@@ -20,23 +19,11 @@ namespace RimWorldOnlineCity
     /// </summary>
     public class GameAttacker
     {
-        /// <summary>
-        /// Час у мілісекундах між пакетами синхронізації з сервером (20 пакетів/сек).
-        /// </summary>
         public int AttackUpdateDelay { get; } = 50;
-
-        /// <summary>
-        /// Час паузи в секундах перед початком штурму, щоб нападник міг оглянути карту.
-        /// </summary>
         public int TimeStopBeforeAttack { get; } = 60;
-
-        /// <summary>
-        /// Дистанція від краю карти, перетнувши яку пішак вважається таким, що відступив у караван.
-        /// </summary>
         public int MapBorder { get; } = 10;
 
         public static bool CanStart => SessionClientController.Data.AttackModule == null;
-
         public static GameAttacker Get => SessionClientController.Data.AttackModule;
 
         public bool TestMode { get; set; }
@@ -46,23 +33,18 @@ namespace RimWorldOnlineCity
         private bool InTimer { get; set; }
         private Map GameMap { get; set; }
 
-        /// <summary>
-        /// Словники зіставлення ID об'єктів хоста та локально створених сутностей нападника.
-        /// </summary>
         private Dictionary<int, int> ThingsIDDicRev { get; set; }
         private Dictionary<int, int> ThingsIDDic { get; set; }
         private Dictionary<int, Thing> ThingsObjDic { get; set; }
         private Dictionary<Pawn, int> AttackerPawns { get; set; }
         private List<string> AttackerOriginalPawnLabels { get; set; }
 
-        /// <summary>
-        /// Черга команд на відправку серверу.
-        /// </summary>
         private readonly Dictionary<int, AttackPawnCommand> ToSendCommand = new Dictionary<int, AttackPawnCommand>(32);
 
-        // Буфери для усунення виділень пам'яті в 50-мс циклі AttackUpdate
+        // Багаторазові буфери для усунення виділень пам'яті в 50-мс циклі
         private readonly List<AttackPawnCommand> _commandsBuffer = new List<AttackPawnCommand>(32);
         private readonly List<int> _needNewThingsBuffer = new List<int>(16);
+        private readonly List<ThingEntry> _corpseListBuffer = new List<ThingEntry>(16);
 
         private Dictionary<int, Thing> CheckDestroy { get; set; }
         private Dictionary<int, Thing> CheckSpawn { get; set; }
@@ -86,9 +68,6 @@ namespace RimWorldOnlineCity
         {
         }
 
-        /// <summary>
-        /// Ініціалізація та початок штурму поселення іншого гравця.
-        /// </summary>
         public void Start(Caravan caravan, BaseOnline attackedBase, bool testMode)
         {
             Find.TickManager.Pause();
@@ -121,7 +100,6 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                // Очікування готовності хоста (State == 2)
                 Loger.Log("Client GameAttack State 1");
                 var s1Time = DateTime.UtcNow;
                 while (true)
@@ -140,7 +118,6 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                // Передача штурмових колоністів серверу
                 var pawnsToSend = GetPawnsAndDeleteCaravan(caravan);
                 AttackerOriginalPawnLabels = new List<string>(pawnsToSend.Count);
                 for (int i = 0; i < pawnsToSend.Count; i++)
@@ -161,7 +138,6 @@ namespace RimWorldOnlineCity
                 }
                 TestMode = response.TestMode;
 
-                // Очікування топології карти від хоста (State >= 4)
                 Loger.Log("Client GameAttack WaitTo3");
                 s1Time = DateTime.UtcNow;
                 while (true)
@@ -188,7 +164,6 @@ namespace RimWorldOnlineCity
                 {
                     GameMap = map;
 
-                    // Генерація ґрунту за даними хоста
                     for (int i = 0; i < response.TerrainDefNameCell.Count; i++)
                     {
                         var current = response.TerrainDefNameCell[i].Get();
@@ -204,7 +179,6 @@ namespace RimWorldOnlineCity
                     CheckDestroy = new Dictionary<int, Thing>(32);
                     CheckSpawn = new Dictionary<int, Thing>(32);
 
-                    // Спавн споруд і перешкод за координатами хоста
                     for (int i = 0; i < response.ThingCell.Count; i++)
                     {
                         var current = response.ThingCell[i].Get();
@@ -223,7 +197,6 @@ namespace RimWorldOnlineCity
                     AttackUpdateTick = 0;
                     AttackUpdate();
 
-                    // Запуск високочастотного циклу передачі стану (50 мс)
                     TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
                 });
             });
@@ -296,8 +269,44 @@ namespace RimWorldOnlineCity
         }
 
         /// <summary>
-        /// Основний високочастотний цикл онлайн-битви.
-        /// ОПТИМІЗАЦІЯ: повністю усунено виділення списків, словників та LINQ-делегатів.
+        /// Застосовує оновлені стани та видаляє знищені об'єкти без створення тимчасових лямбда-делегатів.
+        /// </summary>
+        private void ApplyStateAndDeletions(AttackInitiatorFromSrv toClient)
+        {
+            if (toClient.UpdateState != null)
+            {
+                for (int i = 0; i < toClient.UpdateState.Count; i++)
+                {
+                    Thing thing = GetThingByHostId(toClient.UpdateState[i].HostThingID);
+                    if (thing == null) continue;
+
+                    try
+                    {
+                        ThingDropIgnore = true;
+                        GameUtils.ApplyState(thing, toClient.UpdateState[i]);
+                    }
+                    finally
+                    {
+                        ThingDropIgnore = false;
+                    }
+                }
+            }
+
+            if (toClient.Delete != null)
+            {
+                for (int i = 0; i < toClient.Delete.Count; i++)
+                {
+                    Thing thing = GetThingByHostId(toClient.Delete[i]);
+                    if (thing == null) continue;
+
+                    DestroyThing(thing, toClient.Delete[i]);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Основний високочастотний цикл онлайн-битви (кожні 50 мс).
+        /// ОПТИМІЗАЦІЯ: повністю ліквідовано створення лямбда-делегатів і списків.
         /// </summary>
         private void AttackUpdate()
         {
@@ -325,13 +334,11 @@ namespace RimWorldOnlineCity
                 InTimer = true;
                 AttackUpdateTick++;
 
-                // ОПТИМІЗАЦІЯ: логування лише раз на 20 тіків (1 секунду) або при дебазі, щоб не спамити логер що-50 мс
                 if (MainHelper.DebugMode || AttackUpdateTick % 20 == 0)
                 {
                     Loger.Log("Client AttackUpdate #" + AttackUpdateTick);
                 }
 
-                // Перевірка цілісності колоністів на 2-му оновленні
                 if (AttackUpdateTick == 2)
                 {
                     SessionClientController.Data.DontCheckTimerFail = false;
@@ -402,7 +409,6 @@ namespace RimWorldOnlineCity
                 {
                     try
                     {
-                        // ОПТИМІЗАЦІЯ: повторне використання списку needNewThings без створення new List<int>()
                         _needNewThingsBuffer.Clear();
 
                         CheckSpawnDestroyDisable = true;
@@ -435,7 +441,6 @@ namespace RimWorldOnlineCity
                         }
                         CheckSpawnDestroyDisable = false;
 
-                        // ОПТИМІЗАЦІЯ: подвійне буферизування команд замість виділення словника що-50 мс
                         _commandsBuffer.Clear();
                         if (ToSendCommand.Count > 0)
                         {
@@ -454,35 +459,6 @@ namespace RimWorldOnlineCity
                             VictoryHostToHost = VictoryHostToHost,
                             NeedNewThingIDs = _needNewThingsBuffer,
                         });
-
-                        Action actUpdateState = () =>
-                        {
-                            // Оновлення позицій та стану пішаків/об'єктів
-                            for (int i = 0; i < toClient.UpdateState.Count; i++)
-                            {
-                                Thing thing = GetThingByHostId(toClient.UpdateState[i].HostThingID);
-                                if (thing == null) continue;
-
-                                try
-                                {
-                                    ThingDropIgnore = true;
-                                    GameUtils.ApplyState(thing, toClient.UpdateState[i]);
-                                }
-                                finally
-                                {
-                                    ThingDropIgnore = false;
-                                }
-                            }
-
-                            // Видалення знищених об'єктів
-                            for (int i = 0; i < toClient.Delete.Count; i++)
-                            {
-                                Thing thing = GetThingByHostId(toClient.Delete[i]);
-                                if (thing == null) continue;
-
-                                DestroyThing(thing, toClient.Delete[i]);
-                            }
-                        };
 
                         if (toClient.NewPawns != null && toClient.NewCorpses != null && toClient.NewThings != null
                             && (toClient.NewPawns.Count > 0 || toClient.NewCorpses.Count > 0 || toClient.NewThings.Count > 0))
@@ -543,21 +519,19 @@ namespace RimWorldOnlineCity
                                         if (cThing != null) DestroyThing(cThing, corpseHostId);
                                     }
 
-                                    // ОПТИМІЗАЦІЯ: збирання списку трупів простим циклом без LINQ .Select().ToList()
-                                    var corpseList = new List<ThingEntry>(toClient.NewCorpses.Count);
+                                    _corpseListBuffer.Clear();
                                     for (int i = 0; i < toClient.NewCorpses.Count; i++)
                                     {
-                                        corpseList.Add(toClient.NewCorpses[i].CorpseWithPawn);
+                                        _corpseListBuffer.Add(toClient.NewCorpses[i].CorpseWithPawn);
                                     }
 
-                                    GameUtils.SpawnList(GameMap, corpseList, false,
+                                    GameUtils.SpawnList(GameMap, _corpseListBuffer, false,
                                         p => p.TransportID == 0,
                                         (th, te) =>
                                         {
                                             int corpsId = 0;
                                             lock (CheckSpawnDestroySync)
                                             {
-                                                // ОПТИМІЗАЦІЯ: швидкий пошук трупа в словнику без LINQ FirstOrDefault
                                                 foreach (var cs in CheckSpawn)
                                                 {
                                                     if (cs.Value is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.thingIDNumber == th.thingIDNumber)
@@ -602,7 +576,7 @@ namespace RimWorldOnlineCity
                                         });
                                 }
 
-                                actUpdateState();
+                                ApplyStateAndDeletions(toClient);
 
                                 if (AttackUpdateTick == 1)
                                 {
@@ -622,7 +596,7 @@ namespace RimWorldOnlineCity
                         }
                         else
                         {
-                            actUpdateState();
+                            ApplyStateAndDeletions(toClient);
                             InTimer = false;
                         }
 
@@ -642,9 +616,6 @@ namespace RimWorldOnlineCity
             if (!inTimerEvent) InTimer = false;
         }
 
-        /// <summary>
-        /// Перехоплення нових команд гравця (атака, рух, екіпірування) для передачі на хост.
-        /// </summary>
         public void UIEventNewJob(Pawn pawn, Job job)
         {
             try
@@ -819,9 +790,6 @@ namespace RimWorldOnlineCity
             GameAttackTrigger_Patch.ForceSpeed = -1f;
         }
 
-        /// <summary>
-        /// Завершення онлайн-бою: створення каравану з уцілілих або передача поселення.
-        /// </summary>
         public void Finish(bool victoryAttacker)
         {
             Find.TickManager.Pause();
@@ -857,7 +825,6 @@ namespace RimWorldOnlineCity
             }
             else
             {
-                // ОПТИМІЗАЦІЯ: швидкий збір пешок, що відступили, без LINQ Where/ToList
                 var listPawn = new List<Pawn>(AttackerPawns.Count);
                 foreach (var pawn in AttackerPawns.Keys)
                 {

@@ -6,7 +6,6 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Transfer;
 using Verse;
@@ -60,7 +59,9 @@ namespace RimWorldOnlineCity
         public long AttackUpdateTick { get; set; }
         private Map GameMap { get; set; }
 
-        private Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
+        private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
+
+        // ОПТИМІЗАЦІЯ: постійні змінні для усунення 20 алокацій new HashSet<Thing>() на секунду
         private HashSet<Thing> ThingPrepareChange1 = new HashSet<Thing>();
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
@@ -90,6 +91,7 @@ namespace RimWorldOnlineCity
         private readonly List<AttackCorpse> _newCorpsesBuffer = new List<AttackCorpse>(16);
         private readonly List<AttackThingState> _toSendStateBuffer = new List<AttackThingState>(64);
         private readonly List<int> _deleteBuffer = new List<int>(16);
+        private readonly List<int> _addedIdBuffer = new List<int>(16);
 
         public static GameAttackHost Get => SessionClientController.Data.AttackUsModule;
 
@@ -178,7 +180,6 @@ namespace RimWorldOnlineCity
                     CellRect cellRect = CellRect.WholeMap(GameMap);
                     cellRect.ClipInsideMap(GameMap);
 
-                    // Передача ґрунту
                     foreach (IntVec3 current in cellRect)
                     {
                         var terr = GameMap.terrainGrid.TerrainAt(current);
@@ -189,7 +190,6 @@ namespace RimWorldOnlineCity
                     SendedActual = new Dictionary<int, Thing>(2048);
                     FireList = new HashSet<Thing>();
 
-                    // ОПТИМІЗАЦІЯ: ліквідовано виклик .ToList<Thing>() на кожній клітинці карти (75 625 списків!)
                     foreach (IntVec3 current in cellRect)
                     {
                         var thingsAtCell = GameMap.thingGrid.ThingsListAt(current);
@@ -255,7 +255,6 @@ namespace RimWorldOnlineCity
                         AttackingPawnJobDic = new Dictionary<int, AttackPawnCommand>(16);
                         AttackUpdateTick = 0;
 
-                        // Перевірка на дублікати імен пішаків
                         try
                         {
                             var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
@@ -325,7 +324,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Основний 50-мс цикл синхронізації дій на стороні хоста.
-        /// ОПТИМІЗАЦІЯ: повністю ліквідовано створення словників, списків та викликів LINQ.
+        /// ОПТИМІЗАЦІЯ: пул списків і масивів, double-buffering для запобігання алокаціям.
         /// </summary>
         private void AttackUpdate()
         {
@@ -382,7 +381,6 @@ namespace RimWorldOnlineCity
                         AttackHostFromSrv toClient;
                         lock (ToSendListsSync)
                         {
-                            // ОПТИМІЗАЦІЯ: повторне використання AllPawns без виклику ToDictionary()
                             AllPawns.Clear();
                             var spawnedPawns = GameMap.mapPawns.AllPawnsSpawned;
                             for (int pIdx = 0; pIdx < spawnedPawns.Count; pIdx++)
@@ -412,7 +410,6 @@ namespace RimWorldOnlineCity
                             }
                             if (ConfirmedVictoryAttacker != null) Finish(ConfirmedVictoryAttacker.Value);
 
-                            // ОПТИМІЗАЦІЯ: прямий пошук нових і видалених пішаків без виділення 3 HashSets кожні 50 мс
                             foreach (var pawnId in AllPawns.Keys)
                             {
                                 if (!SendedPawnsId.Contains(pawnId))
@@ -428,7 +425,6 @@ namespace RimWorldOnlineCity
                                 }
                             }
 
-                            // Відкладена перевірка повного здоров'я
                             if ((DateTime.UtcNow - SendDelayedFillPawnsLastTime).TotalSeconds >= SendDelayedFillPawnsSeconds)
                             {
                                 foreach (var mpp in AllPawns)
@@ -449,8 +445,13 @@ namespace RimWorldOnlineCity
                                     }
                                 }
 
-                                FireList.ExceptWith(ToUpdateState);
-                                ToUpdateState.AddRange(FireList);
+                                foreach (var fire in FireList)
+                                {
+                                    if (!ToUpdateState.Contains(fire))
+                                    {
+                                        ToUpdateState.Add(fire);
+                                    }
+                                }
 
                                 SendDelayedFillPawnsLastTime = DateTime.UtcNow;
                                 ToSendDelayedFillPawnsId.IntersectWith(AllPawns.Keys);
@@ -466,7 +467,6 @@ namespace RimWorldOnlineCity
                                 if (!ToSendAddId.Contains(mpID)) ToSendAddId.Add(mpID);
                             }
 
-                            // ОПТИМІЗАЦІЯ: використання очищуваних буферів замість нових списків
                             _newPawnsBuffer.Clear();
                             _newPawnsIdBuffer.Clear();
 
@@ -474,12 +474,12 @@ namespace RimWorldOnlineCity
                                 ? ToSendAddId.Count
                                 : 3;
 
-                            int i = 0;
-                            int[] added = new int[cnt];
+                            // ОПТИМІЗАЦІЯ: використання _addedIdBuffer замість new int[cnt] що-50 мс
+                            _addedIdBuffer.Clear();
                             foreach (int id in ToSendAddId)
                             {
-                                if (i >= cnt) break;
-                                added[i++] = id;
+                                if (_addedIdBuffer.Count >= cnt) break;
+                                _addedIdBuffer.Add(id);
 
                                 if (!AllPawns.TryGetValue(id, out Pawn thing)) continue;
                                 var tt = ThingEntry.CreateEntry(thing, 1);
@@ -489,10 +489,12 @@ namespace RimWorldOnlineCity
                                 _newPawnsIdBuffer.Add(id);
                                 SendedActual[thing.thingIDNumber] = thing;
                             }
-                            for (i = 0; i < cnt; i++)
+
+                            for (int aIdx = 0; aIdx < _addedIdBuffer.Count; aIdx++)
                             {
-                                ToSendAddId.Remove(added[i]);
-                                SendedPawnsId.Add(added[i]);
+                                int id = _addedIdBuffer[aIdx];
+                                ToSendAddId.Remove(id);
+                                SendedPawnsId.Add(id);
                             }
 
                             foreach (int id in ToSendDeleteId)
@@ -500,7 +502,6 @@ namespace RimWorldOnlineCity
                                 SendedPawnsId.Remove(id);
                             }
 
-                            // ОПТИМІЗАЦІЯ: однопрохідна обробка нових речей і трупів без LINQ
                             _newThingsBuffer.Clear();
                             _newThingsIdBuffer.Clear();
                             _newCorpsesBuffer.Clear();
@@ -531,7 +532,6 @@ namespace RimWorldOnlineCity
                                 }
                             }
 
-                            // Оновлення стану позицій пішаків
                             _toSendStateBuffer.Clear();
                             foreach (var mpp in AllPawns)
                             {
@@ -570,8 +570,11 @@ namespace RimWorldOnlineCity
                                 _toSendStateBuffer.Add(new AttackThingState(mp));
                             }
 
+                            // ОПТИМІЗАЦІЯ: Double-buffering замість new HashSet<Thing>() кожні 50 мс
+                            ThingPrepareChange0.Clear();
+                            var tempSet = ThingPrepareChange0;
                             ThingPrepareChange0 = ThingPrepareChange1;
-                            ThingPrepareChange1 = new HashSet<Thing>();
+                            ThingPrepareChange1 = tempSet;
 
                             _deleteBuffer.Clear();
                             foreach (var item in ToSendDeleteId)
@@ -620,7 +623,6 @@ namespace RimWorldOnlineCity
                             TerribleFatalError = true;
                         }
 
-                        // Застосування нових команд пішакам
                         if (toClient.UpdateCommand.Count > 0)
                         {
                             UIEventNewJobDisable = true;
@@ -635,7 +637,6 @@ namespace RimWorldOnlineCity
                             UIEventNewJobDisable = false;
                         }
 
-                        // Повторне надсилання запитаних об'єктів
                         if (toClient.NeedNewThingIDs.Count > 0)
                         {
                             lock (ToSendListsSync)
@@ -714,7 +715,6 @@ namespace RimWorldOnlineCity
                 }
 
                 Thing target = null;
-                // ОПТИМІЗАЦІЯ: швидкий O(1) пошук пішака в словнику без LINQ FirstOrDefault
                 if (!stopJob && comm.TargetID != 0)
                 {
                     if (AllPawns.TryGetValue(comm.TargetID, out Pawn pTarget))
@@ -838,7 +838,16 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    ApplyPawnJobByTick[pId] = new APJBT { Comm = comm, Tick = tick };
+                    // ОПТИМІЗАЦІЯ: оновлення наявного об'єкта APJBT без створення нового екземпляра
+                    if (ApplyPawnJobByTick.TryGetValue(pId, out APJBT existingCheck))
+                    {
+                        existingCheck.Comm = comm;
+                        existingCheck.Tick = tick;
+                    }
+                    else
+                    {
+                        ApplyPawnJobByTick[pId] = new APJBT { Comm = comm, Tick = tick };
+                    }
                 }
             }
             catch (Exception exp)
@@ -935,10 +944,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Перевірка умов перемоги.
-        /// ОПТИМІЗАЦІЯ: ранній вихід (early return), щойно знайдено живих бійців обох сторін.
-        /// </summary>
         private bool? CheckAttackerVictory()
         {
             bool existHostPawn = false;
@@ -960,7 +965,6 @@ namespace RimWorldOnlineCity
                     existHostPawn = true;
                 }
 
-                // Якщо обидві сторони ще мають дієздатних бійців — негайно повертаємо null
                 if (existHostPawn && existAttackerPawn)
                 {
                     return null;
@@ -1006,7 +1010,6 @@ namespace RimWorldOnlineCity
             }
             else
             {
-                // ОПТИМІЗАЦІЯ: безпечне видалення відступаючих ворожих пішаків через буфер
                 var pawnsToDestroy = new List<Pawn>();
                 foreach (var pawn in AttackingPawns)
                 {
