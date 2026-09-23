@@ -4,6 +4,7 @@ using RimWorld;
 using RimWorld.Planet;
 using System;
 using System.Collections.Generic;
+using Transfer;
 using UnityEngine;
 using Verse;
 
@@ -16,9 +17,10 @@ namespace RimWorldOnlineCity.GameClasses
     internal static class GameInterfaceHelper
     {
         private static readonly Dictionary<string, string> PlayerIconKeyCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Texture2D> PlayerIconCache = new Dictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Повертає кешований ідентифікатор аватарки гравця, запобігаючи створенню нових рядків щокадру.
+        /// Повертає кешований ідентифікатор аватарки гравця.
         /// </summary>
         public static string GetPlayerIconKey(string login)
         {
@@ -29,6 +31,27 @@ namespace RimWorldOnlineCity.GameClasses
                 PlayerIconKeyCache[login] = key;
             }
             return key;
+        }
+
+        /// <summary>
+        /// Повертає безпосередньо кешовану текстуру аватарки гравця,
+        /// усуваючи подвійний пошук по словниках кожного кадру OnGUI.
+        /// </summary>
+        public static Texture2D GetPlayerIcon(string login)
+        {
+            if (string.IsNullOrEmpty(login)) return null;
+
+            if (!PlayerIconCache.TryGetValue(login, out var icon) || icon == null || icon == GeneralTexture.Null)
+            {
+                var key = GetPlayerIconKey(login);
+                icon = GeneralTexture.Get.ByName(key);
+                if (icon != null && icon != GeneralTexture.Null)
+                {
+                    PlayerIconCache[login] = icon;
+                }
+            }
+
+            return (icon != null && icon != GeneralTexture.Null) ? icon : null;
         }
     }
 
@@ -59,38 +82,44 @@ namespace RimWorldOnlineCity.GameClasses
             Text.Anchor = anchor;
             Text.Font = font;
 
-            var serverId = (optionalWorldObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
-
-            // Кнопка копіювання посилання на предмет, базу чи тайл у рядок вводу чату
+            // ОПТИМІЗАЦІЯ: обчислення serverId перенесено всередину кліку, щоб не навантажувати OnGUI щокадру
             if (Widgets.ButtonImage(iconCopy, GeneralTexture.OCToChat))
             {
                 if (optionalThing != null)
                 {
-                    var msg = $"<!{optionalThing.def.defName}/>";
+                    var msg = $"<!{optionalThing.def?.defName ?? "Thing"}/>";
                     ChatController.AddToInputChat(msg, true);
                 }
-                else if (serverId != null)
+                else
                 {
-                    var msg = $"<&{serverId.Value}/>";
-                    ChatController.AddToInputChat(msg, true);
-                }
-                else if (optionalWorldObject != null)
-                {
-                    int tile = optionalWorldObject.Tile;
-                    var msg = $"<#{tile}/>";
-                    ChatController.AddToInputChat(msg, true);
+                    long? serverId = (optionalWorldObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
+                    if (serverId != null)
+                    {
+                        var msg = $"<&{serverId.Value}/>";
+                        ChatController.AddToInputChat(msg, true);
+                    }
+                    else if (optionalWorldObject != null)
+                    {
+                        int tile = optionalWorldObject.Tile;
+                        var msg = $"<#{tile}/>";
+                        ChatController.AddToInputChat(msg, true);
+                    }
                 }
             }
 
             if (optionalThing != null) return true;
-            if (!(optionalWorldObject is CaravanOnline OCWO) || string.IsNullOrEmpty(OCWO.OnlinePlayerLogin)) return true;
+
+            string ownerLogin = (optionalWorldObject as CaravanOnline)?.OnlinePlayerLogin
+                ?? (optionalWorldObject as BaseOnline)?.OnlinePlayerLogin;
+
+            if (string.IsNullOrEmpty(ownerLogin)) return true;
 
             const float size = 100f;
             var iconArea = new Rect(rect.width - size, iconCopy.y + iconCopy.height, size, size);
 
-            // ОПТИМІЗАЦІЯ: використання кешованого ключа аватарки
-            var iconImage = GeneralTexture.Get.ByName(GameInterfaceHelper.GetPlayerIconKey(OCWO.OnlinePlayerLogin));
-            if (iconImage != null && iconImage != GeneralTexture.Null)
+            // ОПТИМІЗАЦІЯ: читання текстури напряму з кешу
+            var iconImage = GameInterfaceHelper.GetPlayerIcon(ownerLogin);
+            if (iconImage != null)
             {
                 GUI.DrawTexture(iconArea, iconImage);
             }
@@ -100,7 +129,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     /// <summary>
-    /// Відображає аватарку гравця на панелі огляду його каравану чи бази.
+    /// Відображає аватарку гравця на панелі огляду його каравану чи поселення.
     /// </summary>
     [HarmonyPatch(typeof(RimWorld.InspectPaneFiller))]
     [HarmonyPatch("DrawInspectStringFor")]
@@ -111,14 +140,16 @@ namespace RimWorldOnlineCity.GameClasses
         {
             if (!SessionClient.Get.IsLogined) return true;
 
-            if (sel is CaravanOnline OCWO && !string.IsNullOrEmpty(OCWO.OnlinePlayerLogin))
-            {
-                const float size = 100f;
-                var iconArea = new Rect(rect.width - size, 0f, size, size);
+            string ownerLogin = (sel as CaravanOnline)?.OnlinePlayerLogin
+                ?? (sel as BaseOnline)?.OnlinePlayerLogin;
 
-                var iconImage = GeneralTexture.Get.ByName(GameInterfaceHelper.GetPlayerIconKey(OCWO.OnlinePlayerLogin));
-                if (iconImage != null && iconImage != GeneralTexture.Null)
+            if (!string.IsNullOrEmpty(ownerLogin))
+            {
+                var iconImage = GameInterfaceHelper.GetPlayerIcon(ownerLogin);
+                if (iconImage != null)
                 {
+                    const float size = 100f;
+                    var iconArea = new Rect(rect.width - size, 0f, size, size);
                     GUI.DrawTexture(iconArea, iconImage);
                     rect.width -= iconArea.width;
                 }
@@ -142,7 +173,7 @@ namespace RimWorldOnlineCity.GameClasses
             if (Find.Selector.NumSelected != 1) return;
 
             Thing singleSelectedThing = Find.Selector.SingleSelectedThing;
-            if (singleSelectedThing == null) return;
+            if (singleSelectedThing?.def == null) return;
 
             lineEndWidth += 30f;
             var iconCopy = new Rect(rect.width - lineEndWidth, -2f, 30f, 30f);
@@ -175,7 +206,6 @@ namespace RimWorldOnlineCity.GameClasses
                 {
                     long? serverId = (singleSelectedObject as WorldObjectBaseOnline)?.Place?.PlaceServerId;
 
-                    // ОПТИМІЗАЦІЯ: безпечна перевірка на null у Faction?.IsPlayer
                     if (serverId == null && singleSelectedObject != null && singleSelectedObject.Faction?.IsPlayer == true)
                     {
                         serverId = UpdateWorldController.GetMyByLocalId(singleSelectedObject.ID)?.PlaceServerId;

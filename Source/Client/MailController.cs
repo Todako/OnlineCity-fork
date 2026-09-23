@@ -34,13 +34,17 @@ namespace RimWorldOnlineCity
         {
             try
             {
-                if (mail?.To == null || mail.To.Login != SessionClientController.My?.Login) return;
+                if (mail?.To == null) return;
+                var myLogin = SessionClientController.My?.Login;
+                if (myLogin == null || !string.Equals(mail.To.Login, myLogin, StringComparison.OrdinalIgnoreCase)) return;
 
                 if (TypeMailProcessing.TryGetValue(mail.GetType(), out var action))
                 {
                     if (Loger.Enable && !MainHelper.OffAllLog)
                     {
-                        Loger.Log($"Mail {mail.GetType().Name} {(mail.From?.Login ?? "-")}->{(mail.To?.Login ?? "-")}: hash={mail.GetHash()}");
+                        string hash = null;
+                        try { hash = mail.GetHash(); } catch { }
+                        Loger.Log($"Mail {mail.GetType().Name} {(mail.From?.Login ?? "-")}->{(mail.To?.Login ?? "-")}: hash={hash ?? "-"}");
                     }
                     action(mail);
                 }
@@ -59,52 +63,18 @@ namespace RimWorldOnlineCity
         public static void MailProcessMessadge(ModelMail incoming)
         {
             var msg = (ModelMailMessadge)incoming;
+            LetterDef def = GetLetterDef(msg.type);
 
-            LetterDef def;
-            switch (msg.type)
-            {
-                case ModelMailMessadge.MessadgeTypes.ThreatBig:
-                    def = LetterDefOf.ThreatBig;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.ThreatSmall:
-                    def = LetterDefOf.ThreatSmall;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.Death:
-                    def = LetterDefOf.Death;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.Negative:
-                    def = LetterDefOf.NegativeEvent;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.Neutral:
-                    def = LetterDefOf.NeutralEvent;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.Positive:
-                    def = LetterDefOf.PositiveEvent;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.Visitor:
-                    def = LetterDefOf.AcceptVisitors;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.GoldenLetter:
-                    def = OC_LetterDefOf.GoldenLetter;
-                    break;
-                case ModelMailMessadge.MessadgeTypes.GreyGoldenLetter:
-                    def = OC_LetterDefOf.GreyGoldenLetter;
-                    break;
-                default:
-                    def = LetterDefOf.NeutralEvent;
-                    break;
-            }
-
-            var place = ExchengeUtils.GetPlace(msg);
-            GlobalTargetInfo? targetInfo = null;
-            if (place != null)
-                targetInfo = new GlobalTargetInfo(place);
-            else if (msg.Tile != 0)
-                targetInfo = new GlobalTargetInfo(msg.Tile);
-
-            // ОПТИМІЗАЦІЯ: безпечне додавання листа до стеку в основному потоці Unity
+            // ОПТИМІЗАЦІЯ: безпечний пошук об'єкта та додавання листа до стеку в основному потоці Unity
             ModBaseData.RunMainThread(() =>
             {
+                var place = ExchengeUtils.GetPlace(msg);
+                GlobalTargetInfo? targetInfo = null;
+                if (place != null)
+                    targetInfo = new GlobalTargetInfo(place);
+                else if (msg.Tile != 0)
+                    targetInfo = new GlobalTargetInfo(msg.Tile);
+
                 string label = ChatController.ServerCharTranslate(msg.label);
                 string text = ChatController.ServerCharTranslate(msg.text);
 
@@ -118,15 +88,44 @@ namespace RimWorldOnlineCity
                 }
             });
         }
+
+        private static LetterDef GetLetterDef(ModelMailMessadge.MessadgeTypes type)
+        {
+            switch (type)
+            {
+                case ModelMailMessadge.MessadgeTypes.ThreatBig:
+                    return LetterDefOf.ThreatBig;
+                case ModelMailMessadge.MessadgeTypes.ThreatSmall:
+                    return LetterDefOf.ThreatSmall;
+                case ModelMailMessadge.MessadgeTypes.Death:
+                    return LetterDefOf.Death;
+                case ModelMailMessadge.MessadgeTypes.Negative:
+                    return LetterDefOf.NegativeEvent;
+                case ModelMailMessadge.MessadgeTypes.Neutral:
+                    return LetterDefOf.NeutralEvent;
+                case ModelMailMessadge.MessadgeTypes.Positive:
+                    return LetterDefOf.PositiveEvent;
+                case ModelMailMessadge.MessadgeTypes.Visitor:
+                    return LetterDefOf.AcceptVisitors;
+                case ModelMailMessadge.MessadgeTypes.GoldenLetter:
+                    return OC_LetterDefOf.GoldenLetter;
+                case ModelMailMessadge.MessadgeTypes.GreyGoldenLetter:
+                    return OC_LetterDefOf.GreyGoldenLetter;
+                default:
+                    return LetterDefOf.NeutralEvent;
+            }
+        }
         #endregion
 
         #region MailProcessStartIncident
         public static void MailProcessStartIncident(ModelMail incoming)
         {
-            Loger.Log("IncidentLog MailController.MailProcessStartIncident 1");
+            if (Loger.Enable && !MainHelper.OffAllLog)
+            {
+                Loger.Log("IncidentLog MailController.MailProcessStartIncident 1");
+            }
             var mail = (ModelMailStartIncident)incoming;
 
-            // ОПТИМІЗАЦІЯ: генерація та запуск події виконуються виключно в основному потоці
             ModBaseData.RunMainThread(() =>
             {
                 Find.TickManager.Pause();
@@ -142,7 +141,11 @@ namespace RimWorldOnlineCity
                 {
                     SessionClientController.SaveGameNow(true);
                 }
-                Loger.Log("IncidentLog MailController.MailProcessStartIncident 2");
+
+                if (Loger.Enable && !MainHelper.OffAllLog)
+                {
+                    Loger.Log("IncidentLog MailController.MailProcessStartIncident 2");
+                }
             });
         }
         #endregion
@@ -154,32 +157,38 @@ namespace RimWorldOnlineCity
 
             if (mail.Things == null || mail.Things.Count == 0 || mail.PlaceServerId <= 0)
             {
-                Loger.Log("Mail fail: no data");
+                Loger.Log("Mail fail: no data", Loger.LogLevel.WARNING);
                 return;
             }
 
-            var place = ExchengeUtils.GetPlace(mail);
-            if (place != null)
+            string fromLogin = mail.From?.Login ?? "-";
+
+            // ОПТИМІЗАЦІЯ: безпечний пошук об'єкта та показ діалогу підтвердження в основному потоці гри
+            ModBaseData.RunMainThread(() =>
             {
-                DropToWorldObject(place, mail.Things, mail.From?.Login ?? "-");
-            }
+                var place = ExchengeUtils.GetPlace(mail);
+                if (place != null)
+                {
+                    DropToWorldObject(place, mail.Things, fromLogin);
+                }
+                else
+                {
+                    Loger.Log($"Mail trade fail: place not found for serverId={mail.PlaceServerId}", Loger.LogLevel.WARNING);
+                }
+            });
         }
 
         private static void DropToWorldObject(WorldObject place, List<ThingEntry> things, string from)
         {
-            // ОПТИМІЗАЦІЯ: відкриття діалогового вікна підтвердження в основному потоці гри
-            ModBaseData.RunMainThread(() =>
-            {
-                string text = "OCity_UpdateWorld_TradeDetails".Translate(from, place.LabelCap, things.ToStringLabel()).ToString();
+            string text = "OCity_UpdateWorld_TradeDetails".Translate(from, place.LabelCap, things.ToStringLabel()).ToString();
 
-                Find.TickManager.Pause();
-                GameUtils.ShowDialodOKCancel(
-                    "OCity_UpdateWorld_Trade".Translate(),
-                    text,
-                    () => ExchengeUtils.SpawnToWorldObject(place, things, text),
-                    () => Loger.Log("Drop Mail canceled from " + from + ": " + text)
-                );
-            });
+            Find.TickManager.Pause();
+            GameUtils.ShowDialodOKCancel(
+                "OCity_UpdateWorld_Trade".Translate(),
+                text,
+                () => ExchengeUtils.SpawnToWorldObject(place, things, text),
+                () => Loger.Log("Drop Mail canceled from " + from + ": " + text)
+            );
         }
         #endregion
 
@@ -187,11 +196,14 @@ namespace RimWorldOnlineCity
         public static void MailProcessDeleteByServerId(ModelMail incoming)
         {
             var mail = (ModelMailDeleteWO)incoming;
-            Loger.Log("Client MailProcessDeleteByServerId " + mail.PlaceServerId);
+            if (Loger.Enable && !MainHelper.OffAllLog)
+            {
+                Loger.Log("Client MailProcessDeleteByServerId " + mail.PlaceServerId);
+            }
 
             if (mail.PlaceServerId <= 0)
             {
-                Loger.Log("Mail fail: no data");
+                Loger.Log("Mail fail: no data", Loger.LogLevel.WARNING);
                 return;
             }
 
@@ -210,7 +222,10 @@ namespace RimWorldOnlineCity
         #region AttackCancel
         public static void MailProcessAttackCancel(ModelMail incoming)
         {
-            Loger.Log("Client MailProcessAttackCancel");
+            if (Loger.Enable && !MainHelper.OffAllLog)
+            {
+                Loger.Log("Client MailProcessAttackCancel");
+            }
 
             ModBaseData.RunMainThread(() =>
             {
@@ -226,7 +241,10 @@ namespace RimWorldOnlineCity
         #region TechnicalVictory
         public static void MailProcessAttackTechnicalVictory(ModelMail incoming)
         {
-            Loger.Log("Client MailProcessAttackTechnicalVictory");
+            if (Loger.Enable && !MainHelper.OffAllLog)
+            {
+                Loger.Log("Client MailProcessAttackTechnicalVictory");
+            }
 
             ModBaseData.RunMainThread(() =>
             {
