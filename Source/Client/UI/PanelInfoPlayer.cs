@@ -14,6 +14,7 @@ using Verse;
 
 namespace RimWorldOnlineCity
 {
+    [StaticConstructorOnStartup]
     public class PanelInfoPlayer : DialogControlBase
     {
         public PlayerClient player;
@@ -25,7 +26,7 @@ namespace RimWorldOnlineCity
         public float Height = 0f;
 
         private static readonly Color WindowBGBorderColor = new ColorInt(97, 108, 122).ToColor;
-        private static readonly Texture2D SkillBarFillTex = SolidColorMaterials.NewSolidColorTexture(new Color(1f, 1f, 1f, 0.1f));
+        private static readonly Texture2D SkillBarFillTex;
 
         private float historyMax = 1f;
         private List<CaravanOnline> _sortedWObjects;
@@ -39,6 +40,11 @@ namespace RimWorldOnlineCity
         private static string CachedMarketValuePawnPrefix;
         private static string CachedMarketValueTradingPrefix;
         private static string[] SkillNames;
+
+        static PanelInfoPlayer()
+        {
+            SkillBarFillTex = SolidColorMaterials.NewSolidColorTexture(new Color(1f, 1f, 1f, 0.1f));
+        }
 
         public PanelInfoPlayer(PlayerClient player)
         {
