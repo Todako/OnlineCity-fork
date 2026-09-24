@@ -1,50 +1,78 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
-using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace ClientAncillary
 {
     public class CommunicationConsole
     {
+        private const int ConnectionTimeoutMs = 5000;
+
+        /// <summary>
+        /// Відправляє бінарні дані через іменований канал (Named Pipe).
+        /// ОПТИМІЗАЦІЯ: прямий бінарний запис усуває оверхед Base64 та виділення великих рядків у купі.
+        /// </summary>
         public void SendData(int code, byte[] data)
         {
-            using (var client = new NamedPipeClientStream("OCClientAncillary" + code))
+            var pipeName = "OCClientAncillary" + code;
+            using (var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out))
             {
-                client.Connect();
-                using (StreamWriter writer = new StreamWriter(client))
+                client.Connect(ConnectionTimeoutMs);
+                using (var writer = new BinaryWriter(client))
                 {
-                    writer.Write(Convert.ToBase64String(data));
+                    if (data == null || data.Length == 0)
+                    {
+                        writer.Write(0);
+                    }
+                    else
+                    {
+                        writer.Write(data.Length);
+                        writer.Write(data, 0, data.Length);
+                    }
                     writer.Flush();
                 }
             }
         }
 
+        /// <summary>
+        /// Приймає бінарні дані через іменований канал.
+        /// ОПТИМІЗАЦІЯ: потокове вичитування сирих байтів безпосередньо у вихідний масив.
+        /// </summary>
         public byte[] ReceiveData(int code, Action beforeWait)
         {
-            using (var server = new NamedPipeServerStream("OCClientAncillary" + code, PipeDirection.InOut))
+            var pipeName = "OCClientAncillary" + code;
+            using (var server = new NamedPipeServerStream(pipeName, PipeDirection.In))
             {
-                Thread thread = new Thread(() =>
+                var thread = new Thread(() =>
                 {
                     try
                     {
                         beforeWait();
                     }
                     catch { }
-                });
+                })
+                {
+                    IsBackground = true
+                };
                 thread.Start();
 
                 server.WaitForConnection();
 
-                StreamReader reader = new StreamReader(server);
-                byte[] data = Convert.FromBase64String(reader.ReadToEnd());
+                using (var reader = new BinaryReader(server))
+                {
+                    int length = reader.ReadInt32();
+                    if (length <= 0)
+                    {
+                        thread.Join(ConnectionTimeoutMs);
+                        return new byte[0];
+                    }
 
-                thread.Join();
-                return data;
+                    // Читаємо повний масив байтів
+                    byte[] data = reader.ReadBytes(length);
+                    thread.Join(ConnectionTimeoutMs);
+                    return data;
+                }
             }
         }
     }

@@ -22,6 +22,7 @@ namespace RimWorldOnlineCity
 {
     public static class ScribeSaverHelper
     {
+        // ОПТИМІЗАЦІЯ: прямий IL-доступ до приватного поля writer замість важкої рефлексії на кожному сейві
         private static readonly AccessTools.FieldRef<ScribeSaver, XmlWriter> WriterRef =
             AccessTools.FieldRefAccess<ScribeSaver, XmlWriter>("writer");
 
@@ -40,12 +41,16 @@ namespace RimWorldOnlineCity
     public static class GameUtils
     {
         internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
-        private static readonly HashSet<string> ExceptionDravLineThing = new HashSet<string>();
+
+        // ОПТИМІЗАЦІЯ: збереження посилань на об'єкти замість алокацій thing.ToString() щокадру
+        private static readonly HashSet<ThingTrade> ExceptionDravLineThingTrade = new HashSet<ThingTrade>();
+        private static readonly HashSet<Thing> ExceptionDravLineThing = new HashSet<Thing>();
 
         private static int BugNum = 0;
+
         public static void GetBug()
         {
-            var dir = Loger.PathLog.Substring(0, Loger.PathLog.Length - 1);
+            var dir = Loger.PathLog.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var fileName = $"Log_{DateTime.Now:yyyy-MM-dd}_*.txt";
             var list = Directory.GetFiles(dir, fileName, SearchOption.TopDirectoryOnly);
             var dataToSave = GZip.ZipMoreByteByte(list, name => File.ReadAllBytes(name.NormalizePath()));
@@ -60,7 +65,6 @@ namespace RimWorldOnlineCity
         {
             Texture2D texture = new Texture2D(2, 2);
             texture.LoadImage(data);
-            texture.Apply();
             return texture;
         }
 
@@ -71,11 +75,12 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Відмальовка іконки та підказки для ThingTrade.
-        /// ОПТИМІЗАЦІЯ: усунено щокадровий виклик thing.ToString() в OnGUI.
+        /// ОПТИМІЗАЦІЯ: перевірка помилок за посиланням без виклику thing.ToString() та ледачі підказки.
         /// </summary>
         public static void DravLineThing(Rect rect, ThingTrade thing, bool withInfo, Color labelColor, float xi = 24f, float yi = 0)
         {
-            if (ExceptionDravLineThing.Count > 0 && ExceptionDravLineThing.Contains(thing.ToString())) return;
+            if (thing == null || ExceptionDravLineThingTrade.Contains(thing)) return;
+
             try
             {
                 if (thing.Def?.race?.Humanlike ?? false)
@@ -83,50 +88,65 @@ namespace RimWorldOnlineCity
                     var position = new Rect(rect.x, rect.y, 24f, 24f);
                     GUI.DrawTexture(position, GeneralTexture.IconHuman);
                 }
-                else
+                else if (thing.Def != null)
                 {
                     Widgets.ThingIcon(rect, thing.Def);
                 }
 
-                if (string.IsNullOrEmpty(thing.StuffName))
+                if (thing.Def != null)
                 {
-                    TooltipHandler.TipRegion(rect, thing.Def.LabelCap);
-                    GUI.color = labelColor;
-                    if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing.Def);
-                    GUI.color = Color.white;
-                }
-                else
-                {
-                    TooltipHandler.TipRegion(rect, thing.Def.LabelCap + "OCity_GameUtils_From".Translate() + thing.StuffDef.LabelAsStuff);
-                    GUI.color = labelColor;
-                    if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing.Def, thing.StuffDef);
-                    GUI.color = Color.white;
+                    if (Mouse.IsOver(rect))
+                    {
+                        string tip = string.IsNullOrEmpty(thing.StuffName)
+                            ? thing.Def.LabelCap.ToString()
+                            : (thing.Def.LabelCap + "OCity_GameUtils_From".Translate() + thing.StuffDef.LabelAsStuff).ToString();
+                        TooltipHandler.TipRegion(rect, tip);
+                    }
+
+                    if (withInfo)
+                    {
+                        GUI.color = labelColor;
+                        if (string.IsNullOrEmpty(thing.StuffName))
+                            Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing.Def);
+                        else
+                            Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing.Def, thing.StuffDef);
+                        GUI.color = Color.white;
+                    }
                 }
             }
             catch
             {
-                ExceptionDravLineThing.Add(thing.ToString());
+                ExceptionDravLineThingTrade.Add(thing);
                 throw;
             }
         }
 
+        /// <summary>
+        /// Відмальовка іконки та підказки для Thing.
+        /// ОПТИМІЗАЦІЯ: створення TipSignal виключно при наведенні курсору миші (Mouse.IsOver).
+        /// </summary>
         public static void DravLineThing(Rect rect, Thing thing, bool withInfo, float xi = 24f, float yi = 0)
         {
-            if (thing == null) return;
-            Widgets.ThingIcon(rect, thing);
-            if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing);
+            if (thing == null || ExceptionDravLineThing.Contains(thing)) return;
 
-            var localThing = thing;
-            TooltipHandler.TipRegion(rect, new TipSignal(delegate
+            try
             {
-                string text = localThing.LabelCapNoCount;
-                string tipDescription = localThing.DescriptionFlavor;
-                if (!tipDescription.NullOrEmpty())
+                Widgets.ThingIcon(rect, thing);
+                if (withInfo) Widgets.InfoCardButton(rect.x + xi, rect.y + yi, thing);
+
+                if (Mouse.IsOver(rect))
                 {
-                    text = text + ": " + tipDescription;
+                    string text = thing.LabelCapNoCount.ToString();
+                    string tipDescription = thing.DescriptionFlavor.ToString();
+                    string fullText = !string.IsNullOrEmpty(tipDescription) ? text + ": " + tipDescription : text;
+                    TooltipHandler.TipRegion(rect, fullText);
                 }
-                return text;
-            }, localThing.GetHashCode()));
+            }
+            catch
+            {
+                ExceptionDravLineThing.Add(thing);
+                throw;
+            }
         }
 
         public static void DravLineThing(Rect rect, ThingDef thing, bool withInfo)
@@ -135,23 +155,20 @@ namespace RimWorldOnlineCity
             Widgets.ThingIcon(rect, thing);
             if (withInfo) Widgets.InfoCardButton(rect.x + 24f, rect.y, thing);
 
-            var localThing = thing;
-            TooltipHandler.TipRegion(rect, new TipSignal(delegate
+            if (Mouse.IsOver(rect))
             {
-                string text = localThing.LabelCap;
-                string tipDescription = localThing.DescriptionDetailed;
-                if (!tipDescription.NullOrEmpty())
-                {
-                    text = text + ": " + tipDescription;
-                }
-                return text;
-            }, localThing.GetHashCode()));
+                string text = thing.LabelCap.ToString();
+                string tipDescription = thing.DescriptionDetailed.ToString();
+                string fullText = !string.IsNullOrEmpty(tipDescription) ? text + ": " + tipDescription : text;
+                TooltipHandler.TipRegion(rect, fullText);
+            }
         }
 
         public static void DravLineThing(Rect rectLine, Thing thing, Color labelColor)
         {
-            Rect rect = new Rect(0f, 0f, 24f, 24f);
+            if (thing == null) return;
 
+            Rect rect = new Rect(0f, 0f, 24f, 24f);
             Widgets.ThingIcon(rect, thing, 1f);
             Widgets.InfoCardButton(30f, 0f, thing);
 
@@ -165,17 +182,13 @@ namespace RimWorldOnlineCity
             GenUI.ResetLabelAlign();
             GUI.color = Color.white;
 
-            var localThing = thing;
-            TooltipHandler.TipRegion(rectLine, new TipSignal(delegate
+            if (Mouse.IsOver(rectLine))
             {
-                string text = localThing.LabelCapNoCount;
-                string tipDescription = localThing.DescriptionFlavor;
-                if (!tipDescription.NullOrEmpty())
-                {
-                    text = text + ": " + tipDescription;
-                }
-                return text;
-            }, localThing.GetHashCode()));
+                string text = thing.LabelCapNoCount.ToString();
+                string tipDescription = thing.DescriptionFlavor.ToString();
+                string fullText = !string.IsNullOrEmpty(tipDescription) ? text + ": " + tipDescription : text;
+                TooltipHandler.TipRegion(rectLine, fullText);
+            }
         }
 
         public static List<WorldObject> GetAllWorldObjects()
@@ -320,8 +333,11 @@ namespace RimWorldOnlineCity
             foreach (var item in allThings)
             {
                 if (item == null) continue;
-                source[item] = item.stackCount;
-                sourceKeys.Add(item);
+                if (!source.ContainsKey(item))
+                {
+                    source[item] = item.stackCount;
+                    sourceKeys.Add(item);
+                }
             }
             sourceKeys.Sort(TradeThingComparer.Instance);
 
@@ -334,8 +350,11 @@ namespace RimWorldOnlineCity
                 foreach (var item in altThings)
                 {
                     if (item == null) continue;
-                    sourcealt[item] = item.stackCount;
-                    sourcealtKeys.Add(item);
+                    if (!sourcealt.ContainsKey(item))
+                    {
+                        sourcealt[item] = item.stackCount;
+                        sourcealtKeys.Add(item);
+                    }
                 }
                 sourcealtKeys.Sort(TradeThingComparer.Instance);
             }
@@ -421,7 +440,7 @@ namespace RimWorldOnlineCity
 
         public static bool IsProtectingNovice()
         {
-            if (SessionClientController.Data.IsAdmin || !SessionClientController.Data.ProtectingNovice) return false;
+            if (SessionClientController.Data == null || SessionClientController.Data.IsAdmin || !SessionClientController.Data.ProtectingNovice) return false;
 
             var costAll = SessionClientController.Data.MyEx.CostAllWorldObjects();
             return SessionClientController.My.LastTick < 3600000 / 2 || costAll.MarketValueTotal < MainHelper.MinCostForTrade;
@@ -479,7 +498,7 @@ namespace RimWorldOnlineCity
             return result;
         }
 
-        public static List<Thing> GetAllThings(Caravan caravan, bool thingOnPawn = false, bool withTransferFilter = true)
+        public static List<Thing> GetAllThings(Caravan caravan, bool thingOnPawn = false, bool withTransferFilter = true, ThingDef onlyDef = null)
         {
             var rawPawns = caravan.PawnsListForReading;
             var pawns = withTransferFilter ? FilterBeforeSendServer(rawPawns) : new List<Thing>(rawPawns);
@@ -487,41 +506,68 @@ namespace RimWorldOnlineCity
             List<Thing> goods;
             if (thingOnPawn)
             {
-                var onPawn = GetThingOnPawn(pawns);
+                var onPawn = GetThingOnPawn(pawns, onlyDef);
                 goods = new List<Thing>(onPawn.Count + pawns.Count);
                 goods.AddRange(onPawn);
-                goods.AddRange(pawns);
+                for (int i = 0; i < pawns.Count; i++)
+                {
+                    if (onlyDef == null || pawns[i].def == onlyDef) goods.Add(pawns[i]);
+                }
             }
             else
             {
                 var inv = CaravanInventoryUtility.AllInventoryItems(caravan);
                 goods = new List<Thing>(inv.Count + pawns.Count);
-                goods.AddRange(inv);
-                goods.AddRange(pawns);
+                for (int i = 0; i < inv.Count; i++)
+                {
+                    if (onlyDef == null || inv[i].def == onlyDef) goods.Add(inv[i]);
+                }
+                for (int i = 0; i < pawns.Count; i++)
+                {
+                    if (onlyDef == null || pawns[i].def == onlyDef) goods.Add(pawns[i]);
+                }
             }
 
             return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
         }
 
-        public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true)
+        /// <summary>
+        /// Повертає речі карти з підтримкою швидкої фільтрації за ThingDef (без збору тисяч зайвих об'єктів).
+        /// </summary>
+        public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true, ThingDef onlyDef = null)
         {
             var rawPawns = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer);
             var pawns = withTransferFilter ? FilterBeforeSendServer(rawPawns) : new List<Thing>(rawPawns);
 
             var reachableItems = CaravanFormingUtility.AllReachableColonyItems(map, allowEvenIfReserved: true);
-            var goods = new List<Thing>(reachableItems.Count + pawns.Count + (thingOnPawn ? pawns.Count * 2 : 0));
-            goods.AddRange(reachableItems);
-            goods.AddRange(pawns);
+            var goods = new List<Thing>(onlyDef != null ? 32 : reachableItems.Count + pawns.Count + (thingOnPawn ? pawns.Count * 2 : 0));
+
+            for (int i = 0; i < reachableItems.Count; i++)
+            {
+                var item = reachableItems[i];
+                if (onlyDef == null || item.def == onlyDef)
+                {
+                    goods.Add(item);
+                }
+            }
+
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                if (onlyDef == null || pawns[i].def == onlyDef)
+                {
+                    goods.Add(pawns[i]);
+                }
+            }
 
             if (thingOnPawn)
             {
-                goods.AddRange(GetThingOnPawn(pawns));
+                goods.AddRange(GetThingOnPawn(pawns, onlyDef));
             }
 
             return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
         }
 
-        private static List<Thing> GetThingOnPawn(IEnumerable<Thing> pawns)
+        private static List<Thing> GetThingOnPawn(IEnumerable<Thing> pawns, ThingDef onlyDef = null)
         {
             var result = new List<Thing>();
             foreach (var thing in pawns)
@@ -530,12 +576,19 @@ namespace RimWorldOnlineCity
                 {
                     foreach (var item in p.EquippedWornOrInventoryThings)
                     {
-                        result.Add(item);
+                        if (onlyDef == null || item.def == onlyDef)
+                        {
+                            result.Add(item);
+                        }
                     }
 
                     if (p.carryTracker?.CarriedThing != null && p.carryTracker.CarriedThing.def.category != ThingCategory.Pawn)
                     {
-                        result.Add(p.carryTracker.CarriedThing);
+                        var carried = p.carryTracker.CarriedThing;
+                        if (onlyDef == null || carried.def == onlyDef)
+                        {
+                            result.Add(carried);
+                        }
                     }
                 }
             }
@@ -705,7 +758,6 @@ namespace RimWorldOnlineCity
                         catch (Exception exp)
                         {
                             Loger.Log("SpawnList Exception " + thing.Name + ": " + exp, Loger.LogLevel.ERROR);
-                            Thread.Sleep(5);
                             GenSpawn.Spawn(pawn, cell, map);
                         }
                     }
@@ -875,7 +927,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Пошук та вибір речей заданого def на домашніх картах гравця.
-        /// ОПТИМІЗАЦІЯ: ліквідовано зайві виклики LINQ Where, Sum, OrderByDescending.
+        /// ОПТИМІЗАЦІЯ: ліквідовано зайві виклики LINQ Where, Sum, OrderByDescending та збір зайвих об'єктів карти.
         /// </summary>
         public static int FindThings(ThingDef def, int select, bool getMaxByMap, out Dictionary<Thing, int> thingsSelect)
         {
@@ -889,17 +941,11 @@ namespace RimWorldOnlineCity
                 var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    var allMThings = GetAllThings(m);
-                    var things = new List<Thing>();
+                    var things = GetAllThings(m, onlyDef: def);
                     int c = 0;
-                    for (int j = 0; j < allMThings.Count; j++)
+                    for (int j = 0; j < things.Count; j++)
                     {
-                        var t = allMThings[j];
-                        if (t.def == def)
-                        {
-                            things.Add(t);
-                            c += t.stackCount;
-                        }
+                        c += things[j].stackCount;
                     }
 
                     maps.Add(new Pair<List<Thing>, int>(things, c));
@@ -964,17 +1010,11 @@ namespace RimWorldOnlineCity
                 var m = gameMaps[i];
                 if (m.IsPlayerHome)
                 {
-                    var allMThings = GetAllThings(m);
-                    var things = new List<Thing>();
+                    var things = GetAllThings(m, onlyDef: def);
                     int c = 0;
-                    for (int j = 0; j < allMThings.Count; j++)
+                    for (int j = 0; j < things.Count; j++)
                     {
-                        var t = allMThings[j];
-                        if (t.def == def)
-                        {
-                            things.Add(t);
-                            c += t.stackCount;
-                        }
+                        c += things[j].stackCount;
                     }
 
                     maps.Add(new Pair<List<Thing>, int>(things, c));
@@ -1052,7 +1092,7 @@ namespace RimWorldOnlineCity
 
         public static Command_Action CommandShowMap(BaseOnline that)
         {
-            if (SessionClientController.Data.GeneralSettings.ColonyScreenEnable)
+            if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.ColonyScreenEnable)
             {
                 var command_Action = new Command_Action
                 {
@@ -1142,15 +1182,24 @@ namespace RimWorldOnlineCity
             return null;
         }
 
+        /// <summary>
+        /// Розрахунок відстані між тайлами з симетричним кешуванням (start <-> end).
+        /// </summary>
         public static int DistanceBetweenTile(int start, int end)
         {
-            var key = new Pair<int, int>(start, end);
-            if (!SessionClientController.Data.DistanceBetweenTileCache.TryGetValue(key, out int res))
+            var key = new Pair<int, int>(Math.Min(start, end), Math.Max(start, end));
+
+            if (SessionClientController.Data?.DistanceBetweenTileCache != null)
             {
-                res = Find.WorldGrid.TraversalDistanceBetween(start, end);
-                SessionClientController.Data.DistanceBetweenTileCache[key] = res;
+                if (!SessionClientController.Data.DistanceBetweenTileCache.TryGetValue(key, out int res))
+                {
+                    res = Find.WorldGrid.TraversalDistanceBetween(start, end);
+                    SessionClientController.Data.DistanceBetweenTileCache[key] = res;
+                }
+                return res;
             }
-            return res;
+
+            return Find.WorldGrid.TraversalDistanceBetween(start, end);
         }
 
         public static List<Thing> GetCashlessBalanceThingList(float cashlessBalance)
