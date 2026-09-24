@@ -5,9 +5,6 @@ using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
@@ -25,7 +22,6 @@ namespace RimWorldOnlineCity
         public static readonly Texture2D IconSkull;
         public static readonly Texture2D TradeButtonIcon;
         public static readonly Texture2D Waypoint;
-        //public static readonly Texture2D OC_Coin;
         public static readonly Texture2D Null;
         public static readonly Texture2D OCInfo;
         public static readonly Texture2D OCSystem;
@@ -58,11 +54,10 @@ namespace RimWorldOnlineCity
             IconAddTex = ContentFinder<Texture2D>.Get("OCAdd");
             IconDelTex = ContentFinder<Texture2D>.Get("OCDel");
             IconSubMenuTex = ContentFinder<Texture2D>.Get("OCSubMenu");
-            IconForums = ContentFinder<Texture2D>.Get("Forums");   //"UI/HeroArt/WebIcons/Forums", true);
+            IconForums = ContentFinder<Texture2D>.Get("Forums");
             IconSkull = ContentFinder<Texture2D>.Get("Skull");
-            TradeButtonIcon = ContentFinder<Texture2D>.Get("Trade"); //Trade.png (рукопожатие с $)
+            TradeButtonIcon = ContentFinder<Texture2D>.Get("Trade");
             Waypoint = ContentFinder<Texture2D>.Get("Waypoint");
-            //OC_Coin = ContentFinder<Texture2D>.Get("OC_Coin");
             Null = ContentFinder<Texture2D>.Get("Null");
             OCInfo = ContentFinder<Texture2D>.Get("OCInfo");
             OCSystem = ContentFinder<Texture2D>.Get("OCSystem");
@@ -93,13 +88,13 @@ namespace RimWorldOnlineCity
             Clear();
         }
 
-
         private class TextureContainer
         {
             public DateTime LoadTime;
             public string Hash;
             public byte[] Data;
             public Texture2D _Texture;
+
             public Texture2D Texture
             {
                 get
@@ -110,9 +105,7 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            public TextureContainer()
-            {
-            }
+            public TextureContainer() { }
             public TextureContainer(Texture2D texture)
             {
                 _Texture = texture;
@@ -121,336 +114,378 @@ namespace RimWorldOnlineCity
 
         public static GeneralTexture Get { get; private set; }
 
-        /// <summary>
-        /// Актуальные текстуры по имени
-        /// </summary>
-        private ConcurrentDictionary<string, TextureContainer> LoadedTextures = new ConcurrentDictionary<string, TextureContainer>();
-        /// <summary>
-        /// Время, когда текстура устареет по имени
-        /// </summary>
-        private Dictionary<string, DateTime> LoadedAgings = new Dictionary<string, DateTime>();
-        /// <summary>
-        /// Архивные текстуры, которые уже устарели
-        /// </summary>
-        private ConcurrentDictionary<string, TextureContainer> LoadedOldTextures = new ConcurrentDictionary<string, TextureContainer>();
-        /// <summary>
-        /// Список к загрузке (они уже есть в LoadedTextures но с путой картинкой Null)
-        /// </summary>
-        private HashSet<string> Loading = new HashSet<string>();
-        /// <summary>
-        /// Тот же спиок Loading, но в виде очереди
-        /// </summary>
-        private List<string> LoadingQueue = new List<string>();
-        /// <summary>
-        /// Загружается непостредственно сейчас
-        /// </summary>
-        private HashSet<string> LoadingNow = new HashSet<string>();
+        private readonly ConcurrentDictionary<string, TextureContainer> LoadedTextures = new ConcurrentDictionary<string, TextureContainer>();
+        private readonly Dictionary<string, DateTime> LoadedAgings = new Dictionary<string, DateTime>();
+        private readonly ConcurrentDictionary<string, TextureContainer> LoadedOldTextures = new ConcurrentDictionary<string, TextureContainer>();
 
-        /// <summary>
-        /// Кэш для GetDef и GetDefTextures
-        /// </summary>
-        private ConcurrentDictionary<string, Def> GetDefs = new ConcurrentDictionary<string, Def>();
+        // ОПТИМІЗАЦІЯ: O(1) структури для черг завантаження замість масивів List<string>
+        private readonly object _syncLock = new object();
+        private readonly HashSet<string> _queuedItems = new HashSet<string>();
+        private readonly HashSet<string> _loadingNow = new HashSet<string>();
+        private readonly Queue<string> _checkQueue = new Queue<string>();
+        private readonly Queue<string> _downloadQueue = new Queue<string>();
 
-        /// <summary>
-        /// Кэш для GetDef и GetDefTextures
-        /// </summary>
-        private ConcurrentDictionary<Def, Texture2D> GetDefTextures = new ConcurrentDictionary<Def, Texture2D>();
+        // Багаторазові буфери списків для ліквідації навантаження на Garbage Collector
+        private readonly List<string> _checkNamesBuffer = new List<string>(100);
+        private readonly List<ModelFileSharing> _checkMfsBuffer = new List<ModelFileSharing>(100);
+        private readonly List<string> _expiredAgingsBuffer = new List<string>(32);
+
+        private readonly ConcurrentDictionary<string, Def> GetDefs = new ConcurrentDictionary<string, Def>();
+        private readonly ConcurrentDictionary<Def, Texture2D> GetDefTextures = new ConcurrentDictionary<Def, Texture2D>();
 
         public static void Clear()
         {
             Get = new GeneralTexture();
         }
+
         private static bool Inited = false;
         public static void Init()
         {
             Clear();
             if (Inited) return;
             Inited = true;
-
-            //Загружаем смайлики
-            /* todo
-            ModBaseData.RunMainThreadSync(() =>
-            {
-                Loger.Log("GetAllInFolder TTT() ");
-                foreach (var txt in ContentFinder<Texture2D>.GetAllInFolder("Emoji"))
-                {
-                    Loger.Log("GetAllInFolder Emoji: " + txt.name); // name = "Emoji_1st_place_medal"
-                }
-            });
-            */
         }
 
         public Texture2D GetEmoji(string name)
         {
-            name = name.Trim();
-            if (name.StartsWith(":")) name = name.Substring(1, name.Length - 1);
-            if (name.EndsWith(":")) name = name.Substring(0, name.Length - 1);
-            name = $"Emoji/Emoji_" + name;
+            if (string.IsNullOrEmpty(name)) return null;
 
-            Texture2D icon;
-            if (!PanelText.GlobalImgs.TryGetValue(name, out icon))
+            var cleanName = name.Trim().Trim(':');
+            var path = "Emoji/Emoji_" + cleanName;
+
+            if (!PanelText.GlobalImgs.TryGetValue(path, out var icon))
             {
                 try
                 {
-                    icon = ContentFinder<Texture2D>.Get(name, false);
+                    icon = ContentFinder<Texture2D>.Get(path, false);
                 }
                 catch
                 {
                     icon = null;
                 }
-                if (icon != null) PanelText.GlobalImgs.Add(name, icon);
+                if (icon != null) PanelText.GlobalImgs[path] = icon;
             }
             return icon;
         }
 
-        public Def GetDef(string defName) => defName == null ? null :
-            GetDefs.GetOrAdd(defName, (n) =>
-            {
-                Def def = (ThingDef)GenDefDatabase.GetDefSilentFail(typeof(ThingDef), defName, false);
-                if (def == null) def = (WorldObjectDef)GenDefDatabase.GetDefSilentFail(typeof(WorldObjectDef), defName, false);
-                return def;
-            });
+        public Def GetDef(string defName) => defName == null ? null : GetDefs.GetOrAdd(defName, FindDefInternal);
 
-        public Texture2D GetDefTexture(Def def) => def == null ? null :
-            GetDefTextures.GetOrAdd(def, (n) =>
-            {
-                if (def == null) return null;
-                Texture2D texture;
-                if (def is ThingDef)
-                {
-                    texture = ((ThingDef)def).GetUIIconForStuff(null); // Widgets.GetIconFor(def);// 
-                }
-                else if (def is WorldObjectDef)
-                {
-                    var defWO = def as WorldObjectDef;
-                    texture = defWO.ExpandingIconTexture ?? (Texture2D)(defWO.Material?.mainTexture);
-                }
-                else
-                    texture = null;
+        private static Def FindDefInternal(string name)
+        {
+            Def def = (ThingDef)GenDefDatabase.GetDefSilentFail(typeof(ThingDef), name, false);
+            if (def == null) def = (WorldObjectDef)GenDefDatabase.GetDefSilentFail(typeof(WorldObjectDef), name, false);
+            return def;
+        }
 
-                return texture;
-            });
+        public Texture2D GetDefTexture(Def def) => def == null ? null : GetDefTextures.GetOrAdd(def, ResolveDefTextureInternal);
+
+        private static Texture2D ResolveDefTextureInternal(Def def)
+        {
+            if (def is ThingDef thingDef)
+            {
+                return thingDef.GetUIIconForStuff(null);
+            }
+            if (def is WorldObjectDef defWO)
+            {
+                return defWO.ExpandingIconTexture ?? (Texture2D)(defWO.Material?.mainTexture);
+            }
+            return null;
+        }
 
         public Texture2D GetDefTexture(string defName) => GetDefTexture(GetDef(defName));
 
         /// <summary>
-        /// Возвращает текстуру по кодовому имени. Варианты:
-        /// pl_логинИкгрок - возвращает его иконку через FileSharingCategory.PlayerIcon
-        /// cs_логинИкгрок@serverIdколонии - возвращает последний скриншот колонии
+        /// Повертає текстуру за її кодовим ім'ям (іконка гравця або скріншот бази).
+        /// ОПТИМІЗАЦІЯ: швидка перевірка та додавання до черги за O(1) без алокацій пам'яті.
         /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
-        public Texture2D ByName(string name) => LoadedTextures.GetOrAdd(name, n =>
+        public Texture2D ByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return Null;
+
+            return LoadedTextures.GetOrAdd(name, n =>
             {
-                //добавляем в очередь на скачивание
-                lock (Loading)
+                lock (_syncLock)
                 {
-                    if (!Loading.Contains(n))
+                    if (!_queuedItems.Contains(n) && !_loadingNow.Contains(n))
                     {
-                        Loading.Add(n);
-                        LoadingQueue.Add(n);
+                        _queuedItems.Add(n);
+                        _checkQueue.Enqueue(n);
                     }
                 }
-                //пытаемся пока предоставить старое значение, либо прозарчную картинку
+
                 return LoadedOldTextures.TryGetValue(n, out var res) ? res : new TextureContainer(Null);
             }).Texture;
+        }
 
-        /// <summary>
-        /// Для изображений загруженных с сервера выдает время с момента загрузки, либо больше года, если нет данных (по разным причинам)
-        /// </summary>
-        public TimeSpan GetLoadTimeByName(string name) => LoadedTextures.TryGetValue(name, out var res)
-            ? DateTime.UtcNow - res.LoadTime
-            : LoadedOldTextures.TryGetValue(name, out res)
-            ? DateTime.UtcNow - res.LoadTime
-            : TimeSpan.MaxValue;
+        public TimeSpan GetLoadTimeByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return TimeSpan.MaxValue;
 
-        /// <summary>
-        /// Была попытка загрузки, но данных на сервере нет
-        /// </summary>
+            return LoadedTextures.TryGetValue(name, out var res)
+                ? DateTime.UtcNow - res.LoadTime
+                : LoadedOldTextures.TryGetValue(name, out res)
+                ? DateTime.UtcNow - res.LoadTime
+                : TimeSpan.MaxValue;
+        }
+
         public bool IsNotDataByName(string name) => IsNotDataByLoadTime(GetLoadTimeByName(name));
 
-        /// <summary>
-        /// Была попытка загрузки, но данных на сервере нет
-        /// </summary>
         public bool IsNotDataByLoadTime(TimeSpan time) => time < TimeSpan.MaxValue && time > new TimeSpan(1, 0, 0, 0);
 
-        /// <summary>
-        /// Не было завершенных попыток загрузить данные
-        /// </summary>
         public bool IsNotCheckByName(string name) => IsNotCheckByLoadTime(GetLoadTimeByName(name));
 
-        /// <summary>
-        /// Не было завершенных попыток загрузить данные
-        /// </summary>
         public bool IsNotCheckByLoadTime(TimeSpan time) => time == TimeSpan.MaxValue;
 
         /// <summary>
-        /// Загрузка ещё не завершена, по ByName возвращается старое значение, если оно есть
+        /// Перевіряє, чи завантажується текстура зараз. ОПТИМІЗАЦІЯ: пошук у хеш-таблиці за O(1).
         /// </summary>
         public bool IsLoadingByName(string name)
         {
-            lock (LoadingNow) 
-            { 
-                if (LoadingQueue.Contains(name)) return true;
-                return LoadingNow.Contains(name);
-            } 
+            if (string.IsNullOrEmpty(name)) return false;
+
+            lock (_syncLock)
+            {
+                return _queuedItems.Contains(name) || _loadingNow.Contains(name);
+            }
         }
 
         /// <summary>
-        /// Событие обновления с сервера, должно вызываться значительно реже FPS
+        /// Періодичне фонове оновлення черг текстур.
+        /// ОПТИМІЗАЦІЯ: мережеві операції виконуються поза блокуванням lock, усуваючи затримки кадру в GUI.
         /// </summary>
-        /// <param name="connect"></param>
         public void Update(SessionClient connect)
         {
-            int CountUpdateInRun = 1;
-            int CountCheckInRun = 100;
+            const int CountUpdateInRun = 1;
+            const int CountCheckInRun = 100;
 
-            lock (Loading)
+            // 1. Очищення застарілих скріншотів без створення нових списків ключів
+            var now = DateTime.UtcNow;
+            _expiredAgingsBuffer.Clear();
+
+            lock (_syncLock)
             {
-                //удаляем устаревшее
-                var now = DateTime.UtcNow;
-                foreach (var aging in LoadedAgings.Keys.ToList())
+                foreach (var kvp in LoadedAgings)
                 {
-                    if (LoadedAgings[aging] < now)
+                    if (kvp.Value < now)
                     {
-                        //удаляем из массива устаревших
-                        LoadedAgings.Remove(aging);
-                        //удаляем из загруженных, чтобы при следующем обращении поставить в очередь на загрузку
-                        if (LoadedTextures.TryRemove(aging, out var old))
-                        {
-                            //добавляем в очередь устаревших, чтобы отдать картинку, пока не загрузилось
-                            LoadedOldTextures.TryAdd(aging, old);
-                        }
+                        _expiredAgingsBuffer.Add(kvp.Key);
                     }
                 }
 
-                //предварительно проверяем хэш количеством по CountCheckInRun
-                if (LoadingQueue.Count > 3)
+                for (int i = 0; i < _expiredAgingsBuffer.Count; i++)
                 {
-                    //получаем данные из системы кэша файлового или LoadedOldTextures
-                    var loadingWork = new List<Tuple<string, ModelFileSharing>>(); //тут name и hash из кэша для проверки на сервере
-                    for (int i = 0; i < CountCheckInRun && i < LoadingQueue.Count; i++)
+                    var aging = _expiredAgingsBuffer[i];
+                    LoadedAgings.Remove(aging);
+                    if (LoadedTextures.TryRemove(aging, out var old))
                     {
-                        var name = LoadingQueue[i];
+                        LoadedOldTextures.TryAdd(aging, old);
+                    }
+                }
+            }
 
+            // 2. Підготовка пакета пакетної перевірки хешів
+            _checkNamesBuffer.Clear();
+            _checkMfsBuffer.Clear();
+
+            lock (_syncLock)
+            {
+                // Якщо елементів мало (1-3) і черга завантаження порожня — одразу переводимо на скачування без попереднього запиту
+                if (_checkQueue.Count > 0 && _checkQueue.Count <= 3 && _downloadQueue.Count == 0)
+                {
+                    while (_checkQueue.Count > 0)
+                    {
+                        _downloadQueue.Enqueue(_checkQueue.Dequeue());
+                    }
+                }
+                else if (_checkQueue.Count > 3)
+                {
+                    int toCheck = Math.Min(CountCheckInRun, _checkQueue.Count);
+                    for (int i = 0; i < toCheck; i++)
+                    {
+                        var name = _checkQueue.Dequeue();
                         LoadedOldTextures.TryGetValue(name, out var oldTexture);
                         var hash = oldTexture?.Hash ?? CacheResource.GetHash(name);
 
                         var mfs = GetModelFileSharing(name, hash);
-                        if (mfs == null) break;
-
-                        loadingWork.Add(new Tuple<string, ModelFileSharing>(name, mfs));
-                    }
-
-                    //делаем быстрый запрос на получених хеша
-                    var checkResult = connect.FileSharingDownloadOnlyCheck(loadingWork.Select(item => item.Item2).ToList());
-
-                    if (checkResult != null)
-                    {
-                        for (int i = loadingWork.Count - 1; i >= 0 ; i--)
+                        if (mfs == null)
                         {
-                            var item = loadingWork[i];
-                            var name = item.Item1;
-                            var res = checkResult[i];
+                            _queuedItems.Remove(name);
+                            continue;
+                        }
 
-                            if (res?.Hash == null  || item.Item2.Hash == res?.Hash)
+                        _checkNamesBuffer.Add(name);
+                        _checkMfsBuffer.Add(mfs);
+                    }
+                }
+            }
+
+            // 3. Виконання мережевого запиту перевірки хешів БЕЗ утримання блокування
+            if (_checkMfsBuffer.Count > 0)
+            {
+                List<ModelFileSharing> checkResult = null;
+                try
+                {
+                    checkResult = connect.FileSharingDownloadOnlyCheck(_checkMfsBuffer);
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("GeneralTexture FileSharingDownloadOnlyCheck Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                }
+
+                if (checkResult != null)
+                {
+                    for (int i = 0; i < _checkNamesBuffer.Count; i++)
+                    {
+                        var name = _checkNamesBuffer[i];
+                        var itemMfs = _checkMfsBuffer[i];
+                        var res = (i < checkResult.Count) ? checkResult[i] : null;
+
+                        // Якщо файлу на сервері немає або хеш ідентичний локальному кешу
+                        if (res?.Hash == null || itemMfs.Hash == res.Hash)
+                        {
+                            if (!LoadedOldTextures.TryGetValue(name, out var texture))
                             {
-                                //ответ пришел и на сервере нет данного файла, либо у нас ровно то же содержимое
-
-                                if (!LoadedOldTextures.TryGetValue(name, out var texture))
+                                if (res?.Hash == null)
                                 {
-                                    if (res?.Hash == null) texture = new TextureContainer(Null);
-                                    else
-                                    {
-                                        texture = new TextureContainer()
-                                        {
-                                            Hash = item.Item2.Hash,
-                                            Data = CacheResource.GetData(name),
-                                        };
-                                    }
+                                    texture = new TextureContainer(Null);
                                 }
+                                else
+                                {
+                                    texture = new TextureContainer
+                                    {
+                                        Hash = itemMfs.Hash,
+                                        Data = CacheResource.GetData(name)
+                                    };
+                                }
+                            }
 
-                                //применяем
-                                LoadingQueue.RemoveAt(i);
-                                Loading.Remove(name);
+                            lock (_syncLock)
+                            {
+                                _queuedItems.Remove(name);
+                            }
 
-                                SetLoadedTextures(name, texture);
+                            SetLoadedTextures(name, texture);
+                        }
+                        else
+                        {
+                            // Хеш відрізняється — переводимо в чергу безпосереднього завантаження
+                            lock (_syncLock)
+                            {
+                                _downloadQueue.Enqueue(name);
                             }
                         }
                     }
                 }
-
-                //загружаем количеством по CountUpdateInRun
-                for (int i = 0; i < CountUpdateInRun; i++)
+                else
                 {
-                    if (LoadingQueue.Count == 0) return;
+                    // У разі збою мережі повертаємо елементи назад у чергу перевірки
+                    lock (_syncLock)
+                    {
+                        for (int i = 0; i < _checkNamesBuffer.Count; i++)
+                        {
+                            _checkQueue.Enqueue(_checkNamesBuffer[i]);
+                        }
+                    }
+                }
+            }
 
-                    TextureContainer texture;
-                    TextureContainer oldTexture;
+            // 4. Безпосереднє завантаження файлу (по CountUpdateInRun за тік)
+            for (int i = 0; i < CountUpdateInRun; i++)
+            {
+                string downloadName = null;
+                TextureContainer oldTexture = null;
+                ModelFileSharing mfs = null;
 
-                    string name = null;
+                lock (_syncLock)
+                {
+                    while (_downloadQueue.Count > 0)
+                    {
+                        var candidate = _downloadQueue.Dequeue();
+                        if (!_queuedItems.Contains(candidate)) continue;
+
+                        downloadName = candidate;
+                        _loadingNow.Add(downloadName);
+                        _queuedItems.Remove(downloadName);
+                        break;
+                    }
+                }
+
+                if (downloadName == null) break;
+
+                try
+                {
+                    if (!LoadedOldTextures.TryRemove(downloadName, out oldTexture))
+                    {
+                        oldTexture = new TextureContainer(Null);
+                    }
+
+                    mfs = GetModelFileSharing(downloadName, oldTexture.Hash);
+                    if (mfs == null) continue;
+
+                    // Скачування даних через мережу БЕЗ утримання блокування
+                    ModelFileSharing packet = null;
                     try
                     {
-                        lock (LoadingNow)
-                        {
-                            name = LoadingQueue[0];
-                            LoadingQueue.RemoveAt(0);
-                            LoadingNow.Add(name);
-                            Loading.Remove(name);
-                        }
-                        if (!LoadedOldTextures.TryRemove(name, out oldTexture)) oldTexture = new TextureContainer(Null);
-
-                        var mfs = GetModelFileSharing(name, oldTexture.Hash);
-                        if (mfs == null) continue;
-
-                        var packet = connect.FileSharingDownload(mfs);
-
-                        //если с сервера пришли данные, значит обновляем значения
-                        if (packet?.Data != null && packet.Data.Length > 0)
-                        {
-                            texture = new TextureContainer()
-                            {
-                                Hash = packet.Hash,
-                                Data = packet.Data,
-                            };
-                        }
-                        else //иначе это признак, что данные не поменялись или что произошла ошибка, тогда восстанавливаем старые значения
-                        {
-                            if (packet?.Hash == null || oldTexture.Hash != packet?.Hash)
-                            {
-                                Loger.Log("Client GeneralTexture Error load: " + name + " " + oldTexture.Hash + "!=" + packet?.Hash, Loger.LogLevel.ERROR);
-                            }
-
-                            texture = oldTexture;
-                        }
-                        SetLoadedTextures(name, texture);
+                        packet = connect.FileSharingDownload(mfs);
                     }
-                    finally
+                    catch (Exception ex)
                     {
-                        if (name != null) LoadingNow.Remove(name);
+                        Loger.Log("GeneralTexture FileSharingDownload Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                    }
+
+                    TextureContainer texture;
+                    if (packet?.Data != null && packet.Data.Length > 0)
+                    {
+                        texture = new TextureContainer
+                        {
+                            Hash = packet.Hash,
+                            Data = packet.Data
+                        };
+                    }
+                    else
+                    {
+                        if (packet?.Hash == null || oldTexture.Hash != packet?.Hash)
+                        {
+                            Loger.Log("Client GeneralTexture Error load: " + downloadName + " " + oldTexture.Hash + "!=" + packet?.Hash, Loger.LogLevel.ERROR);
+                        }
+                        texture = oldTexture;
+                    }
+
+                    SetLoadedTextures(downloadName, texture);
+                }
+                finally
+                {
+                    lock (_syncLock)
+                    {
+                        _loadingNow.Remove(downloadName);
                     }
                 }
             }
         }
 
         private void SetLoadedTextures(string name, TextureContainer texture)
-        { 
+        {
             texture.LoadTime = DateTime.UtcNow;
 
-            //задаем время устаревания, для кого нужно
             if (name.StartsWith("cs_"))
             {
-                LoadedAgings[name] = DateTime.UtcNow.AddSeconds(UpdateSecondColonyScreen);
+                lock (_syncLock)
+                {
+                    LoadedAgings[name] = DateTime.UtcNow.AddSeconds(UpdateSecondColonyScreen);
+                }
             }
 
             LoadedTextures[name] = texture;
 
-            if (texture.Data != null) CacheResource.SetData(name, texture.Data);
+            if (texture.Data != null)
+            {
+                CacheResource.SetData(name, texture.Data);
+            }
         }
 
         private ModelFileSharing GetModelFileSharing(string name, string hash)
         {
-            if (name.Length < 4) return null;
+            if (string.IsNullOrEmpty(name) || name.Length < 4) return null;
             var sendName = name.Substring(3);
 
             FileSharingCategory category;
@@ -458,13 +493,12 @@ namespace RimWorldOnlineCity
             else if (name.StartsWith("cs_")) category = FileSharingCategory.ColonyScreen;
             else return null;
 
-            return new ModelFileSharing()
+            return new ModelFileSharing
             {
                 Category = category,
                 Name = sendName,
                 Hash = hash
             };
         }
-
     }
 }

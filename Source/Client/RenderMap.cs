@@ -8,15 +8,12 @@ using Verse;
 
 namespace MapRenderer
 {
-    // Autor AaronCRobinson https://github.com/AaronCRobinson/MapRenderer
-    // https://forum.unity3d.com/threads/render-texture-to-png-arbg32-no-opaque-pixels.317451/
-
-    // NOTE: creating a new camera would be a better solution (how?)
+    // Автор: AaronCRobinson https://github.com/AaronCRobinson/MapRenderer
     public class RenderMap : MonoBehaviour
     {
         private const int defaultPixelOnCell = 15;
         private const int defaultQuality = 80;
-        
+
         public int SettingsPixelOnCell = defaultPixelOnCell;
         public int SettingsQuality = defaultQuality;
         public bool SettingsShowWeather = true;
@@ -45,9 +42,14 @@ namespace MapRenderer
         private RenderTexture rt;
         private Texture2D tempTexture;
 
+        // ОПТИМІЗАЦІЯ: швидкий IL-доступ до приватних полів CameraDriver без Traverse та виділень пам'яті
+        private static readonly AccessTools.FieldRef<CameraDriver, CellRect> LastViewRectRef =
+            AccessTools.FieldRefAccess<CameraDriver, CellRect>("lastViewRect");
+        private static readonly AccessTools.FieldRef<CameraDriver, int> LastViewRectGetFrameRef =
+            AccessTools.FieldRefAccess<CameraDriver, int>("lastViewRectGetFrame");
+
         public static bool IsRendering { get => isRendering; set => isRendering = value; }
 
-        // NOTE: unity is not calling the constructor, so we manually call it
         public RenderMap() { }
 
         public void Initialize(Map bymap)
@@ -66,7 +68,6 @@ namespace MapRenderer
 
             IsRendering = true;
 
-            /// {
             switchedMap = false;
             rememberedMap = Find.CurrentMap;
             if (map != rememberedMap)
@@ -79,6 +80,7 @@ namespace MapRenderer
             {
                 CameraJumper.TryHideWorld();
             }
+
             var settings = Find.PlaySettings;
             rememberedShowZones = settings.showZones;
             rememberedShowRoofOverlay = settings.showRoofOverlay;
@@ -86,15 +88,16 @@ namespace MapRenderer
             rememberedShowTerrainAffordanceOverlay = settings.showTerrainAffordanceOverlay;
             rememberedShowPollutionOverlay = settings.showPollutionOverlay;
             rememberedShowTemperatureOverlay = settings.showTemperatureOverlay;
+
             settings.showZones = false;
             settings.showRoofOverlay = false;
             settings.showFertilityOverlay = false;
             settings.showTerrainAffordanceOverlay = false;
             settings.showPollutionOverlay = false;
             settings.showTemperatureOverlay = false;
+
             rememberedRootPos = map.rememberedCameraPos.rootPos;
             rememberedRootSize = map.rememberedCameraPos.rootSize;
-            /// }
 
             rt = RenderTexture.GetTemporary(viewWidth, viewHeight, 24);
             tempTexture = new Texture2D(viewWidth, viewHeight, TextureFormat.RGB24, false);
@@ -108,23 +111,28 @@ namespace MapRenderer
             var camRectMinZ = Math.Min(0, camViewRect.minZ);
             var camRectMaxX = Math.Max(map.Size.x, camViewRect.maxX);
             var camRectMaxZ = Math.Max(map.Size.z, camViewRect.maxZ);
-            var camDriverTraverse = Traverse.Create(camDriver);
-            camDriverTraverse.Field("lastViewRect").SetValue(CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ));
-            camDriverTraverse.Field("lastViewRectGetFrame").SetValue(Time.frameCount);
+
+            // ОПТИМІЗАЦІЯ: прямий запис полів замість Traverse.Field(...).SetValue(...)
+            LastViewRectRef(camDriver) = CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ);
+            LastViewRectGetFrameRef(camDriver) = Time.frameCount;
 
             yield return RenderCurrentView();
 
-            /// {
             camera.farClipPlane = rememberedFarClipPlane;
             camDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
             camDriver.enabled = true;
+
+            // ОПТИМІЗАЦІЯ: повертаємо RenderTexture у пул без виклику помилкового Destroy(rt)
             RenderTexture.ReleaseTemporary(rt);
+            rt = null;
+
             Find.PlaySettings.showZones = rememberedShowZones;
             Find.PlaySettings.showRoofOverlay = rememberedShowRoofOverlay;
             Find.PlaySettings.showFertilityOverlay = rememberedShowFertilityOverlay;
             Find.PlaySettings.showTerrainAffordanceOverlay = rememberedShowTerrainAffordanceOverlay;
             Find.PlaySettings.showPollutionOverlay = rememberedShowPollutionOverlay;
             Find.PlaySettings.showTemperatureOverlay = rememberedShowTemperatureOverlay;
+
             if (rememberedWorldRendered)
             {
                 CameraJumper.TryShowWorld();
@@ -133,24 +141,25 @@ namespace MapRenderer
             {
                 Current.Game.CurrentMap = rememberedMap;
             }
-            /// }
 
             Func<byte[]> getImage = () =>
             {
+                if (tempTexture == null) return null;
                 var encodedImage = tempTexture.EncodeToJPG(SettingsQuality);
                 Destroy(this.tempTexture);
+                tempTexture = null;
                 return encodedImage;
             };
+
             if (ImageReady != null)
             {
                 ImageReady(getImage);
             }
-            else
+            else if (tempTexture != null)
             {
                 Destroy(this.tempTexture);
+                tempTexture = null;
             }
-
-            Destroy(this.rt);
 
             IsRendering = false;
 
@@ -187,14 +196,14 @@ namespace MapRenderer
                 camera.transform.position = new Vector3(cameraBasePos.x, cameraBasePos.y, cameraBasePos.z);
                 camera.Render();
 #if DEBUG
-            Log.Message("After Render");
+                Log.Message("After Render");
 #endif
                 tempTexture.ReadPixels(new Rect(0, 0, viewWidth, viewHeight), 0, 0, false);
 
                 RenderTexture.active = null;
                 RestoreCamera();
 #if DEBUG
-            Log.Message("End of RenderCurrentView");
+                Log.Message("End of RenderCurrentView");
 #endif
             }
             catch (Exception exp)
@@ -204,4 +213,3 @@ namespace MapRenderer
         }
     }
 }
-
