@@ -1,8 +1,10 @@
 ﻿using Model;
 using OCUnion;
+using OCUnion.Transfer.Model;
 using RimWorld;
 using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses.Harmony;
+using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -17,6 +19,9 @@ namespace RimWorldOnlineCity
     /// </summary>
     public static class ExchengeUtils
     {
+        private static string _cachedDistLabel;
+        private static string _cachedCostLabel;
+
         public static IEnumerable<WorldObject> GetWorldObjectsForTrade()
         {
             return UpdateWorldController.WorldObject_TradeOrdersOnline;
@@ -24,8 +29,9 @@ namespace RimWorldOnlineCity
 
         public static List<WorldObject> WorldObjectsByTile(int tileID)
         {
+            var raw = Find.WorldObjects.ObjectsAt(tileID);
             var result = new List<WorldObject>(4);
-            foreach (var obj in Find.WorldObjects.ObjectsAt(tileID))
+            foreach (var obj in raw)
             {
                 result.Add(obj);
             }
@@ -33,8 +39,20 @@ namespace RimWorldOnlineCity
         }
 
         /// <summary>
+        /// Заповнює переданий список об'єктами тайла без зайвих виділень у пам'яті.
+        /// </summary>
+        public static void WorldObjectsByTile(int tileID, List<WorldObject> outList)
+        {
+            outList.Clear();
+            foreach (var obj in Find.WorldObjects.ObjectsAt(tileID))
+            {
+                outList.Add(obj);
+            }
+        }
+
+        /// <summary>
         /// Повертає всі ігрові об'єкти гравця на карті світу (поселення та каравани).
-        /// ОПТИМІЗАЦІЯ: оптимізована місткість списку (16 замість all.Count) економить до 90% масиву пам'яті що-2.5 с.
+        /// ОПТИМІЗАЦІЯ: оптимізована місткість списку (16 замість all.Count) економить пам'ять.
         /// </summary>
         public static List<WorldObject> WorldObjectsPlayer()
         {
@@ -74,11 +92,13 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Розраховує дистанцію та вартість доставки вантажу між об'єктами світу.
-        /// ОПТИМІЗАЦІЯ: форматування через StringBuilder(128) без проміжних конкатенацій.
+        /// ОПТИМІЗАЦІЯ: захист від NRE при toWorldObject == null, кешування перекладів та StringBuilder.
         /// </summary>
         public static string CargoDeliveryCalc(WorldObject fromWorldObject, WorldObject toWorldObject, List<ThingTrade> things, out int cost, out int dist)
         {
-            dist = GameUtils.DistanceBetweenTile(fromWorldObject.Tile, toWorldObject.Tile);
+            dist = (fromWorldObject != null && toWorldObject != null)
+                ? GameUtils.DistanceBetweenTile(fromWorldObject.Tile, toWorldObject.Tile)
+                : 0;
 
             float totalCost = 0f;
             if (things != null)
@@ -90,19 +110,29 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            cost = (int)(totalCost * SessionClientController.Data.GeneralSettings.ExchengeCostCargoDelivery / 1000f * dist / 100f);
+            int cargoFactor = SessionClientController.Data != null
+                ? SessionClientController.Data.GeneralSettings.ExchengeCostCargoDelivery
+                : 0;
+
+            cost = (int)(totalCost * cargoFactor / 1000f * dist / 100f);
             if (dist > 0 && cost <= 0) cost = 1;
 
+            if (_cachedDistLabel == null)
+            {
+                _cachedDistLabel = "OCity_ExchengeUtils_Distance".Translate().ToString();
+                _cachedCostLabel = "OCity_ExchengeUtils_Cost".Translate().ToString();
+            }
+
             var sb = new StringBuilder(128);
-            sb.Append(fromWorldObject.LabelShortCap);
+            sb.Append(fromWorldObject?.LabelShortCap ?? string.Empty);
             sb.Append(" -> ");
-            sb.Append(toWorldObject?.LabelShortCap);
+            sb.Append(toWorldObject?.LabelShortCap ?? "null");
             sb.Append(' ');
-            sb.Append("OCity_ExchengeUtils_Distance".Translate());
+            sb.Append(_cachedDistLabel);
             sb.Append(' ');
             sb.Append(dist);
             sb.Append(", ");
-            sb.Append("OCity_ExchengeUtils_Cost".Translate());
+            sb.Append(_cachedCostLabel);
             sb.Append(' ');
             sb.Append(cost);
 
@@ -114,7 +144,7 @@ namespace RimWorldOnlineCity
             try
             {
                 Loger.Log("Client CargoDelivery: " + CargoDeliveryCalc(fromWorldObject, toWorldObject, things, out int cost, out int dist), Loger.LogLevel.EXCHANGE);
-                return CargoDelivery(fromWorldObject.Tile, toWorldObject.Tile, things, cost, dist);
+                return CargoDelivery(fromWorldObject.Tile, toWorldObject != null ? toWorldObject.Tile : fromWorldObject.Tile, things, cost, dist);
             }
             finally
             {
@@ -148,7 +178,7 @@ namespace RimWorldOnlineCity
         {
             try
             {
-                if (SessionClientController.Data.BackgroundSaveGameOff)
+                if (SessionClientController.Data?.BackgroundSaveGameOff == true)
                 {
                     Loger.Log("Client ExchengeEdit Cancel BackgroundSaveGameOff", Loger.LogLevel.EXCHANGE);
                     return false;

@@ -13,8 +13,7 @@ namespace RimWorldOnlineCity
     {
         public const float MassLabelYOffset = 32f;
 
-        private Action onClosed;
-        private bool showEstTimeToDestinationButton;
+        private readonly Action onClosed;
         private bool thisWindowInstanceEverOpened;
 
         private List<TransferableOneWay> transferables;
@@ -25,12 +24,17 @@ namespace RimWorldOnlineCity
 
         private readonly Vector2 BottomButtonSize = new Vector2(160f, 40f);
 
-        private string WhoName;
-        private float FreeWeight;
+        private readonly string WhoName;
+        private readonly float FreeWeight;
         public IEnumerable<Thing> AllItem;
         public bool IsCancel = false;
 
-        private string _cachedTitle;
+        private readonly string _cachedTitle;
+
+        // ОПТИМІЗАЦІЯ: кешування перекладів кнопок інтерфейсу (усуває щокадрові виклики Translate в OnGUI)
+        private static string CachedAcceptButton;
+        private static string CachedResetButton;
+        private static string CachedCancelButton;
 
         public override Vector2 InitialSize => new Vector2(1024f, (float)Verse.UI.screenHeight);
 
@@ -41,7 +45,11 @@ namespace RimWorldOnlineCity
                 if (this.massUsageDirty)
                 {
                     this.massUsageDirty = false;
-                    this.cachedMassUsage = CollectionsMassCalculator.MassUsageTransferables(this.transferables, IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload, false, true);
+                    this.cachedMassUsage = CollectionsMassCalculator.MassUsageTransferables(
+                        this.transferables,
+                        IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload,
+                        false,
+                        true);
                 }
                 return this.cachedMassUsage;
             }
@@ -51,7 +59,7 @@ namespace RimWorldOnlineCity
 
         public Dictionary<Thing, int> GetSelect()
         {
-            if (IsCancel) return new Dictionary<Thing, int>(0);
+            if (IsCancel || transferables == null) return new Dictionary<Thing, int>(0);
             return transferables.TransferableOneWaysToDictionary();
         }
 
@@ -63,18 +71,28 @@ namespace RimWorldOnlineCity
             closeOnCancel = false;
             closeOnAccept = false;
             this.onClosed = onClosed;
-            this.showEstTimeToDestinationButton = showEstTimeToDestinationButton;
             this.forcePause = true;
             this.absorbInputAroundWindow = true;
 
             _cachedTitle = "OCity_Dialog_TradeOnline_Trade".Translate()
                 + " " + WorldObjectDefOf.Caravan.LabelCap
                 + " ⇨ " + (WhoName ?? string.Empty);
+
+            if (CachedAcceptButton == null)
+            {
+                CachedAcceptButton = "AcceptButton".Translate().ToString();
+                CachedResetButton = "ResetButton".Translate().ToString();
+                CachedCancelButton = "CancelButton".Translate().ToString();
+            }
         }
 
         public override void PostOpen()
         {
             base.PostOpen();
+            _lastUsedMass = -99999f;
+            _lastAvailableMass = -99999f;
+            this.massUsageDirty = true;
+
             if (!this.thisWindowInstanceEverOpened)
             {
                 this.thisWindowInstanceEverOpened = true;
@@ -112,13 +130,16 @@ namespace RimWorldOnlineCity
             this.DoBottomButtons(rect2);
             Rect inRect2 = rect2;
             inRect2.yMax -= 59f;
-            bool flag = false;
-            this.itemsTransfer.OnGUI(inRect2, out flag);
 
-            if (flag)
+            if (this.itemsTransfer != null)
             {
-                this.CountToTransferChanged();
+                this.itemsTransfer.OnGUI(inRect2, out bool flag);
+                if (flag)
+                {
+                    this.CountToTransferChanged();
+                }
             }
+
             GUI.EndGroup();
         }
 
@@ -165,20 +186,20 @@ namespace RimWorldOnlineCity
         private void DoBottomButtons(Rect rect)
         {
             Rect rect2 = new Rect(rect.width / 2f - this.BottomButtonSize.x / 2f, rect.height - 55f, this.BottomButtonSize.x, this.BottomButtonSize.y);
-            if (Widgets.ButtonText(rect2, "AcceptButton".Translate(), true, false, true))
+            if (Widgets.ButtonText(rect2, CachedAcceptButton, true, false, true))
             {
                 SoundDefOf.Tick_High.PlayOneShotOnCamera(null);
                 IsCancel = false;
                 this.Close(false);
             }
             Rect rect3 = new Rect(rect2.x - 10f - this.BottomButtonSize.x, rect2.y, this.BottomButtonSize.x, this.BottomButtonSize.y);
-            if (Widgets.ButtonText(rect3, "ResetButton".Translate(), true, false, true))
+            if (Widgets.ButtonText(rect3, CachedResetButton, true, false, true))
             {
                 SoundDefOf.Tick_Low.PlayOneShotOnCamera(null);
                 this.CalculateAndRecacheTransferables();
             }
             Rect rect4 = new Rect(rect2.xMax + 10f, rect2.y, this.BottomButtonSize.x, this.BottomButtonSize.y);
-            if (Widgets.ButtonText(rect4, "CancelButton".Translate(), true, false, true))
+            if (Widgets.ButtonText(rect4, CachedCancelButton, true, false, true))
             {
                 IsCancel = true;
                 this.Close(true);
@@ -187,15 +208,16 @@ namespace RimWorldOnlineCity
 
         private void CalculateAndRecacheTransferables()
         {
-            this.transferables = AllItem.DistinctToTransferableOneWays();
-            CreateCaravanTransferableWidgets(this.transferables
-                , out this.itemsTransfer
-                , null
-                , null
-                , "FormCaravanColonyThingCountTip".Translate()
-                , IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload
-                , () => this.MassCapacity - this.MassUsage
-                , false);
+            this.transferables = AllItem != null ? AllItem.DistinctToTransferableOneWays() : new List<TransferableOneWay>(0);
+            CreateCaravanTransferableWidgets(
+                this.transferables,
+                out this.itemsTransfer,
+                null,
+                null,
+                "FormCaravanColonyThingCountTip".Translate(),
+                IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload,
+                () => this.MassCapacity - this.MassUsage,
+                false);
             this.CountToTransferChanged();
         }
 
@@ -203,9 +225,15 @@ namespace RimWorldOnlineCity
         /// Створює віджет трансферу предметів.
         /// ОПТИМІЗАЦІЯ: пряма передача списку без зайвої обгортки LINQ Select.
         /// </summary>
-        public static void CreateCaravanTransferableWidgets(List<TransferableOneWay> transferables
-            , out TransferableOneWayWidget itemsTransfer, string sourceLabel, string destLabel, string thingCountTip
-            , IgnorePawnsInventoryMode ignorePawnInventoryMass, Func<float> availableMassGetter, bool ignoreCorpsesGearAndInventoryMass)
+        public static void CreateCaravanTransferableWidgets(
+            List<TransferableOneWay> transferables,
+            out TransferableOneWayWidget itemsTransfer,
+            string sourceLabel,
+            string destLabel,
+            string thingCountTip,
+            IgnorePawnsInventoryMode ignorePawnInventoryMass,
+            Func<float> availableMassGetter,
+            bool ignoreCorpsesGearAndInventoryMass)
         {
             itemsTransfer = new TransferableOneWayWidget(
                 transferables,

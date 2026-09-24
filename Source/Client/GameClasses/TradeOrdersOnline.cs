@@ -12,7 +12,7 @@ using Verse;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Зелене яблуко - список активних торгових угод на біржі.
+    /// Зелене яблуко – список активних торгових угод на біржі.
     /// </summary>
     [StaticConstructorOnStartup]
     public class TradeOrdersOnline : WorldObjectBaseOnline
@@ -31,13 +31,13 @@ namespace RimWorldOnlineCity
             {
                 if (_cachedLabel == null)
                 {
-                    _cachedLabel = "OC_TradeOrdersOnline_Orders".Translate();
+                    _cachedLabel = "OC_TradeOrdersOnline_Orders".Translate().ToString();
                 }
                 return _cachedLabel;
             }
         }
 
-        // Кеш інспектора для усунення перерахунку щокадру
+        // Кеш інспектора для усунення перерахунку щокадру OnGUI
         private int _lastInspectOrderCount = -1;
         private string _cachedInspectString;
 
@@ -54,7 +54,7 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Формування повного опису біржі.
-        /// ОПТИМІЗАЦІЯ: ліквідовано O(N^2) LINQ Aggregate.
+        /// ОПТИМІЗАЦІЯ: ліквідовано O(N^2) LINQ Aggregate на користь StringBuilder.
         /// </summary>
         public override string GetDescription()
         {
@@ -90,6 +90,7 @@ namespace RimWorldOnlineCity
             return string.Join(Environment.NewLine, TradeOrders);
         }
 
+        private static string _cachedCommandLabel;
         public override IEnumerable<Gizmo> GetGizmos()
         {
             foreach (Gizmo gizmo in base.GetGizmos())
@@ -97,10 +98,15 @@ namespace RimWorldOnlineCity
                 yield return gizmo;
             }
 
-            Command_Action command_Action = new Command_Action
+            if (_cachedCommandLabel == null)
             {
-                defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
-                defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                _cachedCommandLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate().ToString();
+            }
+
+            var command_Action = new Command_Action
+            {
+                defaultLabel = _cachedCommandLabel,
+                defaultDesc = _cachedCommandLabel,
                 icon = GeneralTexture.TradeButtonIcon,
                 action = delegate
                 {

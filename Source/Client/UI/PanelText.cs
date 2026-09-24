@@ -4,7 +4,6 @@ using RimWorld;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using UnityEngine;
 using Verse;
@@ -28,9 +27,9 @@ namespace RimWorldOnlineCity.UI
 
         /// <summary>
         /// Структура ключа кешу без виділення пам'яті в купі (Zero GC Allocation Key).
-        /// Замінює важку конкатенацію рядків на кожному виклику OnGUI.
+        /// Забезпечує надійне порівняння з захистом від колізій хешів.
         /// </summary>
-        private struct PanelCacheKey : IEquatable<PanelCacheKey>
+        private readonly struct PanelCacheKey : IEquatable<PanelCacheKey>
         {
             public readonly int X;
             public readonly int Y;
@@ -38,6 +37,7 @@ namespace RimWorldOnlineCity.UI
             public readonly int Height;
             public readonly int DynamicHeight;
             public readonly int TextHash;
+            public readonly string Text;
 
             public PanelCacheKey(Rect rect, float dynamicHeight, string text)
             {
@@ -46,13 +46,19 @@ namespace RimWorldOnlineCity.UI
                 Width = (int)rect.width;
                 Height = (int)rect.height;
                 DynamicHeight = (int)dynamicHeight;
-                TextHash = text != null ? text.GetHashCode() : 0;
+                Text = text ?? string.Empty;
+                TextHash = text != null ? StringComparer.Ordinal.GetHashCode(text) : 0;
             }
 
             public bool Equals(PanelCacheKey other)
             {
-                return X == other.X && Y == other.Y && Width == other.Width && Height == other.Height
-                    && DynamicHeight == other.DynamicHeight && TextHash == other.TextHash;
+                return X == other.X
+                    && Y == other.Y
+                    && Width == other.Width
+                    && Height == other.Height
+                    && DynamicHeight == other.DynamicHeight
+                    && TextHash == other.TextHash
+                    && string.Equals(Text, other.Text, StringComparison.Ordinal);
             }
 
             public override bool Equals(object obj) => obj is PanelCacheKey other && Equals(other);
@@ -84,6 +90,16 @@ namespace RimWorldOnlineCity.UI
         private static DateTime OptimizationTime;
 
         private DateTime FirstCalcDrow = DateTime.MinValue;
+
+        [ThreadStatic]
+        private static List<Pair<string, string>> t_attrBuffer;
+
+        private static List<Pair<string, string>> GetAttrBuffer()
+        {
+            if (t_attrBuffer == null) t_attrBuffer = new List<Pair<string, string>>(8);
+            else t_attrBuffer.Clear();
+            return t_attrBuffer;
+        }
 
         /// <summary>
         /// Головна функція відмальовки компонента.
@@ -120,6 +136,41 @@ namespace RimWorldOnlineCity.UI
         }
 
         /// <summary>
+        /// Швидкий пошук перекладу в defInjections гри без важкого LINQ.
+        /// </summary>
+        private static string ResolveLanguageInjection(string k)
+        {
+            var activeLang = LanguageDatabase.activeLanguage;
+            if (activeLang?.defInjections == null) return k;
+
+            var packages = activeLang.defInjections;
+            for (int i = 0; i < packages.Count; i++)
+            {
+                var pkg = packages[i];
+                if (pkg?.injections != null && pkg.injections.TryGetValue(k, out var inj) && !string.IsNullOrEmpty(inj?.injection))
+                {
+                    return inj.injection;
+                }
+            }
+
+            // Резервний нечутливий до регістру пошук
+            for (int i = 0; i < packages.Count; i++)
+            {
+                var pkg = packages[i];
+                if (pkg?.injections == null) continue;
+                foreach (var kvp in pkg.injections)
+                {
+                    if (string.Equals(kvp.Key, k, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(kvp.Value?.injection))
+                    {
+                        return kvp.Value.injection;
+                    }
+                }
+            }
+
+            return k;
+        }
+
+        /// <summary>
         /// Обчислення розташування слів, картинок та формування дерева команд малювання.
         /// </summary>
         private PanelCacheValue CalcDrow(Rect inRect, float dynamicHeight = 0)
@@ -131,7 +182,6 @@ namespace RimWorldOnlineCity.UI
 
             float iconHeightDefault = TextHeight;
 
-            // Нормалізація переносу рядків лише за необхідності
             string text = PrintText;
             if (text.IndexOf('\r') >= 0)
             {
@@ -185,7 +235,7 @@ namespace RimWorldOnlineCity.UI
                 }
             };
 
-            // ОПТИМІЗАЦІЯ: обробка тегів локалізації <l> через StringBuilder лише при їхній наявності
+            // ОПТИМІЗАЦІЯ: швидкий пошук тегів <l> без повільних LINQ Select/FirstOrDefault
             if (text.IndexOf("<l>", StringComparison.Ordinal) >= 0)
             {
                 var sb = new StringBuilder(text.Length + 32);
@@ -203,11 +253,7 @@ namespace RimWorldOnlineCity.UI
 
                     if (tr.Contains("."))
                     {
-                        tr = LanguageInjections.GetOrAdd(tr, k =>
-                            LanguageDatabase.activeLanguage.defInjections
-                                .Select(di => di.injections.FirstOrDefault(dii => dii.Value.path.Equals(k, StringComparison.OrdinalIgnoreCase)).Value?.injection)
-                                .FirstOrDefault(dii => dii != null)
-                        ) ?? tr;
+                        tr = LanguageInjections.GetOrAdd(tr, ResolveLanguageInjection) ?? tr;
                     }
 
                     sb.Append(tr.TranslateCache());
@@ -241,8 +287,10 @@ namespace RimWorldOnlineCity.UI
                             string className = "";
                             string d = "";
 
-                            foreach (var arg in ParseAttributes(word))
+                            var attrs = ParseAttributes(word);
+                            for (int a = 0; a < attrs.Count; a++)
                             {
+                                var arg = attrs[a];
                                 if (string.IsNullOrEmpty(arg.Second))
                                 {
                                     name = arg.First;
@@ -294,8 +342,10 @@ namespace RimWorldOnlineCity.UI
                             int h = 0;
                             int w = 0;
 
-                            foreach (var agr in ParseAttributes(word))
+                            var attrs = ParseAttributes(word);
+                            for (int a = 0; a < attrs.Count; a++)
                             {
+                                var agr = attrs[a];
                                 if (string.IsNullOrEmpty(agr.Second))
                                 {
                                     name = agr.First;
@@ -360,10 +410,12 @@ namespace RimWorldOnlineCity.UI
                                 }
                             }
 
+                            // ОПТИМІЗАЦІЯ: збереження готової статичної текстури без створення зайвих Func-делегатів
                             currentAction.Next = new ATDrawTexture
                             {
                                 position = new Rect(inRect.x + curX, inRect.y + curY, iconWidth, iconHeight),
-                                image = getIcon ?? (() => icon)
+                                staticImage = getIcon == null ? icon : null,
+                                dynamicImage = getIcon
                             };
                             currentAction = currentAction.Next;
 
@@ -382,8 +434,12 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    // Розрахунок розміру слова та обробка переносу
-                    string testWord = (currentWord + word).Replace("\n", "");
+                    // Розрахунок розміру слова та обробка переносу (Replace викликається лише за наявності \n)
+                    string testWord = currentWord.Length > 0 ? (currentWord + word) : word;
+                    if (testWord.IndexOf('\n') >= 0)
+                    {
+                        testWord = testWord.Replace("\n", "");
+                    }
                     var size = Text.CalcSize(testWord);
 
                     bool concat = curX + size.x <= width || (currentWord == "" && curX == 0);
@@ -418,8 +474,9 @@ namespace RimWorldOnlineCity.UI
 
                     if (!concat)
                     {
-                        currentWord += word;
-                        currentWordSize = Text.CalcSize(currentWord.Replace("\n", ""));
+                        currentWord = word;
+                        string cleanWord = word.IndexOf('\n') >= 0 ? word.Replace("\n", "") : word;
+                        currentWordSize = Text.CalcSize(cleanWord);
 
                         newLine = currentWord[currentWord.Length - 1] == '\n';
                         if (newLine) printCurrent();
@@ -490,18 +547,20 @@ namespace RimWorldOnlineCity.UI
 
             public override void Act()
             {
-                if (Mouse.IsOver(tagRect))
+                bool isOver = Mouse.IsOver(tagRect);
+                if (isOver)
                 {
                     if (tagBtnAct.HighlightIsOver) Widgets.DrawHighlight(tagRect);
                     tagBtnAct.ActionIsOver?.Invoke(tagBtnArg);
+
+                    if (!string.IsNullOrEmpty(tagBtnAct.Tooltip))
+                    {
+                        TooltipHandler.TipRegion(tagRect, tagBtnAct.Tooltip);
+                    }
                 }
                 if (Widgets.ButtonInvisible(tagRect))
                 {
                     tagBtnAct.ActionClick?.Invoke(tagBtnArg);
-                }
-                if (!string.IsNullOrEmpty(tagBtnAct.Tooltip))
-                {
-                    TooltipHandler.TipRegion(tagRect, tagBtnAct.Tooltip);
                 }
             }
         }
@@ -509,11 +568,12 @@ namespace RimWorldOnlineCity.UI
         private class ATDrawTexture : ActionTree
         {
             public Rect position;
-            public Func<Texture2D> image;
+            public Texture2D staticImage;
+            public Func<Texture2D> dynamicImage;
 
             public override void Act()
             {
-                var tex = image?.Invoke();
+                var tex = staticImage ?? dynamicImage?.Invoke();
                 if (tex != null)
                 {
                     GUI.DrawTexture(position, tex);
@@ -532,11 +592,11 @@ namespace RimWorldOnlineCity.UI
         #endregion
 
         /// <summary>
-        /// Швидкий парсер атрибутів тегу без створення проміжних масивів від Split().
+        /// Швидкий парсер атрибутів тегу без створення нових екземплярів списків у купі.
         /// </summary>
         private static List<Pair<string, string>> ParseAttributes(string fullTag)
         {
-            var result = new List<Pair<string, string>>();
+            var result = GetAttrBuffer();
             int si = fullTag.IndexOf(' ');
             if (si < 0) return result;
 
