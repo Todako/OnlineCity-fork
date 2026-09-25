@@ -1,10 +1,5 @@
 ﻿using RimWorld;
 using RimWorld.Planet;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Verse;
 
 namespace RimWorldOnlineCity
@@ -14,18 +9,29 @@ namespace RimWorldOnlineCity
         public override bool TryExecuteEvent()
         {
             var target = GetTarget();
+            if (target == null) return false;
 
-            parms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.ThreatSmall, target);
-            parms.customLetterLabel = "Trade caravan";
-            parms.customLetterText = "trade caravan arrived";
+            parms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.Misc, target);
+
+            string label = "OC_Incidents_Caravan_Label".Translate();
+            if (label == "OC_Incidents_Caravan_Label") label = "Trade Caravan";
+            parms.customLetterLabel = label;
+
+            string text = "OC_Incidents_Caravan_Text".Translate();
+            if (!string.IsNullOrEmpty(attacker))
+            {
+                text += ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
+            }
+            parms.customLetterText = text;
+
             parms.faction = null;
-            parms.forced = true;  //игнорировать все условия для события
+            parms.forced = true;
             parms.target = target;
             parms.points = CalculatePoints();
 
             if (!IncidentDefOf.TraderCaravanArrival.Worker.TryExecute(parms))
             {
-                Messages.Message($"Failed_Test_Caravan", MessageTypeDefOf.RejectInput);
+                Messages.Message("OC_Incidents_FailedCaravan".Translate(), MessageTypeDefOf.RejectInput);
                 return false;
             }
 

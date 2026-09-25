@@ -1,8 +1,10 @@
 ﻿using HarmonyLib;
 using OCUnion;
 using RimWorld.Planet;
+using RimWorldOnlineCity;
 using System;
 using System.Collections;
+using System.Reflection;
 using UnityEngine;
 using Verse;
 
@@ -42,11 +44,12 @@ namespace MapRenderer
         private RenderTexture rt;
         private Texture2D tempTexture;
 
-        // ОПТИМІЗАЦІЯ: швидкий IL-доступ до приватних полів CameraDriver без Traverse та виділень пам'яті
-        private static readonly AccessTools.FieldRef<CameraDriver, CellRect> LastViewRectRef =
-            AccessTools.FieldRefAccess<CameraDriver, CellRect>("lastViewRect");
-        private static readonly AccessTools.FieldRef<CameraDriver, int> LastViewRectGetFrameRef =
-            AccessTools.FieldRefAccess<CameraDriver, int>("lastViewRectGetFrame");
+        // ВИПРАВЛЕННЯ: поля lastViewRect та lastViewRectGetFrame є статичними у CameraDriver.
+        // Використовуємо безпечний FieldInfo замість FieldRefAccess.
+        private static readonly FieldInfo LastViewRectField =
+            AccessTools.Field(typeof(CameraDriver), "lastViewRect");
+        private static readonly FieldInfo LastViewRectGetFrameField =
+            AccessTools.Field(typeof(CameraDriver), "lastViewRectGetFrame");
 
         public static bool IsRendering { get => isRendering; set => isRendering = value; }
 
@@ -112,9 +115,9 @@ namespace MapRenderer
             var camRectMaxX = Math.Max(map.Size.x, camViewRect.maxX);
             var camRectMaxZ = Math.Max(map.Size.z, camViewRect.maxZ);
 
-            // ОПТИМІЗАЦІЯ: прямий запис полів замість Traverse.Field(...).SetValue(...)
-            LastViewRectRef(camDriver) = CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ);
-            LastViewRectGetFrameRef(camDriver) = Time.frameCount;
+            // Прямий запис статичних полів CameraDriver без Traverse
+            LastViewRectField?.SetValue(null, CellRect.FromLimits(camRectMinX, camRectMinZ, camRectMaxX, camRectMaxZ));
+            LastViewRectGetFrameField?.SetValue(null, Time.frameCount);
 
             yield return RenderCurrentView();
 
@@ -122,7 +125,7 @@ namespace MapRenderer
             camDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
             camDriver.enabled = true;
 
-            // ОПТИМІЗАЦІЯ: повертаємо RenderTexture у пул без виклику помилкового Destroy(rt)
+            // Повертаємо RenderTexture у пул без виклику помилкового Destroy(rt)
             RenderTexture.ReleaseTemporary(rt);
             rt = null;
 
@@ -144,10 +147,24 @@ namespace MapRenderer
 
             Func<byte[]> getImage = () =>
             {
-                if (tempTexture == null) return null;
-                var encodedImage = tempTexture.EncodeToJPG(SettingsQuality);
-                Destroy(this.tempTexture);
-                tempTexture = null;
+                byte[] encodedImage = null;
+                // Гарантуємо виконання кодування та видалення текстури в головному потоці Unity
+                ModBaseData.RunMainThreadSync(() =>
+                {
+                    try
+                    {
+                        if (tempTexture != null)
+                        {
+                            encodedImage = tempTexture.EncodeToJPG(SettingsQuality);
+                            UnityEngine.Object.Destroy(tempTexture);
+                            tempTexture = null;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("RenderMap EncodeToJPG Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                    }
+                });
                 return encodedImage;
             };
 
@@ -157,7 +174,7 @@ namespace MapRenderer
             }
             else if (tempTexture != null)
             {
-                Destroy(this.tempTexture);
+                UnityEngine.Object.Destroy(this.tempTexture);
                 tempTexture = null;
             }
 

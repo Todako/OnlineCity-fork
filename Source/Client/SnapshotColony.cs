@@ -79,7 +79,6 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Асинхронне отримання байтів кадру та передача файлу на сервер у фоновому потоці.
-        /// ОПТИМІЗАЦІЯ: безпечне отримання даних із головного потоку Unity у разі потреби та захист від NRE.
         /// </summary>
         private static void SendToServer(Func<byte[]> getImage, long serverId)
         {
@@ -90,27 +89,7 @@ namespace RimWorldOnlineCity
             {
                 try
                 {
-                    byte[] data = null;
-                    try
-                    {
-                        data = getImage();
-                    }
-                    catch (Exception ex)
-                    {
-                        // Якщо виклик методів Unity (EncodeToJPG/Destroy) обмежений для фонових потоків, викликаємо синхронно в Unity
-                        Loger.Log($"SnapshotColony: фонове кодування викликало помилку ({ex.Message}), перемикання на головний потік", Loger.LogLevel.DEBUG);
-                        ModBaseData.RunMainThreadSync(() =>
-                        {
-                            try
-                            {
-                                data = getImage();
-                            }
-                            catch (Exception innerEx)
-                            {
-                                Loger.Log($"SnapshotColony MainThread getImage Exception: {innerEx.Message}", Loger.LogLevel.WARNING);
-                            }
-                        });
-                    }
+                    byte[] data = getImage();
 
                     if (data == null || data.Length == 0)
                     {
@@ -133,6 +112,7 @@ namespace RimWorldOnlineCity
                         try
                         {
                             connect.FileSharingUpload(FileSharingCategory.ColonyScreen, fileKey, data);
+                            Loger.Log($"SnapshotColony: успішно завантажено на сервер: {fileKey}", Loger.LogLevel.INFO);
                         }
                         catch (Exception ex)
                         {

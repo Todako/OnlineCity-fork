@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using RimWorld;
 using Verse;
-using RimWorld;
 
 namespace RimWorldOnlineCity
 {
@@ -12,27 +7,40 @@ namespace RimWorldOnlineCity
     {
         public override bool TryExecuteEvent()
         {
-            //IncidentWorker_DiseaseHuman worker = new IncidentWorker_DiseaseHuman();
-            var def = DefDatabase<IncidentDef>.GetNamed("Disease_Plague");
-            if (!def.Worker.TryExecute(GetParms()))
+            var def = DefDatabase<IncidentDef>.GetNamedSilentFail("Disease_Plague")
+                   ?? DefDatabase<IncidentDef>.GetNamedSilentFail("Plague");
+
+            if (def?.Worker == null) return false;
+
+            var parms = GetParms();
+            if (parms == null) return false;
+
+            if (!def.Worker.TryExecute(parms))
             {
-                Messages.Message($"Failed_Plague", MessageTypeDefOf.RejectInput);
+                Messages.Message("OC_Incidents_FailedPlague".Translate(), MessageTypeDefOf.RejectInput);
                 return false;
             }
             return true;
         }
+
         private IncidentParms GetParms()
         {
             var target = GetTarget();
+            if (target == null) return null;
 
-            parms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.ThreatSmall, target);
-            parms.customLetterLabel = "Эпидемия!".Translate();
-            parms.customLetterText = "на нас выпустили хворь!".Translate() + ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
-            parms.forced = true;  //игнорировать все условия для события
-            parms.target = target;
-            parms.points = CalculatePoints();
-            //parms.points = StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap) * mult >= StorytellerUtility.GlobalPointsMax ? StorytellerUtility.GlobalPointsMax : StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap) * mult;
-            return parms;
+            var incidentParms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.ThreatSmall, target);
+
+            string label = "OC_Incidents_Plague_Label".Translate();
+            if (label == "OC_Incidents_Plague_Label") label = "Epidemic!";
+            incidentParms.customLetterLabel = label;
+
+            incidentParms.customLetterText = "OC_Incidents_Plague_Text".Translate() + ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
+            incidentParms.forced = true;
+            incidentParms.target = target;
+            incidentParms.points = CalculatePoints();
+
+            this.parms = incidentParms;
+            return incidentParms;
         }
     }
 }

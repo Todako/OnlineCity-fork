@@ -1,11 +1,4 @@
 ﻿using RimWorld;
-using RimWorld.Planet;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity
@@ -14,25 +7,38 @@ namespace RimWorldOnlineCity
     {
         public override bool TryExecuteEvent()
         {
-            if (!IncidentDefOf.ManhunterPack.Worker.TryExecute(GetParms()))
+            var parms = GetParms();
+            if (parms == null) return false;
+
+            if (!IncidentDefOf.ManhunterPack.Worker.TryExecute(parms))
             {
-                Messages.Message($"Failed_Pack", MessageTypeDefOf.RejectInput);
+                Messages.Message("OC_Incidents_FailedPack".Translate(), MessageTypeDefOf.RejectInput);
                 return false;
             }
             return true;
         }
+
         private IncidentParms GetParms()
         {
             var target = GetTarget();
+            if (target == null) return null;
 
-            parms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.ThreatSmall, target);
-            parms.customLetterLabel = "OC_Incidents_Pack_Label".Translate();
-            parms.customLetterText = "OC_Incidents_Pack_Text".Translate();
-            parms.forced = true;  //игнорировать все условия для события
-            parms.target = target;
-            parms.points = CalculatePoints();
-            //parms.points = StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap) * mult >= StorytellerUtility.GlobalPointsMax ? StorytellerUtility.GlobalPointsMax : StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap) * mult;
-            return parms;
+            var incidentParms = StorytellerUtility.DefaultParmsNow(IncidentCategoryDefOf.ThreatSmall, target);
+            incidentParms.customLetterLabel = "OC_Incidents_Pack_Label".Translate();
+
+            string text = "OC_Incidents_Pack_Text".Translate();
+            if (!string.IsNullOrEmpty(attacker))
+            {
+                text += ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
+            }
+            incidentParms.customLetterText = text;
+
+            incidentParms.forced = true;
+            incidentParms.target = target;
+            incidentParms.points = CalculatePoints();
+
+            this.parms = incidentParms;
+            return incidentParms;
         }
     }
 }

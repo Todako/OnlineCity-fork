@@ -1,16 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Transfer;
-using RimWorld;
-using Verse;
-using Transfer.ModelMails;
-using RimWorld.Planet;
+﻿using Model;
 using OCUnion;
 using OCUnion.Common;
-using Model;
+using RimWorld;
+using RimWorld.Planet;
+using System;
+using System.Collections.Generic;
+using Verse;
 
 namespace RimWorldOnlineCity
 {
@@ -18,10 +13,6 @@ namespace RimWorldOnlineCity
     {
         public string attacker;
         public int mult = 1;
-        //public string strategy = null;
-        //public string arrivalMode = "walk";
-        //public string faction = null;
-        //public string param = null;
         public List<string> incidentParams;
         public IncidentParms parms;
         public WorldObject place;
@@ -36,83 +27,109 @@ namespace RimWorldOnlineCity
             return (place as Settlement)?.Map ?? Find.CurrentMap;
         }
 
+        /// <summary>
+        /// Пошук ворожої фракції для інциденту з надійним fallback-механізмом.
+        /// </summary>
         public Faction GetFaction(string factionParam)
         {
             try
             {
-                switch (factionParam.ToLower().Trim())
+                var param = (factionParam ?? string.Empty).ToLower().Trim();
+                switch (param)
                 {
                     case "mech":
                         return Find.FactionManager.OfMechanoids;
-                    case "pirate":
-                        /*Faction fac = null;
-                        bool flag = false;
-                        while (!flag)  //так делать очень плохо
-                        {
-                            fac = Find.FactionManager.RandomEnemyFaction(false, false, true, TechLevel.Industrial);
-                            if(fac.def.techLevel <= TechLevel.Archotech && fac.def.techLevel >= TechLevel.Medieval)
-                            {
-                                flag = true;
-                            }
 
+                    case "pirate":
+                        {
+                            var factions = Find.FactionManager.AllFactionsListForReading;
+                            for (int i = 0; i < factions.Count; i++)
+                            {
+                                var f = factions[i];
+                                if (f != null && f.def.defName == "Pirate" && f.def.permanentEnemy && f.def.humanlikeFaction
+                                    && f.def.techLevel >= TechLevel.Industrial && f.def.techLevel < TechLevel.Archotech)
+                                {
+                                    return f;
+                                }
+                            }
+                            return Find.FactionManager.RandomEnemyFaction(false, false, true, TechLevel.Industrial);
                         }
-                        return fac; */  // может оно не глючит?
-                                        //todo? поиск начинает глючить при добавлении фракций из модов
-                        return Find.FactionManager.AllFactions.FirstOrDefault(f => f.def.defName == "Pirate" && f.def.permanentEnemy == true && f.def.humanlikeFaction == true && f.def.techLevel >= TechLevel.Industrial && f.def.techLevel < TechLevel.Archotech);
+
                     case "randy":
                         return Find.FactionManager.RandomEnemyFaction(false, true, true);
+
                     case "tribe":
                     default:
-                        return Find.FactionManager.AllFactions.FirstOrDefault(f => f.def.permanentEnemy == true && f.def.humanlikeFaction == true && f.def.techLevel <= TechLevel.Medieval);
+                        {
+                            var factions = Find.FactionManager.AllFactionsListForReading;
+                            for (int i = 0; i < factions.Count; i++)
+                            {
+                                var f = factions[i];
+                                if (f != null && f.def.permanentEnemy && f.def.humanlikeFaction && f.def.techLevel <= TechLevel.Medieval)
+                                {
+                                    return f;
+                                }
+                            }
+                            return Find.FactionManager.RandomEnemyFaction(false, false, true, TechLevel.Neolithic);
+                        }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                Loger.Log("IncidentGenerate Error: faction not found");
+                Loger.Log("IncidentGenerate Error finding faction: " + ex.Message, Loger.LogLevel.WARNING);
                 return null;
             }
         }
 
         /// <summary>
-        /// Расчитывает стоимость инциндента, и изымает её.
+        /// Розраховує вартість інциденту та списує необхідне золото.
         /// </summary>
-        /// <param name="command">Текстовая команда для чата</param>
-        /// <param name="onliCheck">Только рассчитать, без действия.</param>
-        /// <error>Ошибка, или результат при onliCheck</error>
-        /// <returns>Строка с количество требуемой стоимости</returns>
         public static string GetCostOnGameByCommand(string command, bool onliCheck, out string error)
         {
-            Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand 1 command:" + command);
-            //разбираем аргументы в кавычках '. Удвоенная кавычка указывает на её символ.
-            string cmd;
-            List<string> args;
-            ChatUtils.ParceCommand(command, out cmd, out args);
+            Loger.Log("IncidentLog OCIncident.GetCostOnGameByCommand command: " + command);
 
-            if (args.Count < 3 || args.Any(a => a.Contains("cost=")))
+            ChatUtils.ParceCommand(command, out _, out var args);
+
+            if (args == null || args.Count < 3)
             {
                 error = "OC_Incidents_OCIncident_WrongArg".Translate().ToString();
-                Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand error:" + error);
                 return null;
             }
 
-            // /call raid '111' 1 10 air tribe
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (args[i] != null && args[i].IndexOf("cost=", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    error = "OC_Incidents_OCIncident_WrongArg".Translate().ToString();
+                    return null;
+                }
+            }
 
-            //проверка, что денег хватает
-            List<string> parameters = new List<string>();
+            if (!long.TryParse(args[2], out long serverId))
+            {
+                error = "OC_Incidents_OCIncident_WrongArg".Translate().ToString();
+                return null;
+            }
+
+            int mult = 1;
+            if (args.Count > 3 && !int.TryParse(args[3], out mult))
+            {
+                mult = 1;
+            }
+
+            var parameters = new List<string>(args.Count > 4 ? args.Count - 4 : 0);
             for (int i = 4; i < args.Count; i++)
             {
-                parameters.Add((args[i] ?? "").ToLower().Trim());
+                parameters.Add((args[i] ?? string.Empty).ToLower().Trim());
             }
-            int cost = OCIncident.CalculateRaidCost(args[0].ToLower(), Int64.Parse(args[2])
-                , args.Count > 3 ? Int32.Parse(args[3]) : 1
-                , parameters);
+
+            int cost = CalculateRaidCost(args[0].ToLower(), serverId, mult, parameters);
             int gold = -1;
             int goldClient = -1;
             int goldServer = -1;
 
             if (cost > 0)
             {
-
                 SessionClientController.Command((connect) =>
                 {
                     goldServer = connect.ExchengeInfo_GetCountThing(ThingTrade.CreateTrade(ThingDefOf.Gold, 1, 0, 1));
@@ -120,9 +137,12 @@ namespace RimWorldOnlineCity
 
                 goldClient = GameUtils.FindThings(ThingDefOf.Gold, 0, true);
 
-                if (goldClient >= 0 && goldServer >= 0) gold = goldClient + goldServer;
+                if (goldClient >= 0 && goldServer >= 0)
+                {
+                    gold = goldClient + goldServer;
+                }
             }
-            if (cost == 0)
+            else if (cost == 0)
             {
                 goldClient = 0;
                 goldServer = 0;
@@ -134,7 +154,6 @@ namespace RimWorldOnlineCity
                 error = cost < 0 || gold < 0
                     ? "OC_Incidents_OCIncident_WealthErr".Translate().ToString() + $" cost={cost} gold={gold}"
                     : "OC_Incidents_OCIncident_GoldErr".Translate(gold, cost, cost - gold).ToString();
-                Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand error:" + error);
                 return null;
             }
 
@@ -144,137 +163,129 @@ namespace RimWorldOnlineCity
                 return "OC_Incidents_OCIncident_NotEnoughGold".Translate(cost);
             }
 
-            Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand 2 cost=" + cost);
-            Loger.TransLog("IncidentLod cost=" + cost + " Command: " + command);
+            Loger.Log("IncidentLog OCIncident.GetCostOnGameByCommand cost=" + cost);
+            Loger.TransLog("IncidentLog cost=" + cost + " Command: " + command);
 
-            /*
-            //отнимаем нужное кол-во денег(золото или серебро... или что-нибудь ещё)
-            GameUtils.FindThings(ThingDefOf.Gold, cost, false);
-
-            Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand 3");
-            //принудительное сохранение
-            if (!SessionClientController.Data.BackgroundSaveGameOff)
-                SessionClientController.SaveGameNow(true);
-            Loger.Log("IncidentLod ChatController.AfterStartIncident 4");
-            */
-
-            //непосредственно действие заказа рейда
             Action goRaid = () =>
             {
-                Loger.TransLog("IncidentLod go=" + cost);
-
                 try
                 {
-                    var mainCannal = SessionClientController.Data.Chats[0];
+                    var chats = SessionClientController.Data?.Chats;
+                    if (chats == null || chats.Count == 0) return;
+
+                    var mainCannal = chats[0];
                     SessionClientController.Command((connect) =>
                     {
-                        var res = connect.PostingChat(mainCannal.Id, command + " cost=" + cost.ToString(), true);
+                        var res = connect.PostingChat(mainCannal.Id, command + " cost=" + cost, true);
 
-                        if (res.Status == 0)
+                        if (res != null && res.Status == 0)
                         {
-                            Loger.Log("IncidentLod Raid go " + cost, Loger.LogLevel.EXCHANGE);
                             Find.WindowStack.Add(new Dialog_MessageBox("OC_Incidents_OCIncident_GoldPay".Translate(cost)));
                         }
                         else
                         {
-                            //выводим сообщение с ошибкой
-                            var errorMessage = string.IsNullOrEmpty(res.Message) ? "Error call" : res.Message.ServerTranslate().ToString();
-                            Loger.TransLog("IncidentLod error:" + errorMessage);
-                            Loger.Log("IncidentLod Raid errorMessage:" + errorMessage, Loger.LogLevel.ERROR);
+                            var errorMessage = string.IsNullOrEmpty(res?.Message) ? "Error call" : res.Message.ServerTranslate().ToString();
                             Find.WindowStack.Add(new Dialog_MessageBox(errorMessage));
                         }
                     });
-                    Loger.TransLog("IncidentLod go end");
                 }
                 catch (Exception exp)
                 {
-                    Loger.Log("IncidentLod Raid Exception " + exp.ToString());
+                    Loger.Log("IncidentLog Raid Exception " + exp);
                 }
-
             };
-            //опрашиваем сервер, сколько нужно докинуть на торговый склад
-            var countToServer = cost - goldServer;
 
+            var countToServer = cost - goldServer;
             if (countToServer > 0)
             {
-                //ищим нужные объекты
                 var inGame = GameUtils.FindThings(ThingDefOf.Gold, countToServer, true, out var thingSelect);
-                Loger.Log($"IncidentLod OCIncident.GetCostOnGameByCommand 3. {countToServer} {thingSelect.Count}");
-                if (inGame < countToServer || thingSelect.Count == 0)
+                if (inGame < countToServer || thingSelect == null || thingSelect.Count == 0)
                 {
                     error = "OCity_OCIncident_NotEnoughThingsOnMap".Translate() + " " + inGame + ". " + "OCity_OCIncident_Required".Translate() + " " + countToServer;
-                    Loger.Log($"IncidentLod OCIncident.GetCostOnGameByCommand error send to server: need {inGame}/{countToServer}");
                     return null;
                 }
-                Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand 4");
-                //кидаем на торговый склад
-                var fromWorldObject = thingSelect.First().Key.Map.Parent;
-                var toWorldObject = new TradeThingsOnline() { Tile = fromWorldObject.Tile }; //для торгового склада требуется только Tile, поэтому не важно есть он или будет создан
-                ExchengeUtils.MoveSelectThings(fromWorldObject, toWorldObject, thingSelect, () => 
+
+                Map map = null;
+                foreach (var k in thingSelect.Keys)
+                {
+                    if (k?.Map != null) { map = k.Map; break; }
+                }
+
+                if (map?.Parent == null)
+                {
+                    error = "Error finding source map";
+                    return null;
+                }
+
+                var fromWorldObject = map.Parent;
+                var toWorldObject = new TradeThingsOnline { Tile = fromWorldObject.Tile };
+                ExchengeUtils.MoveSelectThings(fromWorldObject, toWorldObject, thingSelect, () =>
                 {
                     goRaid();
                 });
             }
             else
+            {
                 goRaid();
-            Loger.Log("IncidentLod OCIncident.GetCostOnGameByCommand 5");
+            }
 
             error = null;
             return null;
         }
-        
+
         public float CalculatePoints()
         {
-            Loger.Log("IncidentLod OCIncident.CalculatePoints 1");
             var target = GetTarget();
+            if (target == null) return 100f;
 
             float points = StorytellerUtility.DefaultThreatPointsNow(target);
-            //Можно переопределить формулу в каждом потомке ИЛИ проверять остальные параметры и добавлять множитель
-            var resultPoints = points * mult
-                * (float)SessionClientController.Data.GeneralSettings.IncidentPowerPrecent / 100f;
+            float powerPercent = SessionClientController.Data != null
+                ? (float)SessionClientController.Data.GeneralSettings.IncidentPowerPrecent
+                : 100f;
 
+            var resultPoints = points * mult * (powerPercent / 100f);
             Loger.Log($"CalculatePoints(). points={(int)points} resultPoints={resultPoints}");
-            Loger.Log("IncidentLod OCIncident.CalculatePoints 2");
             return resultPoints;
         }
 
-        public static int CalculateRaidCost(string type, long serverId, int mult, List<string> incidentParams /*string arrivalModes, string faction*/)
+        public static int CalculateRaidCost(string type, long serverId, int mult, List<string> incidentParams)
         {
-            Loger.Log("IncidentLod OCIncident.CalculateRaidCost 1");
-
             var incident = Incidents.ParseIncidentName(type);
+            if (incident == null) return -1;
 
-            // модификаторы
-            var type_mult = incident.CalcCostMult(incidentParams);
-
+            var type_mult = incident.CalcCostMult != null ? incident.CalcCostMult(incidentParams) : 1f;
             if (type_mult == 0f) return 0;
 
-            //var serverId = UpdateWorldController.GetServerInfo(wo).ServerId;
             var target = UpdateWorldController.GetOtherByServerId(serverId) as BaseOnline;
-            if (target == null) return -1;            
-            var costs = target.Player.CostWorldObjects(serverId);
+            if (target == null) return -1;
+
+            var costs = target.Player?.CostWorldObjects(serverId);
+            if (costs == null) return -1;
+
             var cost = costs.MarketValueTotal;
             if (cost <= 0) return -1;
 
-            //{цена поселения защитника/100 000}^(2/3) * 100 * lvl ^(3/2) старое
-            //Рейд до 500к = (цена поселения защитник/ 100 000)^(1 / 2) * 80.000 
-            //Рейд от 1кк до 5кк = (цена поселения защитник/ 100 000)^(2, 2 / 5, 05) * 27.2864
+            float incidentCostPercent = SessionClientController.Data != null
+                ? (float)SessionClientController.Data.GeneralSettings.IncidentCostPrecent
+                : 100f;
 
-            // * lvl ^ (9.42 / 8) * модификаторы 
-            var options_mult = (float)Math.Pow((float)mult, 9.42f / 8f) * SessionClientController.Data.GeneralSettings.IncidentCostPrecent / 100f * type_mult;
+            var options_mult = (float)Math.Pow(mult, 9.42f / 8f) * (incidentCostPercent / 100f) * type_mult;
 
-            float raidCost = cost <= 500000f ? (int)((float)Math.Pow(cost / 100000f, 1f / 2f) * 246f)
-                    : cost <= 5000000f ? (int)((float)Math.Pow(cost / 100000f, 2.2f / 5.05f) * 272.864f)
-                    : 15000;
+            float raidCost = cost <= 500000f
+                ? (int)(Math.Pow(cost / 100000f, 0.5f) * 246f)
+                : cost <= 5000000f
+                    ? (int)(Math.Pow(cost / 100000f, 2.2f / 5.05f) * 272.864f)
+                    : 15000f;
+
             raidCost *= options_mult;
 
+            if (raidCost > 100000f) raidCost = 100000f;
+            if (raidCost > 0f && raidCost < 1f) raidCost = 100f;
 
-            if (raidCost > 100000) raidCost = 100000;
-            if (raidCost > 0 && raidCost < 1) raidCost = 100;
+            Loger.Log($"IncidentLog CalculateRaidCost({serverId}, {mult}). targetCost={(int)cost} raidCost={raidCost}");
 
-            Loger.Log($"IncidentLod OCIncident.CalculateRaidCost({serverId}, {mult}). targetCost={(int)cost} raidCost={raidCost}");
-
-            return SessionClientController.Data.IsAdmin && Prefs.DevMode ? 1 : (int)raidCost ;
+            bool isAdminDev = SessionClientController.Data?.IsAdmin == true && Prefs.DevMode;
+            return isAdminDev ? 1 : (int)raidCost;
         }
     }
 }

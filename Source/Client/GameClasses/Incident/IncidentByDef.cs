@@ -2,11 +2,6 @@
 using RimWorld;
 using RimWorld.Planet;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity
@@ -15,23 +10,51 @@ namespace RimWorldOnlineCity
     {
         public override bool TryExecuteEvent()
         {
-            var param = incidentParams != null && incidentParams.Count > 1 ? incidentParams[1] : null;
-
-            var incident = IncidentDef.Named(param);
-
-            var target = GetTarget();
-
-            IncidentParms parms = StorytellerUtility.DefaultParmsNow(incident.category, target);
-            parms.forced = true;  //игнорировать все условия для события
-            if (!incident.Worker.TryExecute(parms))
+            if (incidentParams == null || incidentParams.Count == 0)
             {
-                Loger.Log("Error start IncidentDef: " + param);
+                Loger.Log("IncidentByDef Error: no parameters provided", Loger.LogLevel.WARNING);
                 return false;
             }
-            Loger.Log("Start IncidentDef: " + param);
 
+            // Шукаємо валідний IncidentDef серед переданих параметрів
+            IncidentDef incident = null;
+            string paramName = null;
+
+            for (int i = 0; i < incidentParams.Count; i++)
+            {
+                var candidate = incidentParams[i];
+                if (string.IsNullOrEmpty(candidate)) continue;
+
+                var def = DefDatabase<IncidentDef>.GetNamedSilentFail(candidate);
+                if (def != null)
+                {
+                    incident = def;
+                    paramName = candidate;
+                    break;
+                }
+            }
+
+            if (incident == null || incident.Worker == null)
+            {
+                Loger.Log("IncidentByDef Error: IncidentDef not found for params: " + string.Join(", ", incidentParams), Loger.LogLevel.WARNING);
+                return false;
+            }
+
+            var target = GetTarget();
+            if (target == null) return false;
+
+            IncidentParms incidentParms = StorytellerUtility.DefaultParmsNow(incident.category ?? IncidentCategoryDefOf.Misc, target);
+            incidentParms.forced = true;
+            incidentParms.points = CalculatePoints();
+
+            if (!incident.Worker.TryExecute(incidentParms))
+            {
+                Loger.Log("Error start IncidentDef: " + paramName, Loger.LogLevel.WARNING);
+                return false;
+            }
+
+            Loger.Log("Start IncidentDef: " + paramName, Loger.LogLevel.INFO);
             return true;
         }
-
     }
 }

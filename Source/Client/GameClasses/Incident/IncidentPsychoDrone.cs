@@ -1,52 +1,55 @@
 ﻿using RimWorld;
-using RimWorld.Planet;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity
 {
-	class IncidentPsychoDrone : OCIncident
-	{
-		public override bool TryExecuteEvent()
-		{
-			Map map = GetTarget();
-			//int duration = Mathf.RoundToInt(1 * 60000f); // 1 день состояния
-			int duration = Mathf.RoundToInt((day * mult) / 2);
-			GameConditionDef def = GameConditionDefOf.PsychicDrone;
-			def.label = "Психическое воздействие";
-			def.conditionClass = typeof(OC_GameCondition_PsychoDrone);
-			OC_GameCondition_PsychoDrone drone = (OC_GameCondition_PsychoDrone)GameConditionMaker.MakeCondition(def, duration);
-			drone.gender = Gender.None;
-			//drone.level = PsychicDroneLevel.BadExtreme;	настраивать за деньги
-			//PsychicDroneLevel.GoodMedium; положительный
-			//PsychicDroneLevel.BadLow;		слабый
-			//PsychicDroneLevel.BadMedium;	средний
-			//PsychicDroneLevel.BadHigh		сильный
-			//PsychicDroneLevel.BadExtreme;	жесть
-
-			string label = "Психическое воздействие";
-			string text = "OC_Incidents_PsychoDrone_Text".Translate() + ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
-			Find.LetterStack.ReceiveLetter(label, text, LetterDefOf.NegativeEvent);
-			map.gameConditionManager.RegisterCondition(drone);
-			return true;
-		}
-	}
-
-	class OC_GameCondition_PsychoDrone : GameCondition
+    class IncidentPsychoDrone : OCIncident
     {
-		public Gender gender = Gender.None;
+        public override bool TryExecuteEvent()
+        {
+            Map map = GetTarget();
+            if (map == null) return false;
 
-		public PsychicDroneLevel level = PsychicDroneLevel.BadMedium;
+            int duration = Mathf.RoundToInt((day * mult) / 2);
 
-		public const float MaxPointsDroneLow = 800f;
+            // ВИПРАВЛЕННЯ: у ванільному RimWorld стан зветься GameCondition_PsychicEmanation
+            var drone = (GameCondition_PsychicEmanation)GameConditionMaker.MakeCondition(GameConditionDefOf.PsychicDrone, duration);
 
-		public const float MaxPointsDroneMedium = 2000f;
+            // Визначаємо стать: з параметрів команди або випадково
+            if (incidentParams != null && incidentParams.Count > 0 && incidentParams[0].Equals("female", StringComparison.OrdinalIgnoreCase))
+            {
+                drone.gender = Gender.Female;
+            }
+            else if (incidentParams != null && incidentParams.Count > 0 && incidentParams[0].Equals("male", StringComparison.OrdinalIgnoreCase))
+            {
+                drone.gender = Gender.Male;
+            }
+            else
+            {
+                drone.gender = Rand.Bool ? Gender.Male : Gender.Female;
+            }
 
-	}
+            // Рівень занепаду настрою залежно від сили інциденту
+            drone.level = mult >= 4 ? PsychicDroneLevel.BadExtreme
+                : mult >= 3 ? PsychicDroneLevel.BadHigh
+                : mult >= 2 ? PsychicDroneLevel.BadMedium
+                : PsychicDroneLevel.BadLow;
 
+            string label = "OC_Incidents_PsychoDrone_Label".Translate();
+            if (label == "OC_Incidents_PsychoDrone_Label") label = "Psychic Emanation";
+
+            string text = "OC_Incidents_PsychoDrone_Text".Translate() + ". " + "OC_Incident_Atacker".Translate() + " " + attacker;
+            Find.LetterStack.ReceiveLetter(label, text, LetterDefOf.NegativeEvent);
+            map.gameConditionManager.RegisterCondition(drone);
+
+            return true;
+        }
+    }
+
+    // Залишено для зворотної сумісності з попередніми збереженнями
+    public class OC_GameCondition_PsychoDrone : GameCondition_PsychicEmanation
+    {
+    }
 }

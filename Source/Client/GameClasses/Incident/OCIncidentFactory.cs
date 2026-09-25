@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using OCUnion;
+﻿using OCUnion;
 using RimWorld;
 using Transfer;
 using Transfer.ModelMails;
@@ -13,30 +8,39 @@ namespace RimWorldOnlineCity
 {
     public class OCIncidentFactory
     {
-        /*
-         * Для добавления нового инциндента создайте класс от родителя OCIncident
-         * И внесите соответствующие правки в этот и следующие классы:
-         * CallIncidentCmd в список и обработку параметров
-         * enum RaidTypes в список
-         * ModelMailTrade если нужны доп параметры (стараться не раздувать или отрефакторить и разделить контейнер для разных типов писем)
-         * MailController.MailProcessStartEvent если были добавлены доп параметр
-        */
         public OCIncident GetIncident(IncidentTypes type)
         {
-            return type == IncidentTypes.Raid ? new IncidentRaid()
-                : type == IncidentTypes.Caravan ? new IncidentCaravan()
-                : type == IncidentTypes.ChunkDrop ? new IncidentChunkDrop()
-                : type == IncidentTypes.Infistation ? new IncidentInfistation()
-                : type == IncidentTypes.Quest ? new IncidentQuest()
-                : type == IncidentTypes.Bombing ? new IncidentBombing()
-                : type == IncidentTypes.Acid ? new IncidentAcid()
-                : type == IncidentTypes.EMP ? new IncidentEMP()
-                : type == IncidentTypes.Pack ? new IncidentPack()
-                : type == IncidentTypes.Eclipse ? new IncidentEclipse()
-                : type == IncidentTypes.Storm ? new IncidentStorm()
-                : type == IncidentTypes.Plague ? new IncidentPlague()
-                : type == IncidentTypes.Def ? new IncidentByDef()
-                : (OCIncident)null;
+            switch (type)
+            {
+                case IncidentTypes.Raid:
+                    return new IncidentRaid();
+                case IncidentTypes.Caravan:
+                    return new IncidentCaravan();
+                case IncidentTypes.ChunkDrop:
+                    return new IncidentChunkDrop();
+                case IncidentTypes.Infistation:
+                    return new IncidentInfistation();
+                case IncidentTypes.Quest:
+                    return new IncidentQuest();
+                case IncidentTypes.Bombing:
+                    return new IncidentBombing();
+                case IncidentTypes.Acid:
+                    return new IncidentAcid();
+                case IncidentTypes.EMP:
+                    return new IncidentEMP();
+                case IncidentTypes.Pack:
+                    return new IncidentPack();
+                case IncidentTypes.Eclipse:
+                    return new IncidentEclipse();
+                case IncidentTypes.Storm:
+                    return new IncidentStorm();
+                case IncidentTypes.Plague:
+                    return new IncidentPlague();
+                case IncidentTypes.Def:
+                    return new IncidentByDef();
+                default:
+                    return null;
+            }
         }
     }
 }
