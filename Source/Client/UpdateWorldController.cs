@@ -33,12 +33,11 @@ namespace RimWorldOnlineCity
 
         public static bool ExistsEnemyPawns => gameProgress?.ExistsEnemyPawns == true;
 
-        // Постійні буфери для усунення виділень пам'яті кожні 5 секунд
         private static readonly HashSet<int> _presentIdsBuffer = new HashSet<int>();
         private static readonly Dictionary<WorldObjectEntry, Map> _tmpMapBuffer = new Dictionary<WorldObjectEntry, Map>(16);
         private static readonly Dictionary<Map, float> _patchMapBuffer = new Dictionary<Map, float>(16);
 
-        #region Ключі швидкого хешування (O(1) замість LINQ Any)
+        #region Ключі швидкого хешування
 
         private readonly struct WorldObjectKey : IEquatable<WorldObjectKey>
         {
@@ -80,11 +79,6 @@ namespace RimWorldOnlineCity
         public static List<WorldObjectEntry> WObjects;
         public static PlayerGameProgress gameProgress;
 
-        /// <summary>
-        /// Збирає стан власних караванів і поселень гравця безпосередньо з пам'яті гри.
-        /// Виконується синхронно в головному потоці Unity.
-        /// ОПТИМІЗАЦІЯ: повністю усунено тимчасовий клас CacheMap та списки пішаків.
-        /// </summary>
         public static void PrepareInMainThread()
         {
             try
@@ -97,7 +91,6 @@ namespace RimWorldOnlineCity
 
                 float totalMarketValue = 0f;
 
-                // Збір об'єктів та підсумовування вартості за один прохід
                 for (int i = 0; i < allWorldObjects.Count; i++)
                 {
                     var o = allWorldObjects[i];
@@ -158,9 +151,6 @@ namespace RimWorldOnlineCity
         }
         #endregion
 
-        /// <summary>
-        /// Формування вихідного пакета даних для відправки на сервер.
-        /// </summary>
         public static void SendToServer(ModelPlayToServer toServ, bool firstRun, ModelGameServerInfo modelGameServerInfo)
         {
             toServ.LastTick = (long)Find.TickManager.TicksGame;
@@ -212,7 +202,6 @@ namespace RimWorldOnlineCity
                 toServ.WObjects = WObjects;
                 LastSendMyWorldObjects = toServ.WObjects;
 
-                // ОПТИМІЗАЦІЯ: швидкий пошук видалених об'єктів без виділення нових HashSet
                 if (ToDelete != null && WorldObjectEntrys != null && WorldObjectEntrys.Count > 0)
                 {
                     _presentIdsBuffer.Clear();
@@ -241,7 +230,7 @@ namespace RimWorldOnlineCity
 
             if (SessionClientController.Data.GeneralSettings.EquableWorldObjects)
             {
-                #region Відправка неігрових поселень (NPC) - ОПТИМІЗАЦІЯ O(N+M)
+                #region Відправка неігрових поселень (NPC)
                 try
                 {
                     var onlineWObjList = new List<WorldObject>();
@@ -306,7 +295,7 @@ namespace RimWorldOnlineCity
                 }
                 #endregion
 
-                #region Відправка неігрових фракцій - ОПТИМІЗАЦІЯ O(N+M)
+                #region Відправка неігрових фракцій
                 try
                 {
                     List<Faction> factionList = Find.FactionManager.AllFactionsListForReading;
@@ -365,9 +354,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Застосування отриманих від сервера даних про колонії, каравани та пошту.
-        /// </summary>
         public static void LoadFromServer(ModelPlayToClient fromServ, bool removeMissing)
         {
             if (SessionClientController.Data.GeneralSettings.EquableWorldObjects)
@@ -387,6 +373,7 @@ namespace RimWorldOnlineCity
                         Find.WorldObjects.Remove(o);
                     }
                 }
+                ConverterServerId?.Clear();
                 Loger.Log("RemoveMissing виконано");
             }
 
@@ -395,7 +382,6 @@ namespace RimWorldOnlineCity
 
             var catchAllWorldObjects = Find.WorldObjects.AllWorldObjects;
 
-            // ОПТИМІЗАЦІЯ: повторне використання словника без алокації нового що-5 секунд
             if (LastCatchAllWorldObjectsByID == null)
             {
                 LastCatchAllWorldObjectsByID = new Dictionary<int, WorldObjectBaseOnline>(catchAllWorldObjects.Count);
@@ -437,13 +423,11 @@ namespace RimWorldOnlineCity
                     DeleteTradeWorldObject(fromServ.WTObjectsToDelete[i], ref wObjectsList, ref LastCatchAllWorldObjectsByID);
             }
 
-            // ОПТИМІЗАЦІЯ: оновлення myWObjects за місцем замість постійного створення нових BaseOnline/CaravanOnline
             if (!removeMissing && SessionClientController.Data.Players.TryGetValue(SessionClientController.My.Login, out var myPlayerClient) && LastSendMyWorldObjects != null)
             {
                 UpdateMyWObjectsInPlace(myPlayerClient, LastSendMyWorldObjects);
             }
 
-            // Обробка поштових посилок від інших гравців
             if (fromServ.Mails != null && fromServ.Mails.Count > 0)
             {
                 LongEventHandler.QueueLongEvent(delegate
@@ -456,9 +440,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Оновлює список WObjects власного гравця без перестворення об'єктів у купі.
-        /// </summary>
         private static void UpdateMyWObjectsInPlace(PlayerClient myPlayerClient, List<WorldObjectEntry> sendObjects)
         {
             if (myPlayerClient.WObjects == null)
@@ -551,25 +532,33 @@ namespace RimWorldOnlineCity
 
         public static WorldObjectBaseOnline GetOtherByServerId(long serverId, Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID = null)
         {
-            if (ConverterServerId == null || !ConverterServerId.TryGetValue(serverId, out int objId))
+            if (ConverterServerId != null && ConverterServerId.TryGetValue(serverId, out int objId))
             {
-                return null;
-            }
-
-            if (allWorldObjectsByID == null)
-            {
-                var allObjects = Find.WorldObjects.AllWorldObjects;
-                for (int i = 0; i < allObjects.Count; i++)
+                if (allWorldObjectsByID != null)
                 {
-                    if (allObjects[i].ID == objId && allObjects[i] is WorldObjectBaseOnline wobo)
+                    if (allWorldObjectsByID.TryGetValue(objId, out var wo)) return wo;
+                }
+                else
+                {
+                    var all = Find.WorldObjects.AllWorldObjects;
+                    for (int i = 0; i < all.Count; i++)
                     {
-                        return wobo;
+                        if (all[i].ID == objId && all[i] is WorldObjectBaseOnline wobo) return wobo;
                     }
                 }
-                return null;
             }
 
-            return allWorldObjectsByID.TryGetValue(objId, out var worldObject) ? worldObject : null;
+            var allWorld = Find.WorldObjects.AllWorldObjects;
+            for (int i = 0; i < allWorld.Count; i++)
+            {
+                if (allWorld[i] is WorldObjectBaseOnline wobo && wobo.Place?.PlaceServerId == serverId)
+                {
+                    if (ConverterServerId != null) ConverterServerId[serverId] = wobo.ID;
+                    return wobo;
+                }
+            }
+
+            return null;
         }
 
         public static WorldObject GetWOByServerId(long serverId, List<WorldObject> allObjects = null)
@@ -643,10 +632,6 @@ namespace RimWorldOnlineCity
 
         public static readonly Dictionary<int, DateTime> LastForceRecount = new Dictionary<int, DateTime>();
 
-        /// <summary>
-        /// Розрахунок параметрів і вартості поселення або каравану гравця.
-        /// ОПТИМІЗАЦІЯ: ліквідовано проміжний список CacheMap і new Random() при перерахунку багатства.
-        /// </summary>
         private static WorldObjectEntry GetWorldObjectEntry(WorldObject worldObject, PlayerGameProgress progress)
         {
             var worldObjectEntry = new WorldObjectEntry
@@ -706,7 +691,6 @@ namespace RimWorldOnlineCity
                 {
                     try
                     {
-                        // ОПТИМІЗАЦІЯ: детермінований зсув перерахунку без виділення new Random()
                         if (!LastForceRecount.TryGetValue(map.uniqueID, out var lastForceRecount))
                         {
                             LastForceRecount[map.uniqueID] = DateTime.UtcNow.AddSeconds(map.uniqueID % 10);
@@ -729,7 +713,6 @@ namespace RimWorldOnlineCity
 
                     worldObjectEntry.MarketValuePawn = 0f;
 
-                    // ОПТИМІЗАЦІЯ: обробка пішаків мапи за один лінійний прохід без виділення проміжних списків
                     var allSpawned = map.mapPawns.AllPawnsSpawned;
                     bool hasEnemy = false;
 
@@ -764,9 +747,6 @@ namespace RimWorldOnlineCity
             return worldObjectEntry;
         }
 
-        /// <summary>
-        /// Застосування опису поселення або каравану іншого гравця.
-        /// </summary>
         public static void ApplyWorldObject(WorldObjectEntry worldObjectEntry, ref List<WorldObject> allWorldObjects, ref Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID)
         {
             try
@@ -852,9 +832,8 @@ namespace RimWorldOnlineCity
                     worldObject.Tile = worldObjectEntry.Tile;
                     Find.WorldObjects.Add(worldObject);
 
-                    ConverterServerId.Add(worldObjectEntry.PlaceServerId, worldObject.ID);
-                    allWorldObjectsByID.Add(worldObject.ID, worldObject);
-                    allWorldObjects.Add(worldObject);
+                    ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    allWorldObjectsByID[worldObject.ID] = worldObject;
                     Loger.Log("Add " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name + " " + worldObjectEntry.LoginOwner);
                 }
                 else
@@ -891,7 +870,10 @@ namespace RimWorldOnlineCity
                 allWorldObjectsByID.Remove(worldObject.ID);
                 allWorldObjects.Remove(worldObject);
                 ConverterServerId.Remove(worldObjectEntry.PlaceServerId);
-                Find.WorldObjects.Remove(worldObject);
+                if (Find.WorldObjects.Contains(worldObject))
+                {
+                    Find.WorldObjects.Remove(worldObject);
+                }
             }
         }
 
@@ -901,6 +883,46 @@ namespace RimWorldOnlineCity
             {
                 var worldObject = GetOtherByServerId(worldObjectEntry.PlaceServerId, allWorldObjectsByID);
 
+                // Якщо це склад речей (червоне яблуко)
+                if (worldObjectEntry.Type != TradeWorldObjectEntryType.TradeOrder)
+                {
+                    var storage = worldObjectEntry as TradeThingStorage;
+                    bool isEmpty = storage?.Things == null || storage.Things.Count == 0;
+
+                    // Перевіряємо, чи є на цьому тайлі будь-яка база/колонія гравця
+                    bool hasSettlementOnTile = false;
+                    for (int sIdx = 0; sIdx < allWorldObjects.Count; sIdx++)
+                    {
+                        var wo = allWorldObjects[sIdx];
+                        if (wo is Settlement s && wo.Tile == worldObjectEntry.Tile && (s.Faction?.IsPlayer ?? false))
+                        {
+                            hasSettlementOnTile = true;
+                            break;
+                        }
+                    }
+
+                    // ВИПРАВЛЕННЯ: Якщо на тайлі вже стоїть колонія (де є кнопка біржі) АБО на складі 0 речей:
+                    // червоне яблуко взагалі НЕ спавнимо, а якщо воно там уже було — безповоротно видаляємо!
+                    if (hasSettlementOnTile || isEmpty)
+                    {
+                        for (int i = allWorldObjects.Count - 1; i >= 0; i--)
+                        {
+                            var wo = allWorldObjects[i];
+                            if (wo is TradeThingsOnline tto && tto.Tile == worldObjectEntry.Tile)
+                            {
+                                allWorldObjectsByID.Remove(tto.ID);
+                                allWorldObjects.RemoveAt(i);
+                                ConverterServerId.Remove(worldObjectEntry.PlaceServerId);
+                                if (Find.WorldObjects.Contains(tto))
+                                {
+                                    Find.WorldObjects.Remove(tto);
+                                }
+                            }
+                        }
+                        return; // Завершуємо: червоне яблуко не спавниться поверх колонії!
+                    }
+                }
+
                 if (worldObject == null)
                 {
                     if (worldObjectEntry.Type == TradeWorldObjectEntryType.TradeOrder)
@@ -908,7 +930,6 @@ namespace RimWorldOnlineCity
                         worldObject = (WorldObjectBaseOnline)WorldObjectMaker.MakeWorldObject(ModDefOf.TradeOrdersOnline);
                         ((TradeOrdersOnline)worldObject).TradeOrders = new List<TradeOrderShort> { (TradeOrderShort)worldObjectEntry };
                         WorldObject_TradeOrdersOnline.Add((TradeOrdersOnline)worldObject);
-                        if (MainHelper.DebugMode) Loger.Log($"Client WorldObject_TradeOrdersOnline.Add Tile={worldObject.Tile} load={worldObjectEntry.Tile}");
                     }
                     else
                     {
@@ -919,12 +940,10 @@ namespace RimWorldOnlineCity
                     worldObject.SetFaction(Faction.OfPlayer);
                     worldObject.Tile = worldObjectEntry.Tile;
                     Find.WorldObjects.Add(worldObject);
-                    if (MainHelper.DebugMode) Loger.Log($"Client WorldObject_TradeOrdersOnline Set0 Tile={worldObject.Tile} load={worldObjectEntry.Tile}");
 
-                    ConverterServerId.Add(worldObjectEntry.PlaceServerId, worldObject.ID);
-                    allWorldObjectsByID.Add(worldObject.ID, worldObject);
-                    allWorldObjects.Add(worldObject);
-                    Loger.Log("Add " + (worldObjectEntry.Type == TradeWorldObjectEntryType.TradeOrder ? "TradeOrderShort greenApp " : "TradeThingStorage redApp")
+                    ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    allWorldObjectsByID[worldObject.ID] = worldObject;
+                    Loger.Log("Add " + (worldObjectEntry.Type == TradeWorldObjectEntryType.TradeOrder ? "TradeOrderShort greenApp " : "TradeThingStorage redApp ")
                         + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name + " " + worldObjectEntry.LoginOwner);
                 }
                 else
@@ -952,7 +971,6 @@ namespace RimWorldOnlineCity
                 }
 
                 worldObject.Tile = worldObjectEntry.Tile;
-                if (MainHelper.DebugMode) Loger.Log($"Client WorldObject_TradeOrdersOnline Set Tile={worldObject.Tile} load={worldObjectEntry.Tile}");
             }
             catch (Exception ex)
             {
@@ -982,7 +1000,10 @@ namespace RimWorldOnlineCity
                         allWorldObjectsByID.Remove(worldObject.ID);
                         allWorldObjects.Remove(worldObject);
                         ConverterServerId.Remove(worldObjectEntry.PlaceServerId);
-                        Find.WorldObjects.Remove(worldObject);
+                        if (Find.WorldObjects.Contains(worldObject))
+                        {
+                            Find.WorldObjects.Remove(worldObject);
+                        }
                         WorldObject_TradeOrdersOnline.Remove(worldObjectTO);
                     }
                 }
@@ -991,7 +1012,10 @@ namespace RimWorldOnlineCity
                     allWorldObjectsByID.Remove(worldObject.ID);
                     allWorldObjects.Remove(worldObject);
                     ConverterServerId.Remove(worldObjectEntry.PlaceServerId);
-                    Find.WorldObjects.Remove(worldObject);
+                    if (Find.WorldObjects.Contains(worldObject))
+                    {
+                        Find.WorldObjects.Remove(worldObject);
+                    }
                 }
             }
         }
@@ -1007,9 +1031,6 @@ namespace RimWorldOnlineCity
         }
 
         #region Неігрові об'єкти планети
-        /// <summary>
-        /// Видалення та додавання поселень NPC без множинних WorldUpdate() та подвійного пошуку.
-        /// </summary>
         private static void ApplyNonPlayerWorldObject(ModelPlayToClient fromServ)
         {
             try
@@ -1089,15 +1110,6 @@ namespace RimWorldOnlineCity
                                 npcBase.Name = toAdd.Name;
                                 Find.WorldObjects.Add(npcBase);
                             }
-                            else
-                            {
-                                Log.Warning("Faction is missing or not found : " + toAdd.FactionGroup);
-                                Loger.Log("Skipping ToAdd Settlement : " + toAdd.Name);
-                            }
-                        }
-                        else
-                        {
-                            Loger.Log("Can't Add Settlement. Tile is already occupied " + Find.WorldObjects.SettlementAt(toAdd.Tile), Loger.LogLevel.WARNING);
                         }
                     }
                 }
@@ -1122,9 +1134,6 @@ namespace RimWorldOnlineCity
         #endregion
 
         #region Фракції
-        /// <summary>
-        /// Оновлення списку фракцій на карті за O(N + M) без вкладених LINQ-викликів.
-        /// </summary>
         private static void ApplyFactionsToWorld(ModelPlayToClient fromServ)
         {
             try
@@ -1188,15 +1197,10 @@ namespace RimWorldOnlineCity
                                 OCFactionManager.AddNewFaction(toAdd);
                                 existingKeys.Add(new FactionKey(toAdd.loadID, toAdd.DefName));
                             }
-                            else
-                            {
-                                Loger.Log("Failed to add faction. Faction already exists. > " + toAdd.LabelCap, Loger.LogLevel.ERROR);
-                            }
                         }
                         catch
                         {
                             Loger.Log("Error faction to add LabelCap >> " + toAdd.LabelCap, Loger.LogLevel.ERROR);
-                            Loger.Log("Error faction to add DefName >> " + toAdd.DefName, Loger.LogLevel.ERROR);
                         }
                     }
                 }

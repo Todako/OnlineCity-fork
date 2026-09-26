@@ -1,4 +1,5 @@
-﻿using Model;
+﻿using HarmonyLib;
+using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
 using RimWorld;
@@ -9,7 +10,9 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Transfer;
+using UnityEngine;
 using Verse;
+using Verse.Sound;
 
 namespace RimWorldOnlineCity
 {
@@ -38,9 +41,6 @@ namespace RimWorldOnlineCity
             return result;
         }
 
-        /// <summary>
-        /// Заповнює переданий список об'єктами тайла без зайвих виділень у пам'яті.
-        /// </summary>
         public static void WorldObjectsByTile(int tileID, List<WorldObject> outList)
         {
             outList.Clear();
@@ -50,10 +50,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Повертає всі ігрові об'єкти гравця на карті світу (поселення та каравани).
-        /// ОПТИМІЗАЦІЯ: оптимізована місткість списку (16 замість all.Count) економить пам'ять.
-        /// </summary>
         public static List<WorldObject> WorldObjectsPlayer()
         {
             var all = UpdateWorldController.allWorldObjects;
@@ -71,9 +67,6 @@ namespace RimWorldOnlineCity
             return list;
         }
 
-        /// <summary>
-        /// Заповнює переданий список об'єктами гравця без виділення нового списку в пам'яті.
-        /// </summary>
         public static void FillWorldObjectsPlayer(List<WorldObject> outList)
         {
             outList.Clear();
@@ -90,10 +83,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Розраховує дистанцію та вартість доставки вантажу між об'єктами світу.
-        /// ОПТИМІЗАЦІЯ: захист від NRE при toWorldObject == null, кешування перекладів та StringBuilder.
-        /// </summary>
         public static string CargoDeliveryCalc(WorldObject fromWorldObject, WorldObject toWorldObject, List<ThingTrade> things, out int cost, out int dist)
         {
             dist = (fromWorldObject != null && toWorldObject != null)
@@ -171,9 +160,6 @@ namespace RimWorldOnlineCity
             return MoveSelectThings(fromWorldObject, toWorldObject, select, finish);
         }
 
-        /// <summary>
-        /// Переміщує вибрані речі між об'єктами світу (поселення, каравани, біржові сховища).
-        /// </summary>
         public static bool MoveSelectThings(WorldObject fromWorldObject, WorldObject toWorldObject, Dictionary<Thing, int> select, Action finish = null)
         {
             try
@@ -298,9 +284,6 @@ namespace RimWorldOnlineCity
             return true;
         }
 
-        /// <summary>
-        /// Відокремлює та відв'язує вибрані речі від домашньої карти гравця.
-        /// </summary>
         public static List<Thing> DeSpawnMap(Dictionary<Thing, int> select)
         {
             var freeThings = new List<Thing>(select.Count);
@@ -323,10 +306,6 @@ namespace RimWorldOnlineCity
             return freeThings;
         }
 
-        /// <summary>
-        /// Відокремлює та відв'язує вибрані речі від каравану.
-        /// ОПТИМІЗАЦІЯ: усунено алокацію списків для пішаків із порожнім інвентарем.
-        /// </summary>
         public static List<Thing> DeSpawnCaravan(Dictionary<Thing, int> select, Caravan caravan)
         {
             var freeThings = new List<Thing>(select.Count);
@@ -359,7 +338,6 @@ namespace RimWorldOnlineCity
 
             var caravanPawns = caravan.PawnsListForReading;
 
-            // 1-й прохід: обробка пішаків
             foreach (var pair in select)
             {
                 if (!(pair.Key is Pawn pawn)) continue;
@@ -384,7 +362,6 @@ namespace RimWorldOnlineCity
                 freeThings.Add(pawn);
             }
 
-            // 2-й прохід: обробка звичайних предметів
             foreach (var pair in select)
             {
                 if (pair.Key is Pawn) continue;
@@ -402,14 +379,10 @@ namespace RimWorldOnlineCity
             return freeThings;
         }
 
-        /// <summary>
-        /// Повне знищення речей (пішаків та предметів) без LINQ-сортування.
-        /// </summary>
         public static void DestroyThings(List<Thing> things)
         {
-            if (things == null || things.Count == 0) return;
+            if (things == null) return;
 
-            // 1-й прохід: спочатку звичайні речі
             for (int i = 0; i < things.Count; i++)
             {
                 var thing = things[i];
@@ -417,7 +390,6 @@ namespace RimWorldOnlineCity
                 thing.Destroy();
             }
 
-            // 2-й прохід: знищення пішаків
             for (int i = 0; i < things.Count; i++)
             {
                 var thing = things[i];
@@ -452,9 +424,6 @@ namespace RimWorldOnlineCity
             return sendThings;
         }
 
-        /// <summary>
-        /// Пошук цільового об'єкта світу за даними моделі без важких LINQ-сортувань.
-        /// </summary>
         public static WorldObject GetPlace(IModelPlace modelPlace, bool softSettlement = true, bool softNewCaravan = false)
         {
             if (modelPlace.PlaceServerId <= 0)
@@ -533,7 +502,7 @@ namespace RimWorldOnlineCity
                 if (thing is Pawn pawn)
                 {
                     GenSpawn.Spawn(pawn, cell, map);
-                    if (pawn.Dead)
+                    if (pawn.Dead && !Find.WorldPawns.AllPawnsDead.Contains(pawn))
                     {
                         Find.WorldPawns.AllPawnsDead.Add(pawn);
                     }
@@ -555,7 +524,7 @@ namespace RimWorldOnlineCity
                 {
                     caravan.AddPawn(pawn, true);
                     GameUtils.SpawnSetupOnCaravan(pawn);
-                    if (pawn.Dead)
+                    if (pawn.Dead && !Find.WorldPawns.AllPawnsDead.Contains(pawn))
                     {
                         Find.WorldPawns.AllPawnsDead.Add(pawn);
                     }
@@ -600,15 +569,11 @@ namespace RimWorldOnlineCity
 
             if (text != null)
             {
-                ModBaseData.RunMainThread(() =>
-                {
-                    Find.LetterStack.ReceiveLetter(
-                        "OCity_UpdateWorld_Trade".Translate(),
-                        text,
-                        LetterDefOf.PositiveEvent,
-                        targetInfo,
-                        null);
-                });
+                Find.LetterStack.ReceiveLetter("OCity_UpdateWorld_Trade".Translate(),
+                    text,
+                    LetterDefOf.PositiveEvent,
+                    targetInfo,
+                    null);
             }
         }
 
@@ -635,7 +600,7 @@ namespace RimWorldOnlineCity
         }
 
         public static void SendThingsWithDestroy(Dictionary<Thing, int> select,
-            Caravan caravan,
+            WorldObject source,
             CaravanOnline destination)
         {
             if (!SessionClientController.Data.BackgroundSaveGameOff)
@@ -643,7 +608,7 @@ namespace RimWorldOnlineCity
                 List<ThingEntry> sendThings;
                 using (var gameError = new CatchGameError())
                 {
-                    var freeThing = caravan == null ? DeSpawnMap(select) : DeSpawnCaravan(select, caravan);
+                    var freeThing = (source is Caravan c) ? DeSpawnCaravan(select, c) : DeSpawnMap(select);
                     if (gameError.GameError != null) Loger.Log("Client SendThingsWithDestroy GameError DeSpawn");
                     gameError.GameError = null;
 
@@ -658,13 +623,9 @@ namespace RimWorldOnlineCity
         public static FloatMenuOption ExchangeOfGoods_GetFloatMenu(CaravanOnline that, Action actionFloatMenu)
         {
             bool disTrade = GameUtils.IsProtectingNovice();
-            string label = "OCity_Caravan_Trade".Translate(that.OnlinePlayerLogin + " " + that.OnlineName);
-            if (disTrade)
-            {
-                label += "OCity_Caravan_Abort".Translate().ToString() + " " + MainHelper.MinCostForTrade;
-            }
-
-            var fmoTrade = new FloatMenuOption(label, actionFloatMenu, MenuOptionPriority.Default, null, null, 0f, null, that);
+            var fmoTrade = new FloatMenuOption("OCity_Caravan_Trade".Translate(that.OnlinePlayerLogin + " " + that.OnlineName)
+                + (disTrade ? "OCity_Caravan_Abort".Translate().ToString() + " " + MainHelper.MinCostForTrade.ToString() : ""),
+                actionFloatMenu, MenuOptionPriority.Default, null, null, 0f, null, that);
 
             if (disTrade)
             {
@@ -673,7 +634,7 @@ namespace RimWorldOnlineCity
             return fmoTrade;
         }
 
-        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, Caravan source)
+        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, WorldObject source)
         {
             if (destination.OnlineWObject == null)
             {
@@ -681,7 +642,21 @@ namespace RimWorldOnlineCity
                 return;
             }
 
-            var goods = GameUtils.GetAllThings(source);
+            List<Thing> goods;
+            if (source is Caravan caravan)
+            {
+                goods = GameUtils.GetAllThings(caravan, thingOnPawn: true);
+            }
+            else if (source is Settlement settlement && settlement.Map != null)
+            {
+                goods = GameUtils.GetAllThings(settlement.Map, thingOnPawn: true);
+            }
+            else
+            {
+                Log.Error("OCity: Unknown trade source");
+                return;
+            }
+
             Dialog_TradeOnline form = null;
             form = new Dialog_TradeOnline(goods,
                 destination.OnlinePlayerLogin,
@@ -691,10 +666,10 @@ namespace RimWorldOnlineCity
             Find.WindowStack.Add(form);
         }
 
-        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, Caravan source, List<TransferableOneWay> goods)
+        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, WorldObject source, List<TransferableOneWay> goods)
             => ExchangeOfGoods_DoAction(destination, source, goods.TransferableOneWaysToDictionary());
 
-        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, Caravan source, Dictionary<Thing, int> goods)
+        public static void ExchangeOfGoods_DoAction(CaravanOnline destination, WorldObject source, Dictionary<Thing, int> goods)
         {
             if (destination.OnlineWObject == null)
             {
@@ -702,6 +677,70 @@ namespace RimWorldOnlineCity
                 return;
             }
             SendThingsWithDestroy(goods, source, destination);
+        }
+    }
+
+    /// <summary>
+    /// Гармоні-патч для перехоплення прямого ПКМ на карті світу по онлайн-каравану.
+    /// Дозволяє одразу правим кліком по прибулому онлайн-каравану відкрити меню торгівлі з домашньої колонії
+    /// БЕЗ попереднього виділення колонії або каравану!
+    /// </summary>
+    [HarmonyPatch(typeof(WorldSelector), "AutoOrder")]
+    internal static class WorldSelector_AutoOrder_DirectTrade_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(WorldSelector __instance)
+        {
+            // Якщо у гравця вже виділено власний рухомий караван — нехай ваніль обробляє команди руху
+            if (__instance.SingleSelectedObject is Caravan) return true;
+
+            int targetTile = GenWorld.MouseTile();
+            if (targetTile < 0) return true;
+
+            var objectsOnTile = Find.WorldObjects.ObjectsAt(targetTile);
+            Settlement localSettlement = null;
+            Caravan localCaravan = null;
+
+            // 1. Шукаємо базу або наш караван на цій клітинці
+            foreach (var o in objectsOnTile)
+            {
+                if (o is Settlement s && (s.Faction?.IsPlayer ?? false))
+                {
+                    localSettlement = s;
+                    break;
+                }
+                if (o is Caravan c && (c.Faction?.IsPlayer ?? false))
+                {
+                    localCaravan = c;
+                }
+            }
+
+            WorldObject localSource = (WorldObject)localSettlement ?? localCaravan;
+            if (localSource == null) return true; // На тайлі немає нашого поселення чи каравану
+
+            // 2. Шукаємо каравани інших гравців
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            foreach (var o in objectsOnTile)
+            {
+                if (o is CaravanOnline targetOnline && targetOnline.OnlineWObject != null
+                    && targetOnline.OnlinePlayerLogin != SessionClientController.My?.Login)
+                {
+                    var opt = ExchengeUtils.ExchangeOfGoods_GetFloatMenu(targetOnline, () =>
+                    {
+                        ExchengeUtils.ExchangeOfGoods_DoAction(targetOnline, localSource);
+                    });
+                    options.Add(opt);
+                }
+            }
+
+            if (options.Count > 0)
+            {
+                Find.WindowStack.Add(new FloatMenu(options));
+                SoundDefOf.FloatMenu_Open.PlayOneShotOnCamera(null);
+                return false; // Повністю перехоплюємо ПКМ і виводимо меню обміну!
+            }
+
+            return true;
         }
     }
 }

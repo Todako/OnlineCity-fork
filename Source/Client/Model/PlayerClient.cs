@@ -28,10 +28,6 @@ namespace RimWorldOnlineCity
         private string TextInfoExtended = "";
         private DateTime TextInfoTime = DateTime.MinValue;
 
-        /// <summary>
-        /// Швидке оновлення посилання на гравця з кешу.
-        /// ОПТИМІЗАЦІЯ: замінено подвійний пошук (ContainsKey + []) на швидкий TryGetValue.
-        /// </summary>
         public PlayerClient Refrash()
         {
             if (Public?.Login != null && SessionClientController.Data.Players.TryGetValue(Public.Login, out var player))
@@ -60,8 +56,7 @@ namespace RimWorldOnlineCity
         private DateTime AllWorldObjectsTime = DateTime.MinValue;
 
         /// <summary>
-        /// Розрахунок загальної вартості караванів і поселень гравця.
-        /// ОПТИМІЗАЦІЯ: ліквідовано конкатенацію рядків у циклі через StringBuilder.
+        /// Розрахунок вартості з захистом від дублювання об'єктів за PlaceServerId.
         /// </summary>
         public WorldObjectsValues CostWorldObjects(long serverId = 0)
         {
@@ -70,12 +65,16 @@ namespace RimWorldOnlineCity
             {
                 var detailsSb = new StringBuilder(WObjects.Count * 64);
                 var detailsExtSb = new StringBuilder(WObjects.Count * 64);
+                var processedServerIds = new HashSet<long>();
 
                 for (int i = 0; i < WObjects.Count; i++)
                 {
                     var wo = WObjects[i];
                     if (wo?.OnlineWObject == null) continue;
                     if (serverId != 0 && wo.OnlineWObject.PlaceServerId != serverId) continue;
+
+                    // Захист від дублікатів
+                    if (!processedServerIds.Add(wo.OnlineWObject.PlaceServerId)) continue;
 
                     values.MarketValue += wo.OnlineWObject.MarketValue;
                     values.MarketValuePawn += wo.OnlineWObject.MarketValuePawn;
@@ -106,10 +105,6 @@ namespace RimWorldOnlineCity
             return values;
         }
 
-        /// <summary>
-        /// Формування опису профілю гравця з кешуванням на 5 секунд.
-        /// ОПТИМІЗАЦІЯ: збирання рядків через StringBuilder без зайвих проміжних об'єктів.
-        /// </summary>
         private void UpdateTextInfoCalc()
         {
             if (TextInfoTime >= DateTime.UtcNow.AddSeconds(-5)) return;
@@ -117,7 +112,6 @@ namespace RimWorldOnlineCity
             var sb = new StringBuilder(512);
             var sbExt = new StringBuilder(512);
 
-            // Блок 1: Інформація про державу
             if (!string.IsNullOrEmpty(Public.StateName))
             {
                 string statePos = string.IsNullOrEmpty(Public.StatePositionName)
@@ -139,7 +133,6 @@ namespace RimWorldOnlineCity
                 sbExt.AppendLine();
             }
 
-            // Блок 2: Контактні дані та статус PVP
             var info2Sb = new StringBuilder(256);
             if (SessionClientController.Data.GeneralSettings.EnablePVP)
             {
@@ -172,7 +165,6 @@ namespace RimWorldOnlineCity
             AllWorldObjectsTime = DateTime.UtcNow;
             AllWorldObjects = CostWorldObjects();
 
-            // Блок 3: Статистика поселень та ринкова вартість
             string s = "OCity_PlayerClient_LastTick".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_LastSaveTime".Translate() + Environment.NewLine
                 + "OCity_PlayerClient_baseCount".Translate() + Environment.NewLine

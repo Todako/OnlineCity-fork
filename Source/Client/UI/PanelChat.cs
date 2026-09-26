@@ -10,8 +10,8 @@ namespace RimWorldOnlineCity.UI
 {
     public class PanelChat : DialogControlBase
     {
-        private DateTime DataLastChatsTime; // час отриманого пакета даних чату від сервера
-        private DateTime DataLastChatsTimeUpdateTime; // час останнього оновлення списків в інтерфейсі (раз на 5 сек)
+        private DateTime DataLastChatsTime;
+        private DateTime DataLastChatsTimeUpdateTime;
         private ListBox<string> lbCannals;
         private int lbCannalsLastSelectedIndex = -1;
         private bool NeedUpdateChat;
@@ -27,7 +27,6 @@ namespace RimWorldOnlineCity.UI
         private DateTime ChatLastPostTime;
         public string ChatInputText = "";
 
-        // Кешовані рядки інтерфейсу (Zero-GC в OnGUI)
         private static string CachedPlayersLabel;
         private static string CachedChannelCreateTip;
         private static string CachedChannelCloseTip;
@@ -89,7 +88,6 @@ namespace RimWorldOnlineCity.UI
             int selectCannalId = 0;
             bool hasSelectedCannal = false;
 
-            // 1. Блок швидкої синхронізації стану під lock (без важкого GUI-рендерингу)
             lock (chats)
             {
                 chatsCount = chats.Count;
@@ -99,7 +97,6 @@ namespace RimWorldOnlineCity.UI
                     SessionClientController.Data.ChatNotReadPost = 0;
                 }
 
-                // Адаптивний розрахунок висоти панелі каналів без decimal
                 if (lbCannalsHeight == 0 || PanelLastHeight != inRect.height)
                 {
                     PanelLastHeight = inRect.height;
@@ -126,10 +123,12 @@ namespace RimWorldOnlineCity.UI
                     lbCannals.SelectedIndex = 0;
                 }
 
+                // ВИПРАВЛЕННЯ: обов'язкове встановлення Area при створенні lbPlayers
                 if (lbPlayers == null)
                 {
                     lbPlayers = new ListBox<ListBoxPlayerItem>
                     {
+                        Area = new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight + 22f, leftPanelWidth, inRect.height - (iconWidthSpace + lbCannalsHeight + 22f)),
                         UsePanelText = true
                     };
                     lbPlayers.OnClick += (index, item) =>
@@ -154,7 +153,6 @@ namespace RimWorldOnlineCity.UI
                     NeedUpdateChat = true;
                 }
 
-                // Оновлення списків раз на 5 секунд або при надходженні нового пакета
                 if (nowUpdateChat || DataLastChatsTimeUpdateTime < DateTime.UtcNow.AddSeconds(-5))
                 {
                     DataLastChatsTimeUpdateTime = DateTime.UtcNow;
@@ -169,7 +167,6 @@ namespace RimWorldOnlineCity.UI
                     if (updateLogHash != UpdateLogHash)
                     {
                         UpdateLogHash = updateLogHash;
-                        Loger.Log($"Client UpdateChats chats={chats.Count} players={SessionClientController.Data.Players?.Count ?? 0}");
                     }
 
                     var cannalNames = new List<string>(chats.Count);
@@ -178,6 +175,11 @@ namespace RimWorldOnlineCity.UI
                         cannalNames.Add(chats[i].Name);
                     }
                     lbCannals.DataSource = cannalNames;
+
+                    if (lbCannals.SelectedIndex >= chats.Count)
+                    {
+                        lbCannals.SelectedIndex = 0;
+                    }
 
                     if (lbCannalsGoToChat != null)
                     {
@@ -189,7 +191,6 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    // Формування списку учасників чату
                     var playersData = new List<ListBoxPlayerItem>(32);
                     var alreadyLogin = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -199,13 +200,11 @@ namespace RimWorldOnlineCity.UI
 
                         AddGroupTitle(playersData, alreadyLogin, CachedExchengeChatTitle);
 
-                        // Власник каналу
                         var ownerItem = AddPlayerItem(playersData, alreadyLogin, sc.OwnerLogin,
                             $"<img pl_{sc.OwnerLogin}>" + FormatOnlineName(IsPlayerOnline(sc.OwnerLogin), "★ " + sc.OwnerLogin));
                         ownerItem.Tooltip += CachedChannelOwnTip;
                         ownerItem.InChat = true;
 
-                        // Учасники каналу
                         if (sc.PartyLogin != null)
                         {
                             var partyList = new List<string>(sc.PartyLogin);
@@ -240,7 +239,6 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    // Решта гравців із загального каналу
                     if (chats.Count > 0 && chats[0].PartyLogin != null)
                     {
                         var chat0Party = chats[0].PartyLogin;
@@ -284,13 +282,11 @@ namespace RimWorldOnlineCity.UI
                 }
             }
 
-            // 2. Відмальовка списків каналів і гравців
             Widgets.Label(new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight, leftPanelWidth, 22f), CachedPlayersLabel);
 
             lbCannals?.Drow();
             lbPlayers?.Drow();
 
-            // Кнопки дій із каналами (підказки викликаються лише при Mouse.IsOver)
             var iconRect = new Rect(inRect.x, inRect.y, iconWidth, iconWidth);
             if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedChannelCreateTip);
             if (Widgets.ButtonImage(iconRect, GeneralTexture.IconAddTex))
@@ -318,7 +314,6 @@ namespace RimWorldOnlineCity.UI
                 }
             }
 
-            // 3. Перевірка та оновлення стрічки повідомлень активного каналу під коротким lock
             lock (chats)
             {
                 if (lbCannals != null && lbCannals.SelectedIndex >= 0 && chats.Count > lbCannals.SelectedIndex)
@@ -362,7 +357,6 @@ namespace RimWorldOnlineCity.UI
                 }
             }
 
-            // 4. Відмальовка чату та робота з полем вводу БЕЗ утримання блокування
             if (hasSelectedCannal)
             {
                 var chatAreaOuter = new Rect(inRect.x + leftPanelWidth + 10f, inRect.y, inRect.width - leftPanelWidth - 10f, inRect.height - 30f);
@@ -415,10 +409,6 @@ namespace RimWorldOnlineCity.UI
             }
         }
 
-        /// <summary>
-        /// Формування тексту чату в межах ліміту 5000 символів.
-        /// ОПТИМІЗАЦІЯ: повне усунення LINQ Reverse().Where().Aggregate() на користь прямого StringBuilder.
-        /// </summary>
         private void BuildChatBoxText(Chat targetCannal)
         {
             var posts = targetCannal.Posts;
@@ -548,6 +538,14 @@ namespace RimWorldOnlineCity.UI
                     SessionClientController.Command((connect) =>
                     {
                         connect.PostingChat(currentSelect.Id, "/exitChat");
+
+                        // ВИПРАВЛЕННЯ: скидання вибору на загальний канал та примусове оновлення списку каналів
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            if (lbCannals != null) lbCannals.SelectedIndex = 0;
+                            DataLastChatsTime = DateTime.MinValue;
+                            NeedUpdateChat = true;
+                        });
                     });
                 }
             };

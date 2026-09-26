@@ -31,7 +31,6 @@ namespace RimWorldOnlineCity
 
         private readonly string _cachedTitle;
 
-        // ОПТИМІЗАЦІЯ: кешування перекладів кнопок інтерфейсу (усуває щокадрові виклики Translate в OnGUI)
         private static string CachedAcceptButton;
         private static string CachedResetButton;
         private static string CachedCancelButton;
@@ -148,16 +147,11 @@ namespace RimWorldOnlineCity
             DrawMassInfo(rect, this.MassUsage, MassCapacity, -9999f, true);
         }
 
-        // Поля кешування вимірювання маси
         private static float _lastUsedMass = -99999f;
         private static float _lastAvailableMass = -99999f;
         private static string _cachedMassText;
         private static Vector2 _cachedMassVector;
 
-        /// <summary>
-        /// Відмальовує інформацію про масу.
-        /// ОПТИМІЗАЦІЯ: рядок та розміри тексту кешуються, запобігаючи викликам Text.CalcSize щокадру.
-        /// </summary>
         public static void DrawMassInfo(Rect rect, float usedMass, float availableMass, float lastMassFlashTime = -9999f, bool alignRight = false)
         {
             GUI.color = usedMass > availableMass ? Color.red : Color.gray;
@@ -221,10 +215,6 @@ namespace RimWorldOnlineCity
             this.CountToTransferChanged();
         }
 
-        /// <summary>
-        /// Створює віджет трансферу предметів.
-        /// ОПТИМІЗАЦІЯ: пряма передача списку без зайвої обгортки LINQ Select.
-        /// </summary>
         public static void CreateCaravanTransferableWidgets(
             List<TransferableOneWay> transferables,
             out TransferableOneWayWidget itemsTransfer,
@@ -242,7 +232,7 @@ namespace RimWorldOnlineCity
                 thingCountTip,
                 true,
                 ignorePawnInventoryMass,
-                false,
+                true, // ВИПРАВЛЕННЯ: передаємо true замість false для includePawns!
                 availableMassGetter,
                 24f,
                 ignoreCorpsesGearAndInventoryMass);

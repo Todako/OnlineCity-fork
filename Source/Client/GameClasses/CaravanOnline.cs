@@ -211,7 +211,14 @@ namespace RimWorldOnlineCity
             {
                 fmoTrade = ExchengeUtils.ExchangeOfGoods_GetFloatMenu(this, () =>
                 {
-                    caravan.pather.StartPath(this.Tile, new CaravanArrivalAction_VisitOnline(this, "exchangeOfGoods"), true);
+                    if (caravan.Tile == this.Tile)
+                    {
+                        ExchengeUtils.ExchangeOfGoods_DoAction(this, caravan);
+                    }
+                    else
+                    {
+                        caravan.pather.StartPath(this.Tile, new CaravanArrivalAction_VisitOnline(this, "exchangeOfGoods"), true);
+                    }
                 });
             }
             catch
@@ -290,7 +297,6 @@ namespace RimWorldOnlineCity
         }
 
         #region Icons
-        // ОПТИМІЗАЦІЯ: спільні статичні матеріали для всіх караванів на планеті
         private static Material MatCaravanOn;
         private static Material MatCaravanOff;
 
