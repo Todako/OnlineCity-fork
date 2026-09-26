@@ -1,24 +1,24 @@
 ﻿using Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Transfer;
 
 namespace OCUnion
 {
     /// <summary>
-    /// Базовый класс ClientData независимый от римворлда и Verse 
+    /// Базовий клас ClientData, незалежний від RimWorld та коду Verse.
     /// </summary>
     public class ClientData
-    {        
+    {
         public DateTime UpdateTime = DateTime.MinValue;
 
         /// <summary>
-        /// Разница между UtcNow клиента и сервера + время передачи от сервера к клиенту (половина пинга)
+        /// Різниця між UtcNow клієнта і сервера + час передачі від сервера до клієнта (половина пінгу).
         /// </summary>
         public TimeSpan ServetTimeDelta = new TimeSpan(0);
+
         /// <summary>
-        /// Время обновления данных чата
+        /// Час оновлення даних чату.
         /// </summary>
         public TimeSpan Ping = new TimeSpan(0);
 
@@ -54,22 +54,55 @@ namespace OCUnion
         public bool LastServerConnectFail = false;
         public int ChatCountSkipUpdate = 0;
 
+        /// <summary>
+        /// Застосовує оновлення чатів без виділення зайвої пам'яті через LINQ.
+        /// </summary>
         public bool ApplyChats(ModelUpdateChat updateDate, ref string newStr)
         {
             int newPost = 0;
             newStr = "";
+
+            if (updateDate?.Chats == null || updateDate.Chats.Count == 0)
+                return false;
+
             if (Chats != null)
             {
-                foreach (var chat in updateDate.Chats)
+                for (int i = 0; i < updateDate.Chats.Count; i++)
                 {
-                    var cur = Chats.FirstOrDefault(c => c.Id == chat.Id);
+                    var chat = updateDate.Chats[i];
+                    Chat cur = null;
+
+                    // Швидкий пошук чату за індексом замість LINQ FirstOrDefault
+                    for (int j = 0; j < Chats.Count; j++)
+                    {
+                        if (Chats[j].Id == chat.Id)
+                        {
+                            cur = Chats[j];
+                            break;
+                        }
+                    }
+
                     if (cur != null)
                     {
-                        cur.Posts.AddRange(chat.Posts);
-                        var newPosts = chat.Posts.Where(p => p.OwnerLogin != _myLogin).ToList();
-                        newPost += newPosts.Count;
-                        if (newStr == "" && newPosts.Count > 0) newStr = chat.Name + ": " + newPosts[0].Message;
-                        chat.Posts = cur.Posts;
+                        if (chat.Posts != null && chat.Posts.Count > 0)
+                        {
+                            cur.Posts.AddRange(chat.Posts);
+
+                            // Підрахунок нових повідомлень без виділення нових списків у купі
+                            for (int p = 0; p < chat.Posts.Count; p++)
+                            {
+                                var post = chat.Posts[p];
+                                if (post.OwnerLogin != _myLogin)
+                                {
+                                    newPost++;
+                                    if (string.IsNullOrEmpty(newStr))
+                                    {
+                                        newStr = chat.Name + ": " + post.Message;
+                                    }
+                                }
+                            }
+                            chat.Posts = cur.Posts;
+                        }
 
                         if (chat.PartyLogin != null)
                         {

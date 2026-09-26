@@ -1,11 +1,10 @@
 ﻿using System;
-using System.Linq;
-using Transfer;
-using Model;
-using ServerOnlineCity.Model;
-using ServerOnlineCity.Common;
 using System.Collections.Generic;
+using Model;
 using OCUnion.Transfer.Model;
+using ServerOnlineCity.Common;
+using ServerOnlineCity.Model;
+using Transfer;
 
 namespace ServerOnlineCity.Services
 {
@@ -38,10 +37,8 @@ namespace ServerOnlineCity.Services
 
                 var myLogin = context.Player.Public.Login;
 
-                //Список игроков кого видим, а видим мы пока не построили консоль связи всех кто рядом в 10 клетках)
-                // ( ну или мы админ админ, модератор or discord)
+                // Список гравців, яких бачить гравець (до побудови консолі зв'язку — радіус 10 клітинок; модератори та discord бачать усіх)
                 var ps = StaticHelper.PartyLoginSee(context.Player);
-                //Копируем чат без лишнего и отфильтровываем посты   
 
                 foreach (var chatPair in context.Player.Chats)
                 {
@@ -56,20 +53,22 @@ namespace ServerOnlineCity.Services
                         LastChanged = ct.LastChanged,
                     };
 
-                    //Копируем чат без лишнего и отфильтровываем посты          
+                    // Копіюємо чат без зайвих даних та відфільтровуємо повідомлення
                     var ix = chatPair.Value;
                     var countOfPosts = ct.Posts.Count;
-                    var fullRequestMinCountPosts = 20;
+                    const int fullRequestMinCountPosts = 20;
+
                     if (fullRequest && countOfPosts - ((int)ix.Value + 1) < fullRequestMinCountPosts)
                     {
                         ix.Value = countOfPosts - fullRequestMinCountPosts - 1;
                         if (ix.Value < 0) ix.Value = 0;
                     }
 
-                    for (var i = (int)ix.Value + 1; i < countOfPosts; i++)
+                    int startIdx = (int)ix.Value + 1;
+                    for (int i = startIdx; i < countOfPosts; i++)
                     {
                         var post = ct.Posts[i];
-                        if (post.OnlyForPlayerLogin == null && ps.Contains(post.OwnerLogin) || post.OnlyForPlayerLogin == myLogin)
+                        if ((post.OnlyForPlayerLogin == null && ps.Contains(post.OwnerLogin)) || post.OnlyForPlayerLogin == myLogin)
                         {
                             resChat.Posts.Add(post);
                         }
@@ -77,7 +76,7 @@ namespace ServerOnlineCity.Services
 
                     ix.Value = countOfPosts - 1;
 
-                    // Если с с момента последнего изменения изменился список логинов ( добавили или удалили, обновляем список)                    
+                    // Якщо від моменту останньої зміни змінився список учасників — надсилаємо оновлений перелік
                     if (fullRequest || ct.LastChanged > ix.Time)
                     {
                         resChat.PartyLogin = ct.PartyLogin;
