@@ -14,14 +14,14 @@ namespace RimWorldOnlineCity.Services
 
     /// <summary>
     /// Служба фонового асинхронного завантаження довільних пакетів даних за їхнім хешем.
-    /// Забезпечує пакетне завантаження (batching) по 10 штук та локальне кешування в пам'яті.
+    /// Забезпечує пакетне завантаження блоками по 10 штук та локальне кешування в пам'яті.
     /// </summary>
     public class AnyLoad
     {
         private static Thread Downloader = null;
         private static readonly List<AnyLoad> Tasks = new List<AnyLoad>();
 
-        // Потокобезпечний кеш з лімітом місткості
+        // Потокобезпечний кеш з обмеженням місткості
         private static readonly Dictionary<long, AnyLoadTask> Database = new Dictionary<long, AnyLoadTask>(512);
         private static readonly object DbLock = new object();
         private static DateTime LastDbCleanup = DateTime.UtcNow;
@@ -47,7 +47,7 @@ namespace RimWorldOnlineCity.Services
 
         public void Cancel()
         {
-            Loger.Log("AnyLoadDownloadThread Cancel");
+            Loger.Log("AnyLoad: скасування завдання");
             lock (Tasks)
             {
                 Tasks.Remove(this);
@@ -96,11 +96,11 @@ namespace RimWorldOnlineCity.Services
 
                     if (!DownloadCheckConnect())
                     {
-                        Error("Load: error connect");
+                        Error("AnyLoad: помилка підключення до сервера");
                         break;
                     }
 
-                    // 1. Однопрохідне розділення: що вже є в кеші, а що треба завантажити за O(N)
+                    // 1. Однопрохідне розділення: що вже є в кеші, а що треба завантажити
                     var neededToDownload = new List<AnyLoadTask>();
                     int resolvedCount = 0;
                     var now = DateTime.UtcNow;
@@ -129,7 +129,7 @@ namespace RimWorldOnlineCity.Services
                         }
                     }
 
-                    // Повідомляємо про початковий прогрес із кешу
+                    // Оповіщення про початковий прогрес із кешу
                     if (resolvedCount > 0 && currentTask.ListLoad.Count > 0)
                     {
                         currentTask.TaskProgress?.Invoke(currentTask, (int)(100L * resolvedCount / currentTask.ListLoad.Count));
@@ -139,7 +139,7 @@ namespace RimWorldOnlineCity.Services
                     bool hasError = false;
                     for (int chunkStart = 0; chunkStart < neededToDownload.Count; chunkStart += 10)
                     {
-                        // Перевіряємо чи завдання не було скасовано гравцем
+                        // Перевіряємо, чи не було скасовано поточне завдання
                         lock (Tasks)
                         {
                             if (!Tasks.Contains(currentTask)) break;
@@ -147,7 +147,7 @@ namespace RimWorldOnlineCity.Services
 
                         if (!DownloadCheckConnect())
                         {
-                            Error("Load: error connect.");
+                            Error("AnyLoad: втрачено підключення до сервера.");
                             hasError = true;
                             break;
                         }
@@ -167,13 +167,13 @@ namespace RimWorldOnlineCity.Services
 
                     if (hasError) break;
 
-                    // Завершуємо поточну задачу
+                    // Завершуємо задачу
                     TasksRemove(currentTask);
                 }
             }
             catch (Exception exp)
             {
-                Error("Load error: " + exp.ToString());
+                Error("AnyLoad помилка виконання: " + exp.ToString());
             }
             finally
             {
@@ -208,22 +208,25 @@ namespace RimWorldOnlineCity.Services
                     finishAction = that.TaskFinish;
                 }
             }
-            // Виклик колбеку за межами блокування усуває ризик взаємного блокування потоків (Deadlock)
+            // Виклик завершальної дії за межами блокування усуває Deadlock
             finishAction?.Invoke(that);
         }
 
         private static bool DownloadCheckConnect()
         {
-            while (SessionClient.Get.IsLogined && SessionClient.IsRelogin)
+            int waitCount = 0;
+            // Обмежене очікування повторного входу замість вічного циклу (максимум 5 секунд)
+            while (SessionClient.Get.IsLogined && SessionClient.IsRelogin && waitCount < 100)
             {
-                Thread.Sleep(10);
+                Thread.Sleep(50);
+                waitCount++;
             }
             return SessionClient.Get.IsLogined;
         }
 
         /// <summary>
         /// Запитує блок даних у сервера за списком хешів.
-        /// ОПТИМІЗАЦІЯ: список хешів формується без LINQ-викликів .Select().ToList().
+        /// ОПТИМІЗАЦІЯ: список хешів формується без створення проміжних ітераторів LINQ.
         /// </summary>
         private static void DownloadList(List<AnyLoadTask> download)
         {
@@ -241,7 +244,7 @@ namespace RimWorldOnlineCity.Services
 
             if (datas == null || datas.Count != download.Count)
             {
-                throw new ApplicationException("AnyLoad: bad response from server");
+                throw new ApplicationException("AnyLoad: отримана некоректна відповідь від сервера");
             }
 
             var now = DateTime.UtcNow;
@@ -268,7 +271,6 @@ namespace RimWorldOnlineCity.Services
                 Downloader = null;
             }
 
-            // Оповіщення про помилку поза блокуванням Tasks
             for (int i = 0; i < tasksToNotify.Count; i++)
             {
                 try
