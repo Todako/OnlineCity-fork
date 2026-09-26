@@ -5,36 +5,32 @@ using Transfer;
 
 namespace ServerOnlineCity.Services
 {
-    namespace ServerOnlineCity.Services
+    /// <summary>
+    /// Коректна ініціація розриву з'єднання (дисконекту) з повідомленням причини іншій стороні.
+    /// </summary>
+    internal sealed class DisconnectMe : IGenerateResponseContainer
     {
-        /// <summary>
-        /// Корректная инициация дисконнекта c сообщением причины другой стороне.
-        /// </summary>
-        internal sealed class DisconnectMe : IGenerateResponseContainer
+        public int RequestTypePackage => (int)PackageType.Request39Disconnect;
+
+        public int ResponseTypePackage => (int)PackageType.Response40Disconnect;
+
+        public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            public int RequestTypePackage => (int)PackageType.Request39Disconnect;
+            if (context.Player == null) return null;
+            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
+            result.Packet = GetInfo((ModelInt)request.Packet, context);
+            return result;
+        }
 
-            public int ResponseTypePackage => (int)PackageType.Response40Disconnect;
+        public ModelInt GetInfo(ModelInt packet, ServiceContext context)
+        {
+            var reason = (DisconnectReason)packet.Value;
 
-            public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
+            lock (context.Player)
             {
-                if (context.Player == null) return null;
-                var result = new ModelContainer() { TypePacket = ResponseTypePackage };
-                result.Packet = GetInfo((ModelInt)request.Packet, context);
-                return result;
-            }
+                context.Player.ExitReason = reason;
 
-            public ModelInt GetInfo(ModelInt packet, ServiceContext context)
-            {
-                var reason = (DisconnectReason)packet.Value;
-
-                lock (context.Player)
-                {
-                    context.Player.ExitReason = reason;
-
-                    var result = new ModelInt() { Value = (int)DisconnectReason.CloseConnection };
-                    return result;
-                }
+                return new ModelInt() { Value = (int)DisconnectReason.CloseConnection };
             }
         }
     }

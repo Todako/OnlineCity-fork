@@ -1,17 +1,22 @@
+using Model;
+using OCUnion;
+using OCUnion.Common;
+using OCUnion.Transfer;
+using OCUnion.Transfer.Model;
+using ServerOnlineCity.Common;
+using ServerOnlineCity.Model;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Model;
-using OCUnion;
-using OCUnion.Transfer.Model;
-using ServerOnlineCity.Common;
-using ServerOnlineCity.Mechanics;
-using ServerOnlineCity.Model;
 using Transfer;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Services
 {
+    /// <summary>
+    /// Головна служба циклічної синхронізації стану світу, поселень та статистики між клієнтом і сервером.
+    /// Викликається кожні кілька секунд під час активної гри.
+    /// </summary>
     internal sealed class PlayInfo : IGenerateResponseContainer
     {
         public int RequestTypePackage => (int)PackageType.Request11;
@@ -38,195 +43,199 @@ namespace ServerOnlineCity.Services
                 context.Disconnect("Possibly intruder");
                 return null;
             }
+
             lock (context.Player)
             {
                 var data = Repository.GetData;
-
                 var timeNow = DateTime.UtcNow;
-                var toClient = new ModelPlayToClient();
-                toClient.UpdateTime = timeNow;
+                var toClient = new ModelPlayToClient
+                {
+                    UpdateTime = timeNow
+                };
+
+                // 1. Отримання публічної інформації про інших гравців (виправлено тип на Model.Player)
                 if (packet.GetPlayersInfo != null && packet.GetPlayersInfo.Count > 0)
                 {
                     var pSee = StaticHelper.PartyLoginSee(context.Player);
-                    var pGet = new HashSet<string>(packet.GetPlayersInfo);
-                    pGet.IntersectWith(pSee);
+                    var playersInfo = new List<Player>(packet.GetPlayersInfo.Count);
 
-                    toClient.PlayersInfo = pGet
-                        .Select(l => Repository.GetPlayerByLogin(l))
-                        .Where(p => p != null)
-                        .Select(p => p.Public)
-                        //.Where(l => Repository.GetData.PlayersAllDic.ContainsKey(l))
-                        //.Select(l => Repository.GetData.PlayersAllDic[l].Public)
-                        .ToList();
+                    for (int i = 0; i < packet.GetPlayersInfo.Count; i++)
+                    {
+                        var login = packet.GetPlayersInfo[i];
+                        if (pSee.Contains(login))
+                        {
+                            var player = Repository.GetPlayerByLogin(login);
+                            if (player?.Public != null)
+                            {
+                                playersInfo.Add(player.Public);
+                            }
+                        }
+                    }
+                    toClient.PlayersInfo = playersInfo;
                 }
+
+                // 2. Збереження ігрових даних гравця
                 if (packet.SaveFileData != null && packet.SaveFileData.Length > 0)
                 {
                     Repository.GetSaveData.SavePlayerData(context.Player.Public.Login, packet.SaveFileData, packet.SingleSave);
                     context.Player.Public.LastSaveTime = timeNow;
 
-                    //Действия при сохранении, оно происодит только здесь!
+                    // Дії при збереженні (виконуються виключно тут)
                     context.Player.MailsConfirmationSave = new List<ModelMail>();
-
                     Repository.Get.ChangeData = true;
                 }
+
                 if (context.Player.GetKeyReconnect())
                 {
                     toClient.KeyReconnect = context.Player.KeyReconnect1;
                 }
 
                 var pLogin = context.Player.Public.Login;
-                //packet.WObjects тут все объекты этого игрока, добавляем которых у нас нет
                 var pWOs = packet.WObjects ?? new List<WorldObjectEntry>();
-                //packet.WObjectsToDelete тут те объекты этого игрока, что нужно удалить
                 var pDs = packet.WObjectsToDelete ?? new List<WorldObjectEntry>();
-                //передаем назад объекты у которых не было ServerId, т.е. они новые для сервера + все с изменениями
+
                 var outWO = new List<WorldObjectEntry>();
                 var outWOD = new List<WorldObjectEntry>();
-                //это первое обращение, если не прислали своих объектов
-                var first = pWOs.Count == 0;
+                bool first = pWOs.Count == 0;
+
                 lock (data)
                 {
+                    // 3. Обробка видалених об'єктів гравця
                     for (int i = 0; i < pDs.Count; i++)
                     {
                         if (pDs[i].LoginOwner != context.Player.Public.Login) continue;
                         var sid = pDs[i].PlaceServerId;
-                        var pD = data.WorldObjects.FirstOrDefault(p => p.PlaceServerId == sid);
-                        if (pD != null)
+
+                        for (int j = 0; j < data.WorldObjects.Count; j++)
                         {
-                            //удаление из базы
-                            pD.UpdateTime = timeNow;
-                            data.WorldObjects.Remove(pD);
-                            data.WorldObjectsDeleted.Add(pD);
+                            if (data.WorldObjects[j].PlaceServerId == sid)
+                            {
+                                var pD = data.WorldObjects[j];
+                                pD.UpdateTime = timeNow;
+                                data.WorldObjects.RemoveAt(j);
+                                data.WorldObjectsDeleted.Add(pD);
+                                break;
+                            }
                         }
                     }
 
-                    //расчитываем стоимость безналичных активов
-                    float totalMarketValue = 0; //цена всех игровых вещей
+                    // 4. Розрахунок вартості безготівкових активів
+                    float totalMarketValue = 0f;
                     for (int i = 0; i < pWOs.Count; i++)
                     {
-                        if (pWOs[i].LoginOwner != context.Player.Public.Login) continue; // <-на всякий случай
+                        if (pWOs[i].LoginOwner != context.Player.Public.Login) continue;
                         totalMarketValue += pWOs[i].MarketValue + pWOs[i].MarketValuePawn;
                     }
+
                     var cashlessBalance = context.Player.CashlessBalance;
                     context.Player.UpdateStorageBalance();
                     var storageBalance = context.Player.StorageBalance;
-                    //обрабатываем инфу о пришедших от игрока данных
+
+                    // 5. Обробка та оновлення наявних або нових об'єктів світу
                     for (int i = 0; i < pWOs.Count; i++)
                     {
-                        if (pWOs[i].LoginOwner != context.Player.Public.Login) continue; // <-на всякий случай
+                        var curWo = pWOs[i];
+                        if (curWo.LoginOwner != context.Player.Public.Login) continue;
+
                         if (totalMarketValue > 0)
                         {
-                            pWOs[i].MarketValueBalance = cashlessBalance * (pWOs[i].MarketValue + pWOs[i].MarketValuePawn) / totalMarketValue;
-                            pWOs[i].MarketValueStorage = storageBalance * (pWOs[i].MarketValue + pWOs[i].MarketValuePawn) / totalMarketValue;
+                            float weightRatio = (curWo.MarketValue + curWo.MarketValuePawn) / totalMarketValue;
+                            curWo.MarketValueBalance = cashlessBalance * weightRatio;
+                            curWo.MarketValueStorage = storageBalance * weightRatio;
                         }
-                        var sid = pWOs[i].PlaceServerId;
+
+                        var sid = curWo.PlaceServerId;
                         if (sid == 0)
                         {
-                            //добавление в базу
-                            pWOs[i].UpdateTime = timeNow;
-                            pWOs[i].PlaceServerId = data.GetWorldObjectEntryId();
-                            data.WorldObjects.Add(pWOs[i]);
-                            outWO.Add(pWOs[i]);
+                            // Новий об'єкт: додаємо в базу сервера
+                            curWo.UpdateTime = timeNow;
+                            curWo.PlaceServerId = data.GetWorldObjectEntryId();
+                            data.WorldObjects.Add(curWo);
+                            outWO.Add(curWo);
                             continue;
                         }
-                        var WO = data.WorldObjects.FirstOrDefault(p => p.PlaceServerId == sid);
-                        if (WO != null)
+
+                        WorldObjectEntry targetWo = null;
+                        for (int j = 0; j < data.WorldObjects.Count; j++)
                         {
-                            //данный объект уже есть в базу обновляем по нему информкацию
-                            if (WO.Name != pWOs[i].Name)
+                            if (data.WorldObjects[j].PlaceServerId == sid)
                             {
-                                WO.UpdateTime = timeNow;
-                                WO.Name = pWOs[i].Name;
+                                targetWo = data.WorldObjects[j];
+                                break;
                             }
-                            if (WO.FreeWeight != pWOs[i].FreeWeight)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.FreeWeight = pWOs[i].FreeWeight;
-                            }
-                            if (WO.MarketValue != pWOs[i].MarketValue)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.MarketValue = pWOs[i].MarketValue;
-                            }
-                            if (WO.MarketValuePawn != pWOs[i].MarketValuePawn)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.MarketValuePawn = pWOs[i].MarketValuePawn;
-                            }
-                            if (WO.MarketValueBalance != pWOs[i].MarketValueBalance)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.MarketValueBalance = pWOs[i].MarketValueBalance;
-                            }
-                            if (WO.MarketValueStorage != pWOs[i].MarketValueStorage)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.MarketValueStorage = pWOs[i].MarketValueStorage;
-                            }
-                            if (WO.Tile != pWOs[i].Tile)
-                            {
-                                WO.UpdateTime = timeNow;
-                                WO.Tile = pWOs[i].Tile;
-                            }
+                        }
+
+                        if (targetWo != null)
+                        {
+                            if (targetWo.Name != curWo.Name) { targetWo.UpdateTime = timeNow; targetWo.Name = curWo.Name; }
+                            if (targetWo.FreeWeight != curWo.FreeWeight) { targetWo.UpdateTime = timeNow; targetWo.FreeWeight = curWo.FreeWeight; }
+                            if (targetWo.MarketValue != curWo.MarketValue) { targetWo.UpdateTime = timeNow; targetWo.MarketValue = curWo.MarketValue; }
+                            if (targetWo.MarketValuePawn != curWo.MarketValuePawn) { targetWo.UpdateTime = timeNow; targetWo.MarketValuePawn = curWo.MarketValuePawn; }
+                            if (targetWo.MarketValueBalance != curWo.MarketValueBalance) { targetWo.UpdateTime = timeNow; targetWo.MarketValueBalance = curWo.MarketValueBalance; }
+                            if (targetWo.MarketValueStorage != curWo.MarketValueStorage) { targetWo.UpdateTime = timeNow; targetWo.MarketValueStorage = curWo.MarketValueStorage; }
+                            if (targetWo.Tile != curWo.Tile) { targetWo.UpdateTime = timeNow; targetWo.Tile = curWo.Tile; }
                         }
                         else
                         {
-                            Loger.Log("PlayInfo find error add WO: " + pWOs[i].Name + " sid=" + sid);
+                            Loger.Log($"PlayInfo find error add WO: {curWo.Name} sid={sid}", Loger.LogLevel.WARNING);
                         }
                     }
 
-                    //передаем все объекты, которые были изменены, но в первый запуск (first) исключаем свои
+                    // 6. Передаємо всі змінені об'єкти (у перший запуск виключаємо свої)
                     for (int i = 0; i < data.WorldObjects.Count; i++)
                     {
-                        if (data.WorldObjects[i].UpdateTime < packet.UpdateTime) continue;
-                        if (!first && data.WorldObjects[i].LoginOwner == pLogin) continue;
-                        outWO.Add(data.WorldObjects[i]);
+                        var wo = data.WorldObjects[i];
+                        if (wo.UpdateTime < packet.UpdateTime) continue;
+                        if (!first && wo.LoginOwner == pLogin) continue;
+                        outWO.Add(wo);
                     }
 
-                    //передаем удаленные объекты других игроков (не для первого запроса)
+                    // 7. Передаємо видалені об'єкти інших гравців із коректним очищенням за 2 хвилини (120 с)
                     if (packet.UpdateTime > DateTime.MinValue && data.WorldObjectsDeleted != null)
                     {
                         for (int i = 0; i < data.WorldObjectsDeleted.Count; i++)
                         {
-                            if (data.WorldObjectsDeleted[i].UpdateTime < packet.UpdateTime)
+                            var delWo = data.WorldObjectsDeleted[i];
+                            if (delWo.UpdateTime < packet.UpdateTime)
                             {
-                                //Обслуживание общего списка: Удаляем все записи сроком старше 2х минут (их нужно хранить время между тем как игрок у которого удалился караван зальёт это на сервер, и все другие онлайн игроки получат эту инфу, а обновление идет раз в 5 сек)
-                                if ((timeNow - data.WorldObjectsDeleted[i].UpdateTime).TotalSeconds > 120000)
+                                // Виправлено: видаляємо старі записи після 120 секунд
+                                if ((timeNow - delWo.UpdateTime).TotalSeconds > 120)
                                 {
                                     data.WorldObjectsDeleted.RemoveAt(i--);
                                 }
                                 continue;
                             }
-                            if (data.WorldObjectsDeleted[i].LoginOwner == pLogin) continue;
-                            outWOD.Add(data.WorldObjectsDeleted[i]);
+                            if (delWo.LoginOwner == pLogin) continue;
+                            outWOD.Add(delWo);
                         }
                     }
 
-                    //передаем государства
+                    // 8. Передача держав (виправлено доступ до HashSet через foreach)
                     if (data.StateUpdateTime > packet.UpdateTime)
                     {
-                        toClient.States = data.States
-                            .Select(state =>
+                        var statesList = new List<StateInfo>(data.States.Count);
+                        for (int s = 0; s < data.States.Count; s++)
+                        {
+                            var st = data.States[s];
+                            var resState = new StateInfo(st);
+                            var players = data.GetStatePlayers(st.Name);
+
+                            foreach (var pl in players)
                             {
-                                var res = new StateInfo(state);
-                                foreach (var p in data.GetStatePlayers(state.Name))
+                                if (resState.Head == null && Repository.GetStatePosition(pl.Public)?.RightHead == true)
                                 {
-                                    if (res.Head == null && Repository.GetStatePosition(p.Public)?.RightHead == true)
-                                    {
-                                        res.Head = p.Public.Login;
-                                    }
-                                    res.Players.Add(p.Public.Login);
+                                    resState.Head = pl.Public.Login;
                                 }
-                                return res;
-                            })
-                            .ToList();
+                                resState.Players.Add(pl.Public.Login);
+                            }
+                            statesList.Add(resState);
+                        }
+                        toClient.States = statesList;
                     }
 
-                    #region Non-Player World Objects
-                    //World Object Online
+                    #region Об'єкти та фракції інших гравців онлайн
                     if (ServerManager.ServerSettings.GeneralSettings.EquableWorldObjects)
                     {
-                        //World Object Online
                         try
                         {
                             if (packet.WObjectOnlineToDelete != null && packet.WObjectOnlineToDelete.Count > 0)
@@ -243,7 +252,7 @@ namespace ServerOnlineCity.Services
                                 {
                                     data.WorldObjectOnlineList = packet.WObjectOnlineList;
                                 }
-                                else if (data.WorldObjectOnlineList != null && data.WorldObjectOnlineList.Count > 0)
+                                else
                                 {
                                     toClient.WObjectOnlineToDelete = packet.WObjectOnlineList.Where(pkt => !data.WorldObjectOnlineList.Any(d => ValidateWorldObject(pkt, d))).ToList();
                                     toClient.WObjectOnlineToAdd = data.WorldObjectOnlineList.Where(d => !packet.WObjectOnlineList.Any(pkt => ValidateWorldObject(pkt, d))).ToList();
@@ -256,7 +265,6 @@ namespace ServerOnlineCity.Services
                             Loger.Log("ERROR PLAYINFO World Object Online", Loger.LogLevel.ERROR);
                         }
 
-                        //Faction Online
                         try
                         {
                             if (packet.FactionOnlineToDelete != null && packet.FactionOnlineToDelete.Count > 0)
@@ -273,9 +281,8 @@ namespace ServerOnlineCity.Services
                                 {
                                     data.FactionOnlineList = packet.FactionOnlineList;
                                 }
-                                else if (data.FactionOnlineList != null && data.FactionOnlineList.Count > 0)
+                                else
                                 {
-
                                     toClient.FactionOnlineToDelete = packet.FactionOnlineList.Where(pkt => !data.FactionOnlineList.Any(d => ValidateFaction(pkt, d))).ToList();
                                     toClient.FactionOnlineToAdd = data.FactionOnlineList.Where(d => !packet.FactionOnlineList.Any(pkt => ValidateFaction(pkt, d))).ToList();
                                 }
@@ -289,36 +296,36 @@ namespace ServerOnlineCity.Services
                     }
                     #endregion
 
-                    //получаем торговые точки с общей информацией по ним
+                    // 9. Торгові точки біржі
                     var outWTO = new List<TradeWorldObjectEntry>();
                     var outWTOD = new List<TradeWorldObjectEntry>();
 
                     for (int i = 0; i < context.Player.TradeThingStorages.Count; i++)
                     {
                         if (context.Player.TradeThingStorages[i].UpdateTime < packet.UpdateTime) continue;
-                        outWTO.Add(context.Player.TradeThingStorages[i]); //это может быть тяжелым объектом и присылаться каждый раз при входе
+                        outWTO.Add(context.Player.TradeThingStorages[i]);
                     }
                     for (int i = 0; i < data.OrderOperator.TradeWorldObjects.Count; i++)
                     {
                         if (data.OrderOperator.TradeWorldObjects[i].UpdateTime < packet.UpdateTime) continue;
                         outWTO.Add(data.OrderOperator.TradeWorldObjects[i]);
                     }
-                    //передаем удаленные объекты других игроков (не для первого запроса)
+
                     if (packet.UpdateTime > DateTime.MinValue)
                     {
                         for (int i = 0; i < data.OrderOperator.TradeWorldObjectsDeleted.Count; i++)
                         {
-                            if (data.OrderOperator.TradeWorldObjectsDeleted[i].UpdateTime < packet.UpdateTime)
+                            var delTrade = data.OrderOperator.TradeWorldObjectsDeleted[i];
+                            if (delTrade.UpdateTime < packet.UpdateTime)
                             {
-                                //Обслуживание общего списка: Удаляем все записи сроком старше 2х минут (их нужно хранить время между тем как игрок удалил запись, и все другие онлайн игроки получат эту инфу, а обновление идет раз в 5 сек)
-                                if ((timeNow - data.OrderOperator.TradeWorldObjectsDeleted[i].UpdateTime).TotalSeconds > 120000)
+                                if ((timeNow - delTrade.UpdateTime).TotalSeconds > 120)
                                 {
                                     data.OrderOperator.TradeWorldObjectsDeleted.RemoveAt(i--);
                                 }
                                 continue;
                             }
-                            if (data.OrderOperator.TradeWorldObjectsDeleted[i].LoginOwner == pLogin) continue;
-                            outWTOD.Add(data.OrderOperator.TradeWorldObjectsDeleted[i]);
+                            if (delTrade.LoginOwner == pLogin) continue;
+                            outWTOD.Add(delTrade);
                         }
                     }
 
@@ -326,13 +333,14 @@ namespace ServerOnlineCity.Services
                     toClient.WObjectsToDelete = outWOD;
                     toClient.WTObjects = outWTO;
                     toClient.WTObjectsToDelete = outWTOD;
+
                     context.Player.GameProgressLast = context.Player.GameProgress;
                     context.Player.GameProgress = packet.GameProgress;
 
                     context.Player.WLastUpdateTime = timeNow;
                     context.Player.WLastTick = packet.LastTick;
 
-                    //обновляем статистические поля
+                    // 10. Оновлення економічної статистики
                     var costAll = context.Player.CostWorldObjects();
                     if (context.Player.StartMarketValuePawn == 0)
                     {
@@ -346,22 +354,22 @@ namespace ServerOnlineCity.Services
                     }
                     else if (context.Player.LastUpdateIsGood && (costAll.MarketValue > 0 || costAll.MarketValuePawn > 0))
                     {
-                        //считаем дельту
-                        context.Player.DeltaMarketValue = (costAll.MarketValue - context.Player.LastMarketValue);
-                        context.Player.DeltaMarketValuePawn = (costAll.MarketValuePawn - context.Player.LastMarketValuePawn);
-                        context.Player.DeltaMarketValueBalance = (costAll.MarketValueBalance - context.Player.LastMarketValueBalance);
-                        context.Player.DeltaMarketValueStorage = (costAll.MarketValueStorage - context.Player.LastMarketValueStorage);
+                        context.Player.DeltaMarketValue = costAll.MarketValue - context.Player.LastMarketValue;
+                        context.Player.DeltaMarketValuePawn = costAll.MarketValuePawn - context.Player.LastMarketValuePawn;
+                        context.Player.DeltaMarketValueBalance = costAll.MarketValueBalance - context.Player.LastMarketValueBalance;
+                        context.Player.DeltaMarketValueStorage = costAll.MarketValueStorage - context.Player.LastMarketValueStorage;
 
                         context.Player.SumDeltaGameMarketValue += context.Player.DeltaMarketValue;
                         context.Player.SumDeltaGameMarketValuePawn += context.Player.DeltaMarketValuePawn;
                         context.Player.SumDeltaGameMarketValueBalance += context.Player.DeltaMarketValueBalance;
                         context.Player.SumDeltaGameMarketValueStorage += context.Player.DeltaMarketValueStorage;
+
                         context.Player.SumDeltaRealMarketValue += context.Player.DeltaMarketValue;
                         context.Player.SumDeltaRealMarketValuePawn += context.Player.DeltaMarketValuePawn;
                         context.Player.SumDeltaRealMarketValueBalance += context.Player.DeltaMarketValueBalance;
                         context.Player.SumDeltaRealMarketValueStorage += context.Player.DeltaMarketValueStorage;
 
-                        if (packet.LastTick - context.Player.StatLastTick > 15 * 60000) // сбор раз в 15 дней
+                        if (packet.LastTick - context.Player.StatLastTick > 15 * 60000)
                         {
                             if (context.Player.StatMaxDeltaGameMarketValue < context.Player.SumDeltaGameMarketValue)
                                 context.Player.StatMaxDeltaGameMarketValue = context.Player.SumDeltaGameMarketValue;
@@ -371,8 +379,10 @@ namespace ServerOnlineCity.Services
                                 context.Player.StatMaxDeltaGameMarketValueBalance = context.Player.SumDeltaGameMarketValueBalance;
                             if (context.Player.StatMaxDeltaGameMarketValueStorage < context.Player.SumDeltaGameMarketValueStorage)
                                 context.Player.StatMaxDeltaGameMarketValueStorage = context.Player.SumDeltaGameMarketValueStorage;
-                            if (context.Player.StatMaxDeltaGameMarketValueTotal < context.Player.SumDeltaGameMarketValue + context.Player.SumDeltaGameMarketValueBalance + context.Player.SumDeltaGameMarketValuePawn + context.Player.SumDeltaGameMarketValueStorage)
-                                context.Player.StatMaxDeltaGameMarketValueTotal = context.Player.SumDeltaGameMarketValue + context.Player.SumDeltaGameMarketValueBalance + context.Player.SumDeltaGameMarketValuePawn + context.Player.SumDeltaGameMarketValueStorage;
+
+                            float totalDelta = context.Player.SumDeltaGameMarketValue + context.Player.SumDeltaGameMarketValueBalance + context.Player.SumDeltaGameMarketValuePawn + context.Player.SumDeltaGameMarketValueStorage;
+                            if (context.Player.StatMaxDeltaGameMarketValueTotal < totalDelta)
+                                context.Player.StatMaxDeltaGameMarketValueTotal = totalDelta;
 
                             context.Player.SumDeltaGameMarketValue = 0;
                             context.Player.SumDeltaGameMarketValuePawn = 0;
@@ -381,7 +391,7 @@ namespace ServerOnlineCity.Services
                             context.Player.StatLastTick = packet.LastTick;
                         }
 
-                        if (context.Player.SumDeltaRealSecond > 60 * 60) //сбор раз в час
+                        if (context.Player.SumDeltaRealSecond > 60 * 60)
                         {
                             if (context.Player.StatMaxDeltaRealMarketValue < context.Player.SumDeltaRealMarketValue)
                                 context.Player.StatMaxDeltaRealMarketValue = context.Player.SumDeltaRealMarketValue;
@@ -391,8 +401,11 @@ namespace ServerOnlineCity.Services
                                 context.Player.StatMaxDeltaRealMarketValueBalance = context.Player.SumDeltaRealMarketValueBalance;
                             if (context.Player.StatMaxDeltaRealMarketValueStorage < context.Player.SumDeltaRealMarketValueStorage)
                                 context.Player.StatMaxDeltaRealMarketValueStorage = context.Player.SumDeltaRealMarketValueStorage;
-                            if (context.Player.StatMaxDeltaRealMarketValueTotal < context.Player.SumDeltaRealMarketValue + context.Player.SumDeltaRealMarketValueBalance + context.Player.SumDeltaRealMarketValuePawn + context.Player.SumDeltaRealMarketValueStorage)
-                                context.Player.StatMaxDeltaRealMarketValueTotal = context.Player.SumDeltaRealMarketValue + context.Player.SumDeltaRealMarketValueBalance + context.Player.SumDeltaRealMarketValuePawn + context.Player.SumDeltaRealMarketValueStorage;
+
+                            float totalRealDelta = context.Player.SumDeltaRealMarketValue + context.Player.SumDeltaRealMarketValueBalance + context.Player.SumDeltaRealMarketValuePawn + context.Player.SumDeltaRealMarketValueStorage;
+                            if (context.Player.StatMaxDeltaRealMarketValueTotal < totalRealDelta)
+                                context.Player.StatMaxDeltaRealMarketValueTotal = totalRealDelta;
+
                             if (context.Player.StatMaxDeltaRealTicks < context.Player.SumDeltaRealTicks)
                                 context.Player.StatMaxDeltaRealTicks = context.Player.SumDeltaRealTicks;
 
@@ -404,6 +417,7 @@ namespace ServerOnlineCity.Services
                             context.Player.SumDeltaRealSecond = 0;
                         }
                     }
+
                     context.Player.LastUpdateIsGood = costAll.MarketValue > 0 || costAll.MarketValuePawn > 0;
                     if (context.Player.LastUpdateIsGood)
                     {
@@ -412,6 +426,7 @@ namespace ServerOnlineCity.Services
                         context.Player.LastMarketValueBalance = costAll.MarketValueBalance;
                         context.Player.LastMarketValueStorage = costAll.MarketValueStorage;
                     }
+
                     var dt = packet.LastTick - context.Player.Public.LastTick;
                     context.Player.SumDeltaRealTicks += dt;
                     if (dt > 0)
@@ -419,7 +434,6 @@ namespace ServerOnlineCity.Services
                         var ds = (long)(timeNow - context.Player.LastUpdateTime).TotalSeconds;
                         context.Player.SumDeltaRealSecond += ds;
                         context.Player.TotalRealSecond += ds;
-
                     }
 
                     context.Player.WLastUpdateTime = context.Player.LastUpdateTime;
@@ -428,53 +442,65 @@ namespace ServerOnlineCity.Services
                     context.Player.Public.LastTick = packet.LastTick;
                     context.Player.Public.ExistsEnemyPawns = context.Player.GameProgressLast?.ExistsEnemyPawns == true;
 
-
-                    //Прошел игровой полдень
                     if (CalcUtils.OnMidday(context.Player.WLastTick, context.Player.Public.LastTick))
                     {
-                        //раз в день взымаем налоги на бирже
                         data.OrderOperator.DayPassed(context.Player);
-                        //записываем в историю
                         context.Player.MarketValueHistoryAdd(context.Player.LastMarketValue);
                     }
                 }
 
-                //обновляем состояние отложенной отправки писем
+                // 11. Оновлення стану відкладених дій
                 if (context.Player.FunctionMails.Count > 0)
                 {
                     for (int i = 0; i < context.Player.FunctionMails.Count; i++)
                     {
-                        var needRemove = context.Player.FunctionMails[i].Run(context);
+                        bool needRemove = context.Player.FunctionMails[i].Run(context);
                         if (needRemove) context.Player.FunctionMails.RemoveAt(i--);
                     }
                 }
 
-                //прикрепляем письма
-                //если есть команда на отключение без сохранения, то посылаем только одно это письмо
-                var md = context.Player.Mails.FirstOrDefault(m => m is ModelMailAttackCancel);
-                if (md == null)
+                // 12. Прикріплення листів
+                var mails = context.Player.Mails;
+                ModelMail cancelMail = null;
+                for (int i = 0; i < mails.Count; i++)
                 {
-                    toClient.Mails = context.Player.Mails;
-                    context.Player.MailsConfirmationSave.AddRange(context.Player.Mails.Where(m => m.NeedSaveGame).ToList());
+                    if (mails[i] is ModelMailAttackCancel)
+                    {
+                        cancelMail = mails[i];
+                        break;
+                    }
+                }
+
+                if (cancelMail == null)
+                {
+                    toClient.Mails = mails;
+                    for (int i = 0; i < mails.Count; i++)
+                    {
+                        if (mails[i].NeedSaveGame)
+                        {
+                            context.Player.MailsConfirmationSave.Add(mails[i]);
+                        }
+                    }
                     context.Player.Mails = new List<ModelMail>();
                 }
                 else
                 {
-                    toClient.Mails = new List<ModelMail>() { md };
-                    context.Player.Mails.Remove(md);
+                    toClient.Mails = new List<ModelMail> { cancelMail };
+                    context.Player.Mails.Remove(cancelMail);
                 }
 
-                //команда выполнить сохранение и отключиться
                 toClient.NeedSaveAndExit = !context.Player.IsAdmin && data.EverybodyLogoff;
 
-                //флаг, что на клиента кто-то напал и он должен запросить подробности
-                toClient.AreAttacking = context.Player.AttackData != null && context.Player.AttackData.Host == context.Player && context.Player.AttackData.State == 1;
+                toClient.AreAttacking = context.Player.AttackData != null
+                    && context.Player.AttackData.Host == context.Player
+                    && context.Player.AttackData.State == 1;
 
                 if (context.Player.LastUpdateWithMail = (toClient.Mails.Count > 0))
                 {
-                    foreach (var mail in toClient.Mails)
+                    for (int i = 0; i < toClient.Mails.Count; i++)
                     {
-                        Loger.Log($"DownloadMail {mail.GetType().Name} {mail.From.Login}->{mail.To.Login} {mail.ContentString()}");
+                        var mail = toClient.Mails[i];
+                        Loger.Log($"DownloadMail {mail.GetType().Name} {mail.From?.Login ?? "-"}->{mail.To?.Login ?? "-"} {mail.ContentString()}");
                     }
                 }
 
@@ -487,23 +513,12 @@ namespace ServerOnlineCity.Services
 
         private static bool ValidateWorldObject(WorldObjectOnline pkt, WorldObjectOnline data)
         {
-            if(pkt.Name == data.Name
-                && pkt.Tile == data.Tile)
-            {
-                return true;
-            }
-            return false;
+            return pkt.Name == data.Name && pkt.Tile == data.Tile;
         }
 
-         private static bool ValidateFaction(FactionOnline pkt, FactionOnline data)
+        private static bool ValidateFaction(FactionOnline pkt, FactionOnline data)
         {
-            if (pkt.DefName == data.DefName && 
-                pkt.LabelCap == data.LabelCap &&
-                pkt.loadID == data.loadID)
-            {
-                return true;
-            }
-            return false;
+            return pkt.DefName == data.DefName && pkt.LabelCap == data.LabelCap && pkt.loadID == data.loadID;
         }
     }
 }
