@@ -16,20 +16,18 @@ namespace ServerOnlineCity
 {
     public class RepositoryFileSharing
     {
-        private Repository MainRepository;
+        private readonly Repository MainRepository;
 
         private ConcurrentDictionary<string, ModelFileSharing> CacheFileDataByFileName = new ConcurrentDictionary<string, ModelFileSharing>();
 
         private long CacheSize;
-
-        private const long CacheSizeMax = 10 * 1024 * 1024;
-
+        private const long CacheSizeMax = 10 * 1024 * 1024; // 10 МБ ліміт кешу
         private DateTime CacheClear;
-
         private const int CacheClearMaxMinute = 30;
+        private readonly object CacheLock = new object();
 
         private ConcurrentDictionary<FileSharingCategory, IFileSharingWorker> Workers = null;
-        private IFileSharingWorker WorkersDefault = new WorkerDefault();
+        private readonly IFileSharingWorker WorkersDefault = new WorkerDefault();
 
         public RepositoryFileSharing(Repository repository)
         {
@@ -37,7 +35,7 @@ namespace ServerOnlineCity
         }
 
         /// <summary>
-        /// Сохраняем данные в хранилище и записываем в fileSharing значение Hash
+        /// Зберігає надісланий файл у сховищі на диску та розраховує для нього контрольний хеш.
         /// </summary>
         public bool SaveFileSharing(PlayerServer player, ModelFileSharing fileSharing)
         {
@@ -45,78 +43,81 @@ namespace ServerOnlineCity
             var worker = GetWorker(fileSharing.Category);
             var fileName = worker.CheckAndGetFileNameUpload(player, fileSharing);
             if (string.IsNullOrEmpty(fileName)) return false;
+
             fileName = Path.Combine(GetFolderName(fileSharing.Category), fileName).NormalizePath();
             if (!CheckFileName(fileName)) return false;
 
-            //записываем файл на диск и заполняем в fileSharing хеш файла
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(fileName));
+                var dir = Path.GetDirectoryName(fileName);
+                if (!Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
 
                 File.WriteAllBytes(fileName, fileSharing.Data);
-
                 fileSharing.Hash = GetHash(fileSharing.Data);
 
                 CacheFileDataByFileName.TryRemove(fileName, out _);
-
                 return true;
             }
             catch (Exception ext)
             {
-                Loger.Log("FileSharing Exception " + ext.ToString());
+                Loger.Log("FileSharing Exception " + ext.ToString(), Loger.LogLevel.ERROR);
                 return false;
             }
         }
 
         /// <summary>
-        /// Читаем из хранилища. Если fileSharing.Hash равен значению хеша в хранилище, то ничего не делаем.
-        /// Иначе заполняем Hash и Data
+        /// Зчитує файл зі сховища. Якщо наданий клієнтом хеш збігається з файлом на сервері,
+        /// повторна передача байтів не виконується (економія трафіку).
         /// </summary>
         public void LoadFileSharing(PlayerServer player, ModelFileSharing fileSharing)
         {
             var fileSharingHash = fileSharing.Hash;
             fileSharing.Hash = null;
+
             var worker = GetWorker(fileSharing.Category);
             var fileName = worker.CheckAndGetFileNameDownload(player, fileSharing);
             if (string.IsNullOrEmpty(fileName)) return;
-            fileName = Path.Combine(GetFolderName(fileSharing.Category), fileName);
 
+            fileName = Path.Combine(GetFolderName(fileSharing.Category), fileName);
             if (!CheckFileName(fileName)) return;
 
-            if ((DateTime.UtcNow - CacheClear).TotalMinutes > CacheClearMaxMinute
-                || CacheSize > CacheSizeMax)
+            lock (CacheLock)
             {
-                CacheClear = DateTime.UtcNow;
-                CacheSize = 0;
-                CacheFileDataByFileName = new ConcurrentDictionary<string, ModelFileSharing>();
+                if ((DateTime.UtcNow - CacheClear).TotalMinutes > CacheClearMaxMinute || CacheSize > CacheSizeMax)
+                {
+                    CacheClear = DateTime.UtcNow;
+                    CacheSize = 0;
+                    CacheFileDataByFileName = new ConcurrentDictionary<string, ModelFileSharing>();
+                }
             }
+
             var fileData = CacheFileDataByFileName.GetOrAdd(fileName, _ =>
             {
-                //читаем файл
                 var fd = GetDataFileSharing(fileName);
                 if (fd == null)
                 {
-                    CacheSize += 1024;
-                    return fd;
+                    lock (CacheLock) { CacheSize += 1024; }
+                    return null;
                 }
                 fd.Name = fileSharing.Name;
                 fd.Category = fileSharing.Category;
 
-                CacheSize += fd.Data.Length + 1024;
+                lock (CacheLock) { CacheSize += fd.Data.Length + 1024; }
                 return fd;
             });
+
             if (fileData == null) return;
 
-            if (!string.IsNullOrEmpty(fileSharingHash))
+            // Якщо хеш клієнта збігається — не пересилаємо сирі байти
+            if (!string.IsNullOrEmpty(fileSharingHash) && fileSharingHash == fileData.Hash)
             {
-                //сверяем хеш файла, если он такой же, то в пакете ничего не меняем, иначе продолжаем
-                if (fileSharingHash == fileData.Hash)
-                {
-                    fileSharing.Hash = fileSharingHash;
-                    return;
-                }
+                fileSharing.Hash = fileSharingHash;
+                return;
             }
-            //заполняем хеш и содержимое файла
+
             fileSharing.Hash = fileData.Hash;
             fileSharing.Data = fileData.Data;
         }
@@ -124,11 +125,14 @@ namespace ServerOnlineCity
         private bool CheckFileName(string fileName)
         {
             if (!string.IsNullOrWhiteSpace(fileName)
-                && !fileName.Contains("..") 
-                && !fileName.Contains(@"\\") 
-                && !fileName.Contains(@"//")
-                ) return true;
-            Loger.Log("FileSharing corruption file name: " + fileName);
+                && !fileName.Contains("..")
+                && !fileName.Contains(@"\\")
+                && !fileName.Contains(@"//"))
+            {
+                return true;
+            }
+
+            Loger.Log("FileSharing: некоректне ім'я файлу або спроба виходу з директорії: " + fileName, Loger.LogLevel.WARNING);
             return false;
         }
 
@@ -139,16 +143,15 @@ namespace ServerOnlineCity
                 if (!File.Exists(fileName)) return null;
 
                 var data = File.ReadAllBytes(fileName);
-
                 return new ModelFileSharing()
                 {
                     Data = data,
                     Hash = GetHash(data),
                 };
             }
-            catch(Exception ext)
+            catch (Exception ext)
             {
-                Loger.Log("FileSharing Exception " + ext.ToString());
+                Loger.Log("FileSharing GetData Exception: " + ext.ToString(), Loger.LogLevel.ERROR);
                 return null;
             }
         }
@@ -168,28 +171,25 @@ namespace ServerOnlineCity
         {
             if (Workers == null)
             {
-                var categorys = Enum.GetValues(typeof(FileSharingCategory))
+                var categories = Enum.GetValues(typeof(FileSharingCategory))
                     .Cast<FileSharingCategory>()
                     .ToDictionary(c => Enum.GetName(typeof(FileSharingCategory), c));
 
                 var workers = new ConcurrentDictionary<FileSharingCategory, IFileSharingWorker>();
                 foreach (var type in Assembly.GetAssembly(typeof(RepositoryFileSharing)).GetTypes())
                 {
-                    if (!type.IsClass)
-                    {
-                        continue;
-                    }
+                    if (!type.IsClass) continue;
 
                     if (type.GetInterfaces().Any(x => x == typeof(IFileSharingWorker)))
                     {
                         var worker = (IFileSharingWorker)Activator.CreateInstance(type);
                         var workerName = worker.GetType().Name;
-                        var workerCategory = categorys.Keys.FirstOrDefault(cName => workerName.EndsWith(cName));
+                        var workerCategory = categories.Keys.FirstOrDefault(cName => workerName.EndsWith(cName));
                         if (workerCategory != null)
                         {
-                            worker.Category = categorys[workerCategory];
+                            worker.Category = categories[workerCategory];
                             worker.FileSharing = this;
-                            workers[categorys[workerCategory]] = worker;
+                            workers[categories[workerCategory]] = worker;
                         }
                     }
                 }
@@ -210,15 +210,18 @@ namespace ServerOnlineCity
             string CheckAndGetFileNameUpload(PlayerServer player, ModelFileSharing info);
         }
 
-        #region workers
+        #region Обробники категорій файлів (Workers)
+
         private class WorkerDefault : IFileSharingWorker
         {
             public FileSharingCategory Category { get; set; }
             public RepositoryFileSharing FileSharing { get; set; }
+
             public virtual string CheckAndGetFileNameDownload(PlayerServer player, ModelFileSharing info)
             {
                 return Repository.NormalizeLogin(info.Name);
             }
+
             public virtual string CheckAndGetFileNameUpload(PlayerServer player, ModelFileSharing info)
             {
                 Loger.Log($"Server FileSharing Save WorkerDefault {player.Public.Login} size={info.Data?.Length}b name={info.Name}");
@@ -228,55 +231,55 @@ namespace ServerOnlineCity
 
         private class WorkerPlayerIcon : WorkerDefault
         {
-            /// <summary>
-            /// Размер стандартной квадратной иконки
-            /// </summary>
-            private int NeedSize = 256;
+            private const int NeedSize = 256;
 
             public override string CheckAndGetFileNameDownload(PlayerServer player, ModelFileSharing info)
             {
                 return base.CheckAndGetFileNameDownload(player, info) + ".png";
             }
+
             public override string CheckAndGetFileNameUpload(PlayerServer player, ModelFileSharing info)
             {
                 Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} size={info.Data?.Length}b");
-                //больше 2 мб исходник не пропускаем
+
+                // Файли понад 2 МБ відхиляються
                 if (info.Data == null || info.Data.Length == 0 || info.Data.Length > 2 * 1024 * 1024) return null;
 
-                //перекодирование изображения под размер NeedSize
                 try
                 {
-                    var imageEnd = new Bitmap(NeedSize, NeedSize);
-                    Bitmap imageData;
-                    using (var data = new MemoryStream(info.Data))
+                    using (var msInput = new MemoryStream(info.Data))
+                    using (var imageData = new Bitmap(msInput))
                     {
-                        imageData = new Bitmap(data);
-                    }
-                    Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} orig={imageData.Width}*{imageData.Height}");
+                        Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} orig={imageData.Width}*{imageData.Height}");
 
-                    if (imageData.Width < 10 || imageData.Height < 10 || imageData.Width > 2000 || imageData.Height > 2000) return null;
+                        if (imageData.Width < 10 || imageData.Height < 10 || imageData.Width > 2000 || imageData.Height > 2000)
+                            return null;
 
-                    var rectData = imageData.Width >= imageData.Height
-                        ? new Rectangle((imageData.Width - imageData.Height) / 2, 0, imageData.Height - 1, imageData.Height - 1)
-                        : new Rectangle(0, (imageData.Height - imageData.Width) / 2, imageData.Width - 1, imageData.Width - 1);
+                        var rectData = imageData.Width >= imageData.Height
+                            ? new Rectangle((imageData.Width - imageData.Height) / 2, 0, imageData.Height - 1, imageData.Height - 1)
+                            : new Rectangle(0, (imageData.Height - imageData.Width) / 2, imageData.Width - 1, imageData.Width - 1);
 
-                    using (var graphics = Graphics.FromImage(imageEnd))
-                    {
-                        graphics.DrawImage(imageData
-                            , new Rectangle(0, 0, NeedSize, NeedSize)
-                            , rectData
-                            , GraphicsUnit.Pixel);
+                        using (var imageEnd = new Bitmap(NeedSize, NeedSize))
+                        {
+                            using (var graphics = Graphics.FromImage(imageEnd))
+                            {
+                                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                graphics.DrawImage(imageData, new Rectangle(0, 0, NeedSize, NeedSize), rectData, GraphicsUnit.Pixel);
+                            }
+
+                            using (var msOutput = new MemoryStream())
+                            {
+                                imageEnd.Save(msOutput, ImageFormat.Png);
+                                info.Data = msOutput.ToArray();
+                            }
+                        }
+
+                        Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} end={NeedSize}*{NeedSize}");
                     }
-                    using (var data = new MemoryStream())
-                    {
-                        imageEnd.Save(data, ImageFormat.Png);
-                        info.Data = data.ToArray();
-                    }
-                    Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} end={imageEnd.Width}*{imageEnd.Height}");
                 }
                 catch (Exception ext)
                 {
-                    Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} Exception " + ext.ToString());
+                    Loger.Log($"Server FileSharing Save PlayerIcon {player.Public.Login} Exception: " + ext.ToString(), Loger.LogLevel.ERROR);
                     return null;
                 }
 
@@ -289,135 +292,176 @@ namespace ServerOnlineCity
             public FileSharingCategory Category { get; set; }
             public RepositoryFileSharing FileSharing { get; set; }
 
-            //В name передается логин@serverId колонии скрин которой нужен
-            //при записи дописывать текущий тик игрока, при чтении искать файл с максимальным тиком (если в имени не указан тик)
+            // В name передається логін@serverId колонії, знімок якої запитується.
+            // При записі дописується поточний ігровий тік, при зчитуванні шукається файл із максимальним тіком.
             public string CheckAndGetFileNameDownload(PlayerServer player, ModelFileSharing info)
             {
                 try
                 {
                     string name = info.Name;
+                    if (string.IsNullOrEmpty(name)) return null;
+
                     var namePart = name.Split('@');
-                    var serverId = int.Parse(namePart[1]);
+                    if (namePart.Length < 2) return null;
+
+                    if (!int.TryParse(namePart[1], out int serverId)) return null;
                     var login = Repository.NormalizeLogin(namePart[0]);
 
                     var mask = login + "_" + serverId.ToString() + "_*.png";
                     var folderName = FileSharing.GetFolderName(Category);
-                    Directory.CreateDirectory(folderName);
+                    if (!Directory.Exists(folderName)) return null;
+
                     var files = Directory.GetFiles(folderName, mask);
                     if (files.Length == 0) return null;
-                    var file = files.Select(f =>
+
+                    // ОПТИМІЗАЦІЯ: однопрохідний пошук найновішого тіка без LINQ-сортування списку
+                    string latestFile = null;
+                    long maxTick = -1;
+
+                    for (int i = 0; i < files.Length; i++)
+                    {
+                        var f = files[i];
+                        int i0 = f.LastIndexOf('_');
+                        int i1 = f.LastIndexOf('.');
+                        if (i0 >= 0 && i1 > i0)
                         {
-                            try
+                            var tickStr = f.Substring(i0 + 1, i1 - i0 - 1);
+                            if (long.TryParse(tickStr, out long tick) && tick > maxTick)
                             {
-                                var i0 = f.LastIndexOf("_");
-                                var i1 = f.LastIndexOf(".");
-                                var tick = int.Parse(f.Substring(i0 + 1, i1 - i0 - 1));
-                                return new { tick, f };
+                                maxTick = tick;
+                                latestFile = f;
                             }
-                            catch
-                            {
-                                return null;
-                            }
-                        })
-                        .Where(a => a != null)
-                        .OrderByDescending(a => a.tick)
-                        .Select(a => a.f)
-                        .FirstOrDefault();
-                    return file == null ? null : Path.GetFileName(file);
+                        }
+                    }
+
+                    return latestFile == null ? null : Path.GetFileName(latestFile);
                 }
                 catch (Exception ext)
                 {
-                    Loger.Log("FileSharing Exception " + ext.ToString());
+                    Loger.Log("FileSharing CheckFileNameDownload Exception: " + ext.ToString(), Loger.LogLevel.ERROR);
                     return null;
                 }
             }
+
             public string CheckAndGetFileNameUpload(PlayerServer player, ModelFileSharing info)
             {
                 try
                 {
                     Loger.Log($"Server FileSharing Save ColonyScreen {player.Public.Login} size={info.Data?.Length}b name={info.Name}");
-                    //больше 2 мб исходник не пропускаем
-                    if (info.Data == null || info.Data.Length == 0 || info.Data.Length > 35 * 1024 * 1024) return null; 
+
+                    // Файли понад 35 МБ відхиляються
+                    if (info.Data == null || info.Data.Length == 0 || info.Data.Length > 35 * 1024 * 1024) return null;
 
                     string name = info.Name;
+                    if (string.IsNullOrEmpty(name)) return null;
+
                     var namePart = name.Split('@');
-                    var serverId = int.Parse(namePart[1]);
-                    var login = Repository.NormalizeLogin(namePart[0]); 
+                    if (namePart.Length < 2) return null;
+
+                    if (!int.TryParse(namePart[1], out int serverId)) return null;
+                    var login = Repository.NormalizeLogin(namePart[0]);
                     if (login != Repository.NormalizeLogin(player.Public.Login)) return null;
 
                     ControlSizeFolder();
                     var tick = player.Public.LastTick;
-                    //проверяем, что этот id принадлежит игроку
-                    var data = Repository.GetData;
-                    var wo = data.WorldObjects.FirstOrDefault(w => w.PlaceServerId == serverId);
-                    //if (wo == null || wo.LoginOwner != player.Public.Login) return null; //todo!
 
                     return login + "_" + serverId.ToString() + "_" + tick.ToString() + ".png";
                 }
                 catch (Exception ext)
                 {
-                    Loger.Log("FileSharing Exception " + ext.ToString());
+                    Loger.Log("FileSharing CheckFileNameUpload Exception: " + ext.ToString(), Loger.LogLevel.ERROR);
                     return null;
                 }
             }
+
+            /// <summary>
+            /// Контроль загального розміру папки зі знімками поселень.
+            /// Зберігає найновіший кадр для кожної колонії, видаляючи старіші дублікати при перевищенні квоти.
+            /// </summary>
             private void ControlSizeFolder()
             {
                 if (ServerManager.ServerSettings.ColonyScreenFolderMaxMb == 0) return;
 
-                string[] fileNames;
-                try
+                string folderPath = FileSharing.GetFolderName(Category);
+                if (!Directory.Exists(folderPath))
                 {
-                    fileNames = Directory.GetFiles(FileSharing.GetFolderName(Category), "*_*_*.png");
-                }
-                catch (DirectoryNotFoundException)
-                {
-                    if (!Directory.Exists(FileSharing.GetFolderName(Category))) Directory.CreateDirectory(FileSharing.GetFolderName(Category));
+                    Directory.CreateDirectory(folderPath);
                     return;
                 }
+
+                var fileNames = Directory.GetFiles(folderPath, "*_*_*.png");
                 if (fileNames.Length < 2) return;
 
-                var files = fileNames.Select(fn => new FileInfo(fn)).ToList();
-                var needClear = files.Sum(f => f.Length) - ServerManager.ServerSettings.ColonyScreenFolderMaxMb * 1024 * 1024;
+                long totalBytes = 0;
+                var filesInfo = new List<FileInfo>(fileNames.Length);
+                for (int i = 0; i < fileNames.Length; i++)
+                {
+                    var fi = new FileInfo(fileNames[i]);
+                    totalBytes += fi.Length;
+                    filesInfo.Add(fi);
+                }
+
+                long maxAllowedBytes = (long)ServerManager.ServerSettings.ColonyScreenFolderMaxMb * 1024 * 1024;
+                long needClear = totalBytes - maxAllowedBytes;
                 if (needClear <= 0) return;
 
-                var list = files.Select(fi =>
-                    {
-                        try
-                        {
-                            var f = fi.Name;
-                            var i0 = f.LastIndexOf("_");
-                            var i1 = f.LastIndexOf(".");
-                            var tick = int.Parse(f.Substring(i0 + 1, i1 - i0 - 1));
-                            var loginServId = f.Substring(0, i0);
-                            return new { tick, loginServId, fi };
-                        }
-                        catch
-                        {
-                            return null;
-                        }
-                    })
-                    .Where(a => a != null)
-                    .GroupBy(a => a.loginServId)
-                    .Where(g => g.Count() > 1)
-                    .SelectMany(g =>
-                    {
-                        var max = g.Max(a => a.tick);
-                        return g.Where(a => a.tick < max);
-                    })
-                    .OrderBy(a => a.fi.LastWriteTimeUtc)
-                    .Select(a => a.fi)
-                    .ToList();
-
-                for (int i = 0; i < list.Count; i++)
+                // Групуємо файли за базовим ім'ям (login_serverId)
+                var groups = new Dictionary<string, List<(FileInfo Info, long Tick)>>();
+                for (int i = 0; i < filesInfo.Count; i++)
                 {
-                    if (needClear <= 0) return;
-                    needClear -= list[i].Length;
-                    list[i].Delete();
+                    var fi = filesInfo[i];
+                    var fName = fi.Name;
+                    int i0 = fName.LastIndexOf('_');
+                    int i1 = fName.LastIndexOf('.');
+                    if (i0 > 0 && i1 > i0 && long.TryParse(fName.Substring(i0 + 1, i1 - i0 - 1), out long tick))
+                    {
+                        var prefix = fName.Substring(0, i0);
+                        if (!groups.TryGetValue(prefix, out var list))
+                        {
+                            list = new List<(FileInfo Info, long Tick)>();
+                            groups[prefix] = list;
+                        }
+                        list.Add((fi, tick));
+                    }
+                }
+
+                // Визначаємо кандидати на видалення (усі, крім останнього знімка кожної колонії)
+                var candidates = new List<FileInfo>();
+                foreach (var group in groups.Values)
+                {
+                    if (group.Count <= 1) continue;
+
+                    long maxTick = -1;
+                    for (int i = 0; i < group.Count; i++)
+                    {
+                        if (group[i].Tick > maxTick) maxTick = group[i].Tick;
+                    }
+
+                    for (int i = 0; i < group.Count; i++)
+                    {
+                        if (group[i].Tick < maxTick)
+                        {
+                            candidates.Add(group[i].Info);
+                        }
+                    }
+                }
+
+                // Видаляємо починаючи з найстаріших за часом запису
+                candidates.Sort((a, b) => a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc));
+
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (needClear <= 0) break;
+                    needClear -= candidates[i].Length;
+                    try
+                    {
+                        candidates[i].Delete();
+                    }
+                    catch { }
                 }
             }
-
         }
-        #endregion
 
+        #endregion
     }
 }

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
@@ -20,26 +19,23 @@ namespace ServerOnlineCity.Services
             if (context.Player == null) return null;
 
             object result;
-            if (request.Packet is List<ModelFileSharing>)
+            if (request.Packet is List<ModelFileSharing> list)
             {
-                //only check
-                var list = (List<ModelFileSharing>)request.Packet;
-                var res = new List<ModelFileSharing>();
-                foreach (var fileSharing in list)
+                // Пакетна перевірка хешів без завантаження повних тіл файлів
+                var res = new List<ModelFileSharing>(list.Count);
+                for (int i = 0; i < list.Count; i++)
                 {
-                    res.Add(GetFileSharing(fileSharing, context.Player, true));
+                    res.Add(GetFileSharing(list[i], context.Player, true));
                 }
                 result = res;
             }
             else
             {
-                //full function
+                // Одиночний запит на передачу або отримання файлу
                 var fileSharing = (ModelFileSharing)request.Packet;
-
-                fileSharing = GetFileSharing(fileSharing, context.Player, false);
-
-                result = fileSharing;
+                result = GetFileSharing(fileSharing, context.Player, false);
             }
+
             return new ModelContainer()
             {
                 TypePacket = ResponseTypePackage,
@@ -51,18 +47,18 @@ namespace ServerOnlineCity.Services
         {
             if (!onlyCheck && fileSharing.Data != null)
             {
-                //запрос на запись файла на сервер
+                // Запит на збереження файлу на сервері
                 if (!Repository.GetFileSharing.SaveFileSharing(player, fileSharing))
                 {
-                    fileSharing.Hash = null; //признак ошибки или отказа
+                    fileSharing.Hash = null; // Позначка помилки або відхилення запиту
                 }
                 fileSharing.Data = null;
             }
             else
             {
-                //запрос на чтение с сервера
+                // Запит на отримання файлу зі сховища сервера
                 Repository.GetFileSharing.LoadFileSharing(player, fileSharing);
-                if (onlyCheck) fileSharing.Data = null; //получаем сами данные, а потом сбрасываем чтобы не ломать систему кэширования
+                if (onlyCheck) fileSharing.Data = null; // Отримуємо хеш для звірки та скидаємо важкий масив
             }
             return fileSharing;
         }
