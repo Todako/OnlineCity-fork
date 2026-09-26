@@ -25,6 +25,39 @@ namespace RimWorldOnlineCity.UI
 
         public static ConcurrentDictionary<string, string> LanguageInjections { get; set; } = new ConcurrentDictionary<string, string>();
 
+        // Швидкий кеш вимірювання слів шрифту GameFont.Small для усунення зайвих нативних викликів Unity
+        private static readonly Dictionary<string, Vector2> WordSizeCache = new Dictionary<string, Vector2>(512, StringComparer.Ordinal);
+        private static readonly object WordSizeCacheLock = new object();
+
+        /// <summary>
+        /// Отримує розмір слова з кешу або розраховує його через рушій Unity.
+        /// </summary>
+        private static Vector2 GetWordSizeCached(string word)
+        {
+            if (string.IsNullOrEmpty(word)) return Vector2.zero;
+
+            lock (WordSizeCacheLock)
+            {
+                if (WordSizeCache.TryGetValue(word, out var size))
+                {
+                    return size;
+                }
+            }
+
+            var calculated = Text.CalcSize(word);
+
+            lock (WordSizeCacheLock)
+            {
+                if (WordSizeCache.Count > 1000)
+                {
+                    WordSizeCache.Clear();
+                }
+                WordSizeCache[word] = calculated;
+            }
+
+            return calculated;
+        }
+
         /// <summary>
         /// Структура ключа кешу без виділення пам'яті в купі (Zero GC Allocation Key).
         /// Забезпечує надійне порівняння з захистом від колізій хешів.
@@ -103,7 +136,7 @@ namespace RimWorldOnlineCity.UI
 
         /// <summary>
         /// Головна функція відмальовки компонента.
-        /// ОПТИМІЗАЦІЯ: миттєве виконання дерева команд ActionTree без перерахунку переносу слів.
+        /// ОПТИМІЗАЦІЯ: миттєве виконання попередньо скомпільованого дерева команд ActionTree.
         /// </summary>
         public float Drow(Rect inRect, float dynamicHeight = 0)
         {
@@ -177,312 +210,291 @@ namespace RimWorldOnlineCity.UI
         {
             if (FirstCalcDrow == DateTime.MinValue) FirstCalcDrow = DateTime.UtcNow;
 
-            ActionTree startAction = new ATStart();
-            ActionTree currentAction = startAction;
-
-            float iconHeightDefault = TextHeight;
-
-            string text = PrintText;
-            if (text.IndexOf('\r') >= 0)
-            {
-                text = text.Replace("\r", "");
-            }
-
-            float width = inRect.width;
-            float height = dynamicHeight <= 0 ? inRect.height : dynamicHeight;
-
-            TagBtn tagBtnAct = null;
-            string tagBtnArg = null;
-            float tagBtnStartX = 0f;
-
-            int totalChars = 0;
-            string currentWord = "";
-            Vector2 currentWordSize = new Vector2();
-            float curY = 0f;
-            float curX = 0f;
-            float curHeight = 0f;
-
-            Action printCurrent = () =>
-            {
-                if (currentWord.Length > 0)
-                {
-                    currentAction.Next = new ATLabel
-                    {
-                        rect = new Rect(inRect.x + curX, inRect.y + curY, currentWordSize.x, currentWordSize.y),
-                        label = currentWord.IndexOf('\n') >= 0 ? currentWord.Replace("\n", "") : currentWord
-                    };
-                    currentAction = currentAction.Next;
-
-                    curX += currentWordSize.x;
-                    if (curHeight < currentWordSize.y) curHeight = currentWordSize.y;
-                    currentWord = "";
-                    currentWordSize = new Vector2();
-                }
-            };
-
-            Action printBtnAct = () =>
-            {
-                if (tagBtnAct != null && tagBtnStartX != curX && curHeight > 0)
-                {
-                    var tagRect = new Rect(inRect.x + tagBtnStartX, inRect.y + curY, curX - tagBtnStartX, curHeight);
-                    currentAction.Next = new ATBtnAct
-                    {
-                        tagRect = tagRect,
-                        tagBtnArg = tagBtnArg,
-                        tagBtnAct = tagBtnAct
-                    };
-                    currentAction = currentAction.Next;
-                }
-            };
-
-            // ОПТИМІЗАЦІЯ: швидкий пошук тегів <l> без повільних LINQ Select/FirstOrDefault
-            if (text.IndexOf("<l>", StringComparison.Ordinal) >= 0)
-            {
-                var sb = new StringBuilder(text.Length + 32);
-                int lastIndex = 0;
-                while (true)
-                {
-                    int posB = text.IndexOf("<l>", lastIndex, StringComparison.Ordinal);
-                    if (posB < 0) break;
-                    int posE = text.IndexOf("</l>", posB + 3, StringComparison.Ordinal);
-                    if (posE < 0) break;
-
-                    sb.Append(text, lastIndex, posB - lastIndex);
-                    string sub = text.Substring(posB + 3, posE - posB - 3);
-                    string tr = ChatController.ServerCharTranslate(sub, true);
-
-                    if (tr.Contains("."))
-                    {
-                        tr = LanguageInjections.GetOrAdd(tr, ResolveLanguageInjection) ?? tr;
-                    }
-
-                    sb.Append(tr.TranslateCache());
-                    lastIndex = posE + 4;
-                }
-
-                if (lastIndex < text.Length)
-                {
-                    sb.Append(text, lastIndex, text.Length - lastIndex);
-                }
-                text = sb.ToString();
-            }
+            var prevFont = Text.Font;
+            Text.Font = GameFont.Small;
 
             try
             {
-                foreach (var word in ParceText(text))
+                ActionTree startAction = new ATStart();
+                ActionTree currentAction = startAction;
+
+                float iconHeightDefault = TextHeight;
+
+                string text = PrintText;
+                if (text.IndexOf('\r') >= 0)
                 {
-                    totalChars += word.Length;
-                    bool lastLoop = totalChars == text.Length;
+                    text = text.Replace("\r", "");
+                }
 
-                    // Обробка тегів розмітки
-                    if (word.Length > 1 && word[0] == '<')
+                float width = inRect.width;
+                float height = dynamicHeight <= 0 ? inRect.height : dynamicHeight;
+
+                TagBtn tagBtnAct = null;
+                string tagBtnArg = null;
+                float tagBtnStartX = 0f;
+
+                int totalChars = 0;
+                string currentWord = "";
+                Vector2 currentWordSize = new Vector2();
+                float curY = 0f;
+                float curX = 0f;
+                float curHeight = 0f;
+
+                Action printCurrent = () =>
+                {
+                    if (currentWord.Length > 0)
                     {
-                        if (word.StartsWith("<btn ", StringComparison.OrdinalIgnoreCase))
+                        currentAction.Next = new ATLabel
                         {
-                            printCurrent();
-                            tagBtnStartX = curX;
-                            tagBtnAct = null;
-                            tagBtnArg = null;
-                            string name = null;
-                            string className = "";
-                            string d = "";
+                            rect = new Rect(inRect.x + curX, inRect.y + curY, currentWordSize.x, currentWordSize.y),
+                            label = currentWord.IndexOf('\n') >= 0 ? currentWord.Replace("\n", "") : currentWord
+                        };
+                        currentAction = currentAction.Next;
 
-                            var attrs = ParseAttributes(word);
-                            for (int a = 0; a < attrs.Count; a++)
-                            {
-                                var arg = attrs[a];
-                                if (string.IsNullOrEmpty(arg.Second))
-                                {
-                                    name = arg.First;
-                                }
-                                else if (arg.First.Equals("name", StringComparison.OrdinalIgnoreCase) || arg.First.Equals("act", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    name = arg.Second;
-                                }
-                                else if (arg.First.Equals("arg", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    tagBtnArg = arg.Second;
-                                }
-                                else if (arg.First.Equals("class", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    className = arg.Second;
-                                }
-                                else if (arg.First.Equals("d", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    d = arg.Second;
-                                }
-                            }
+                        curX += currentWordSize.x;
+                        if (curHeight < currentWordSize.y) curHeight = currentWordSize.y;
+                        currentWord = "";
+                        currentWordSize = new Vector2();
+                    }
+                };
 
-                            if (!Btns.TryGetValue(name, out tagBtnAct) && !GlobalBtns.TryGetValue(name, out tagBtnAct))
-                            {
-                                if (!string.IsNullOrEmpty(className))
-                                {
-                                    tagBtnAct = TagBtn.GetByClass(className, d, tagBtnArg);
-                                    Btns[name] = tagBtnAct;
-                                }
-                            }
+                Action printBtnAct = () =>
+                {
+                    if (tagBtnAct != null && tagBtnStartX != curX && curHeight > 0)
+                    {
+                        var tagRect = new Rect(inRect.x + tagBtnStartX, inRect.y + curY, curX - tagBtnStartX, curHeight);
+                        currentAction.Next = new ATBtnAct
+                        {
+                            tagRect = tagRect,
+                            tagBtnArg = tagBtnArg,
+                            tagBtnAct = tagBtnAct
+                        };
+                        currentAction = currentAction.Next;
+                    }
+                };
 
-                            continue;
+                // ОПТИМІЗАЦІЯ: швидкий пошук та локалізація тегів <l>
+                if (text.IndexOf("<l>", StringComparison.Ordinal) >= 0)
+                {
+                    var sb = new StringBuilder(text.Length + 32);
+                    int lastIndex = 0;
+                    while (true)
+                    {
+                        int posB = text.IndexOf("<l>", lastIndex, StringComparison.Ordinal);
+                        if (posB < 0) break;
+                        int posE = text.IndexOf("</l>", posB + 3, StringComparison.Ordinal);
+                        if (posE < 0) break;
+
+                        sb.Append(text, lastIndex, posB - lastIndex);
+                        string sub = text.Substring(posB + 3, posE - posB - 3);
+                        string tr = ChatController.ServerCharTranslate(sub, true);
+
+                        if (tr.Contains("."))
+                        {
+                            tr = LanguageInjections.GetOrAdd(tr, ResolveLanguageInjection) ?? tr;
                         }
-                        else if (word.StartsWith("</btn", StringComparison.OrdinalIgnoreCase))
+
+                        sb.Append(tr.TranslateCache());
+                        lastIndex = posE + 4;
+                    }
+
+                    if (lastIndex < text.Length)
+                    {
+                        sb.Append(text, lastIndex, text.Length - lastIndex);
+                    }
+                    text = sb.ToString();
+                }
+
+                try
+                {
+                    foreach (var word in ParceText(text))
+                    {
+                        totalChars += word.Length;
+                        bool lastLoop = totalChars == text.Length;
+
+                        // Обробка спеціальних тегів розмітки
+                        if (word.Length > 1 && word[0] == '<')
                         {
-                            printCurrent();
-                            printBtnAct();
-                            tagBtnAct = null;
-                            tagBtnArg = null;
-                            continue;
-                        }
-                        else if (word.StartsWith("<img ", StringComparison.OrdinalIgnoreCase))
-                        {
-                            printCurrent();
-
-                            Func<Texture2D> getIcon = null;
-                            Texture2D icon = null;
-                            string name = "";
-                            int h = 0;
-                            int w = 0;
-
-                            var attrs = ParseAttributes(word);
-                            for (int a = 0; a < attrs.Count; a++)
+                            if (word.StartsWith("<btn ", StringComparison.OrdinalIgnoreCase))
                             {
-                                var agr = attrs[a];
-                                if (string.IsNullOrEmpty(agr.Second))
-                                {
-                                    name = agr.First;
-                                }
-                                else if (agr.First.Equals("name", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    name = agr.Second;
-                                }
-                                else if (agr.First.Equals("defName", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    icon = GeneralTexture.Get.GetDefTexture(agr.Second);
-                                }
-                                else if (agr.First.Equals("height", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    int.TryParse(agr.Second, out h);
-                                }
-                                else if (agr.First.Equals("width", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    int.TryParse(agr.Second, out w);
-                                }
-                            }
+                                printCurrent();
+                                tagBtnStartX = curX;
+                                tagBtnAct = null;
+                                tagBtnArg = null;
+                                string name = null;
+                                string className = "";
+                                string d = "";
 
-                            if (icon == null)
-                            {
-                                if (string.IsNullOrWhiteSpace(name)) continue;
-                                if (name.StartsWith("pl_") && name.Length > 4)
+                                var attrs = ParseAttributes(word);
+                                for (int a = 0; a < attrs.Count; a++)
                                 {
-                                    getIcon = () => GeneralTexture.Get.ByName(name);
-                                    icon = getIcon();
-                                }
-                                else if (!Imgs.TryGetValue(name, out icon) && !GlobalImgs.TryGetValue(name, out icon))
-                                {
-                                    try
+                                    var arg = attrs[a];
+                                    if (string.IsNullOrEmpty(arg.Second))
                                     {
-                                        icon = ContentFinder<Texture2D>.Get(name, false);
+                                        name = arg.First;
                                     }
-                                    catch
+                                    else if (arg.First.Equals("name", StringComparison.OrdinalIgnoreCase) || arg.First.Equals("act", StringComparison.OrdinalIgnoreCase))
                                     {
-                                        icon = null;
+                                        name = arg.Second;
                                     }
-                                    if (icon != null) GlobalImgs[name] = icon;
+                                    else if (arg.First.Equals("arg", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        tagBtnArg = arg.Second;
+                                    }
+                                    else if (arg.First.Equals("class", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        className = arg.Second;
+                                    }
+                                    else if (arg.First.Equals("d", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        d = arg.Second;
+                                    }
                                 }
-                            }
-                            if (icon == null) continue;
 
-                            float iconHeight = h > 0 ? h : iconHeightDefault;
-                            float iconWidth = w > 0 ? w : icon.width * iconHeight / icon.height;
-
-                            // Перенос на новий рядок, якщо іконка не вміщується
-                            if (curX > 0 && curX + iconWidth > width)
-                            {
-                                printBtnAct();
-
-                                tagBtnStartX = 0;
-                                curX = 0;
-                                curY += curHeight;
-                                curHeight = 0f;
-
-                                if (curY >= height)
+                                if (!string.IsNullOrEmpty(name))
                                 {
-                                    return new PanelCacheValue { Tree = startAction, Height = curY };
+                                    if (!Btns.TryGetValue(name, out tagBtnAct) && !GlobalBtns.TryGetValue(name, out tagBtnAct))
+                                    {
+                                        if (!string.IsNullOrEmpty(className))
+                                        {
+                                            tagBtnAct = TagBtn.GetByClass(className, d, tagBtnArg);
+                                            Btns[name] = tagBtnAct;
+                                        }
+                                    }
                                 }
+
+                                continue;
                             }
-
-                            // ОПТИМІЗАЦІЯ: збереження готової статичної текстури без створення зайвих Func-делегатів
-                            currentAction.Next = new ATDrawTexture
+                            else if (word.StartsWith("</btn", StringComparison.OrdinalIgnoreCase))
                             {
-                                position = new Rect(inRect.x + curX, inRect.y + curY, iconWidth, iconHeight),
-                                staticImage = getIcon == null ? icon : null,
-                                dynamicImage = getIcon
-                            };
-                            currentAction = currentAction.Next;
-
-                            curX += iconWidth;
-                            if (curHeight < iconHeight) curHeight = iconHeight;
-
-                            if (lastLoop)
-                            {
+                                printCurrent();
                                 printBtnAct();
-                                tagBtnStartX = 0;
-                                curX = 0;
-                                curY += curHeight;
-                                curHeight = 0f;
+                                tagBtnAct = null;
+                                tagBtnArg = null;
+                                continue;
                             }
-                            continue;
+                            else if (word.StartsWith("<img ", StringComparison.OrdinalIgnoreCase))
+                            {
+                                printCurrent();
+
+                                Func<Texture2D> getIcon = null;
+                                Texture2D icon = null;
+                                string name = "";
+                                int h = 0;
+                                int w = 0;
+
+                                var attrs = ParseAttributes(word);
+                                for (int a = 0; a < attrs.Count; a++)
+                                {
+                                    var agr = attrs[a];
+                                    if (string.IsNullOrEmpty(agr.Second))
+                                    {
+                                        name = agr.First;
+                                    }
+                                    else if (agr.First.Equals("name", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        name = agr.Second;
+                                    }
+                                    else if (agr.First.Equals("defName", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        icon = GeneralTexture.Get.GetDefTexture(agr.Second);
+                                    }
+                                    else if (agr.First.Equals("height", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        int.TryParse(agr.Second, out h);
+                                    }
+                                    else if (agr.First.Equals("width", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        int.TryParse(agr.Second, out w);
+                                    }
+                                }
+
+                                if (icon == null)
+                                {
+                                    if (string.IsNullOrWhiteSpace(name)) continue;
+                                    if (name.StartsWith("pl_") && name.Length > 4)
+                                    {
+                                        getIcon = () => GeneralTexture.Get.ByName(name);
+                                        icon = getIcon();
+                                    }
+                                    else if (!Imgs.TryGetValue(name, out icon) && !GlobalImgs.TryGetValue(name, out icon))
+                                    {
+                                        try
+                                        {
+                                            icon = ContentFinder<Texture2D>.Get(name, false);
+                                        }
+                                        catch
+                                        {
+                                            icon = null;
+                                        }
+                                        if (icon != null) GlobalImgs[name] = icon;
+                                    }
+                                }
+                                if (icon == null) continue;
+
+                                float iconHeight = h > 0 ? h : iconHeightDefault;
+                                float iconWidth = w > 0 ? w : icon.width * iconHeight / icon.height;
+
+                                // Перенос на новий рядок, якщо іконка не вміщується за шириною
+                                if (curX > 0 && curX + iconWidth > width)
+                                {
+                                    printBtnAct();
+
+                                    tagBtnStartX = 0;
+                                    curX = 0;
+                                    curY += curHeight;
+                                    curHeight = 0f;
+
+                                    if (curY >= height)
+                                    {
+                                        return new PanelCacheValue { Tree = startAction, Height = curY };
+                                    }
+                                }
+
+                                currentAction.Next = new ATDrawTexture
+                                {
+                                    position = new Rect(inRect.x + curX, inRect.y + curY, iconWidth, iconHeight),
+                                    staticImage = getIcon == null ? icon : null,
+                                    dynamicImage = getIcon
+                                };
+                                currentAction = currentAction.Next;
+
+                                curX += iconWidth;
+                                if (curHeight < iconHeight) curHeight = iconHeight;
+
+                                if (lastLoop)
+                                {
+                                    printBtnAct();
+                                    tagBtnStartX = 0;
+                                    curX = 0;
+                                    curY += curHeight;
+                                    curHeight = 0f;
+                                }
+                                continue;
+                            }
                         }
-                    }
 
-                    // Розрахунок розміру слова та обробка переносу (Replace викликається лише за наявності \n)
-                    string testWord = currentWord.Length > 0 ? (currentWord + word) : word;
-                    if (testWord.IndexOf('\n') >= 0)
-                    {
-                        testWord = testWord.Replace("\n", "");
-                    }
-                    var size = Text.CalcSize(testWord);
-
-                    bool concat = curX + size.x <= width || (currentWord == "" && curX == 0);
-                    if (concat)
-                    {
-                        currentWord += word;
-                        currentWordSize = size;
-                    }
-
-                    bool newLine = curX + size.x > width || currentWord[currentWord.Length - 1] == '\n' || lastLoop;
-                    if (newLine)
-                    {
-                        printCurrent();
-                        printBtnAct();
-
-                        tagBtnStartX = 0;
-                        curX = 0;
-                        curY += curHeight;
-                        curHeight = 0f;
-
-                        if (lastLoop)
+                        // Розрахунок розміру слова та перенесення рядків через швидкий кеш
+                        string testWord = currentWord.Length > 0 ? (currentWord + word) : word;
+                        if (testWord.IndexOf('\n') >= 0)
                         {
-                            printCurrent();
-                            printBtnAct();
+                            testWord = testWord.Replace("\n", "");
                         }
+                        var size = GetWordSizeCached(testWord);
 
-                        if (curY >= height)
+                        bool concat = curX + size.x <= width || (currentWord == "" && curX == 0);
+                        if (concat)
                         {
-                            return new PanelCacheValue { Tree = startAction, Height = curY };
+                            currentWord += word;
+                            currentWordSize = size;
                         }
-                    }
 
-                    if (!concat)
-                    {
-                        currentWord = word;
-                        string cleanWord = word.IndexOf('\n') >= 0 ? word.Replace("\n", "") : word;
-                        currentWordSize = Text.CalcSize(cleanWord);
-
-                        newLine = currentWord[currentWord.Length - 1] == '\n';
-                        if (newLine) printCurrent();
-
+                        // ВИПРАВЛЕНО: захист від звернення до індексу -1 при порожньому currentWord
+                        bool hasTrailingNewLine = currentWord.Length > 0 && currentWord[currentWord.Length - 1] == '\n';
+                        bool newLine = curX + size.x > width || hasTrailingNewLine || lastLoop;
                         if (newLine)
                         {
+                            printCurrent();
                             printBtnAct();
 
                             tagBtnStartX = 0;
@@ -501,15 +513,50 @@ namespace RimWorldOnlineCity.UI
                                 return new PanelCacheValue { Tree = startAction, Height = curY };
                             }
                         }
+
+                        if (!concat)
+                        {
+                            currentWord = word;
+                            string cleanWord = word.IndexOf('\n') >= 0 ? word.Replace("\n", "") : word;
+                            currentWordSize = GetWordSizeCached(cleanWord);
+
+                            newLine = currentWord.Length > 0 && currentWord[currentWord.Length - 1] == '\n';
+                            if (newLine) printCurrent();
+
+                            if (newLine)
+                            {
+                                printBtnAct();
+
+                                tagBtnStartX = 0;
+                                curX = 0;
+                                curY += curHeight;
+                                curHeight = 0f;
+
+                                if (lastLoop)
+                                {
+                                    printCurrent();
+                                    printBtnAct();
+                                }
+
+                                if (curY >= height)
+                                {
+                                    return new PanelCacheValue { Tree = startAction, Height = curY };
+                                }
+                            }
+                        }
                     }
                 }
+                finally
+                {
+                    currentAction.Next = new ATFinish();
+                }
+
+                return new PanelCacheValue { Tree = startAction, Height = curY };
             }
             finally
             {
-                currentAction.Next = new ATFinish();
+                Text.Font = prevFont;
             }
-
-            return new PanelCacheValue { Tree = startAction, Height = curY };
         }
 
         #region Дерево команд рендерингу (ActionTree)
@@ -592,7 +639,7 @@ namespace RimWorldOnlineCity.UI
         #endregion
 
         /// <summary>
-        /// Швидкий парсер атрибутів тегу без створення нових екземплярів списків у купі.
+        /// Швидкий парсер атрибутів тегу без створення зайвих проміжних об'єктів у купі.
         /// </summary>
         private static List<Pair<string, string>> ParseAttributes(string fullTag)
         {
@@ -618,16 +665,19 @@ namespace RimWorldOnlineCity.UI
                 while (i <= end && !char.IsWhiteSpace(fullTag[i])) i++;
                 int tokenLen = i - tokenStart;
 
-                string token = fullTag.Substring(tokenStart, tokenLen);
-                int eqIndex = token.IndexOf('=');
-                if (eqIndex < 0)
+                int eqIndex = fullTag.IndexOf('=', tokenStart);
+                if (eqIndex < 0 || eqIndex >= i)
                 {
-                    result.Add(new Pair<string, string>(token, string.Empty));
+                    string key = fullTag.Substring(tokenStart, tokenLen);
+                    result.Add(new Pair<string, string>(key, string.Empty));
                 }
                 else
                 {
-                    string key = token.Substring(0, eqIndex);
-                    string val = token.Substring(eqIndex + 1);
+                    string key = fullTag.Substring(tokenStart, eqIndex - tokenStart);
+                    int valStart = eqIndex + 1;
+                    int valLen = i - valStart;
+                    string val = fullTag.Substring(valStart, valLen);
+
                     if (val.Length >= 2 && ((val[0] == '"' && val[val.Length - 1] == '"') || (val[0] == '\'' && val[val.Length - 1] == '\'')))
                     {
                         val = val.Substring(1, val.Length - 2);
