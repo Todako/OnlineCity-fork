@@ -1,0 +1,19 @@
+# Автоматична нормалізація закінчень рядків у репозиторії
+* text=auto eol=crlf
+
+# Вихідні коди та текстові конфігурації — завжди CRLF
+*.cs text eol=crlf
+*.xml text eol=crlf
+*.txt text eol=crlf
+*.props text eol=crlf
+*.config text eol=crlf
+*.sln text eol=crlf
+*.csproj text eol=crlf
+*.md text eol=crlf
+
+# Бінарні ресурси без зміни рядків
+*.png binary
+*.jpg binary
+*.dll binary
+*.exe binary
+*.p7s binary

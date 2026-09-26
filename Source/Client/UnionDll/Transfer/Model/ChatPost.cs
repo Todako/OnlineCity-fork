@@ -9,19 +9,18 @@ namespace Model
 
         public int IdOwner { get; set; }
 
-        public DateTime Time { get; set; } 
+        public DateTime Time { get; set; }
 
         public string Message { get; set; }
 
         /// <summary>
-        /// Показывать только данному игроку, если не заданно показывать всем.
-        /// Например ответ на /help напишет здесь имя игрока, а в OwnerLogin слово system
+        /// Показувати лише даному гравцеві, якщо не задано показувати всім.
+        /// Наприклад, відповідь на /help запише сюди ім'я гравця, а в OwnerLogin — "system".
         /// </summary>
-        //[Obsolete ("Для системных сообщений будет использоваться чат с Id=0, для приватного сообщения пользователю надо будет создать канал")]
         public string OnlyForPlayerLogin { get; set; }
 
         /// <summary>
-        /// Служебное поле. Если оно !=0 значит сообщение пришло из Discord и его не надо отправлять туда обратно :-)
+        /// Службове поле. Якщо не дорівнює 0, повідомлення надійшло з Discord і його не слід відправляти туди назад.
         /// </summary>
         public ulong DiscordIdMessage { get; set; }
     }

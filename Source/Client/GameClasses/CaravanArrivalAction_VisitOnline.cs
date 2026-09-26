@@ -11,10 +11,9 @@ using Verse;
 
 namespace RimWorldOnlineCity
 {
-    public class CaravanArrivalAction_VisitOnline : CaravanArrivalAction//, ITrader
+    public class CaravanArrivalAction_VisitOnline : CaravanArrivalAction
     {
         private CaravanOnline сaravanOnline;
-
         private string mode;
 
         public CaravanArrivalAction_VisitOnline()
@@ -27,7 +26,7 @@ namespace RimWorldOnlineCity
             this.mode = mode;
         }
 
-        //Пример: посетить
+        // Приклад: відвідати
         public override string Label
         {
             get
@@ -40,7 +39,7 @@ namespace RimWorldOnlineCity
             }
         }
 
-        //Пример: посещает
+        // Приклад: відвідує
         public override string ReportString
         {
             get
@@ -48,8 +47,6 @@ namespace RimWorldOnlineCity
                 return Label;
             }
         }
-
-        //public override bool ShouldFail { get { return false; } }
 
         public override void Arrived(Caravan caravan)
         {
@@ -83,6 +80,5 @@ namespace RimWorldOnlineCity
                 , () => att(true)
             );
         }
-
     }
 }

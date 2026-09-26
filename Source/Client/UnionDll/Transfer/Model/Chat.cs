@@ -6,8 +6,8 @@ namespace Model
     [Serializable]
     public class Chat
     {
-        // 0 - приватный системый чат, сообщения не сохраняется и создается каждый раз новый для каждого пользователя
-        // 1 - публичный чат
+        // 0 — приватний системний чат, повідомлення не зберігаються і створюються щоразу заново для кожного користувача
+        // 1 — публічний загальний чат
         public int Id;
 
         public string OwnerLogin;
@@ -15,8 +15,8 @@ namespace Model
         public string Name;
 
         /// <summary>
-        /// Создан человеком (можно добавлять людей), 
-        /// иначе автоматический из всех кто доступен владельцу (это его общий чат)
+        /// Створений гравцем вручну (можна додавати інших гравців); 
+        /// інакше — автоматичний з усіх, хто доступний власнику (його загальний чат).
         /// </summary>
         public bool OwnerMaker;
 
@@ -24,7 +24,7 @@ namespace Model
 
         public List<ChatPost> Posts = new List<ChatPost>();
 
-        public DateTime LastChanged;        
+        public DateTime LastChanged;
 
         public Chat()
         {
