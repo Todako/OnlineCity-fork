@@ -4,9 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using Verse;
 
 namespace RimWorldOnlineCity.Model
@@ -14,11 +12,12 @@ namespace RimWorldOnlineCity.Model
     internal class ClientHashCheckerResult
     {
         /// <summary>
-        /// Отличающиеся файлы, которые были переписаны
+        /// Відмінні файли, які було перезаписано або оновлено.
         /// </summary>
         public List<string> ReplaceFiles { get; set; } = new List<string>();
+
         /// <summary>
-        /// Отличающиеся файлы, которые нельзя заменить
+        /// Відмінні файли, які заборонено замінювати на клієнті.
         /// </summary>
         public List<string> DifferentFiles { get; set; } = new List<string>();
 
@@ -33,109 +32,149 @@ namespace RimWorldOnlineCity.Model
             ModsConfigByStart = GetModsConfigContent();
         }
 
-        private string GetModsConfigContent() => File.ReadAllText(Path.Combine(GenFilePaths.ConfigFolderPath, "ModsConfig.xml"));
+        private string GetModsConfigContent()
+        {
+            var configPath = Path.Combine(GenFilePaths.ConfigFolderPath, "ModsConfig.xml");
+            return File.Exists(configPath) ? File.ReadAllText(configPath) : string.Empty;
+        }
 
         private List<string> GetListLi(string text)
         {
             var result = new List<string>();
+            if (string.IsNullOrEmpty(text)) return result;
+
             int pos = 0;
-            while(true)
+            while (true)
             {
-                pos = text.IndexOf("<li>", pos);
+                pos = text.IndexOf("<li>", pos, StringComparison.Ordinal);
                 if (pos < 0) break;
                 pos += 4;
-                var e = text.IndexOf("</li>", pos);
+                var e = text.IndexOf("</li>", pos, StringComparison.Ordinal);
                 if (e < 0) break;
                 result.Add(text.Substring(pos, e - pos));
             }
             return result;
         }
 
+        /// <summary>
+        /// Формує підсумковий звіт про перевірку файлів та відкриває його користувачеві у разі розбіжностей.
+        /// </summary>
         public string ReportComplete()
         {
             if (DifferentFiles.Count > 0 || ReplaceFiles.Count > 0)
             {
                 File.CreateText(MarkFileName).Close();
             }
+
             if (!MarkExist && DifferentFiles.Count == 0)
             {
                 if (ReplaceFiles.Count == 0) return null;
                 return "OCity_SessionCC_FilesUpdated".Translate();
             }
 
-            string result = null;
-
+            var sb = new StringBuilder(1024);
             var modsConfigByServer = GetModsConfigContent();
-            if (ModsConfigByStart.ToLower() != modsConfigByServer.ToLower())
+
+            if (!string.Equals(ModsConfigByStart, modsConfigByServer, StringComparison.OrdinalIgnoreCase))
             {
                 var verG = GameXMLUtils.GetByTag(ModsConfigByStart, "version");
                 var verS = GameXMLUtils.GetByTag(modsConfigByServer, "version");
-                if (verG.ToLower() != verS.ToLower()) result += Environment.NewLine
-                        + "OC_HashCheckerResult_VersionErr".Translate(verG, verS);
+                if (!string.Equals(verG, verS, StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine();
+                    sb.Append("OC_HashCheckerResult_VersionErr".Translate(verG, verS));
+                }
 
-                var modsG = GetListLi(ModsConfigByStart).Select(s => s.ToLower()).Distinct().ToHashSet();
-                var modsS = GetListLi(modsConfigByServer).Select(s => s.ToLower()).Distinct().ToHashSet();
+                var listStart = GetListLi(ModsConfigByStart);
+                var listServer = GetListLi(modsConfigByServer);
 
-                var modsNeed = new HashSet<string>(modsS);
+                var modsG = new HashSet<string>(listStart, StringComparer.OrdinalIgnoreCase);
+                var modsS = new HashSet<string>(listServer, StringComparer.OrdinalIgnoreCase);
+
+                var modsNeed = new HashSet<string>(modsS, StringComparer.OrdinalIgnoreCase);
                 modsNeed.ExceptWith(modsG);
 
-                var modsLeft = new HashSet<string>(modsG);
+                var modsLeft = new HashSet<string>(modsG, StringComparer.OrdinalIgnoreCase);
                 modsLeft.ExceptWith(modsS);
 
+                bool hasDiff = false;
                 if (modsNeed.Count > 0)
                 {
-                    result += Environment.NewLine
-                        + "OC_HashCheckerResult_NeedMods".Translate() + " "
-                        + modsNeed.Aggregate("", (r, i) => r + Environment.NewLine + i);
-                }
-                if (modsLeft.Count > 0)
-                {
-                    result += Environment.NewLine
-                        + "OC_HashCheckerResult_ExcessMods".Translate() + " "
-                        + modsLeft.Aggregate("", (r, i) => r + Environment.NewLine + i);
+                    hasDiff = true;
+                    sb.AppendLine();
+                    sb.Append("OC_HashCheckerResult_NeedMods".Translate()).Append(" ");
+                    foreach (var item in modsNeed)
+                    {
+                        sb.AppendLine().Append(item);
+                    }
                 }
 
-                if (result == null)
+                if (modsLeft.Count > 0)
                 {
-                    result += Environment.NewLine + "OC_HashCheckerResult_UnexpectedDiff".Translate();
+                    hasDiff = true;
+                    sb.AppendLine();
+                    sb.Append("OC_HashCheckerResult_ExcessMods".Translate()).Append(" ");
+                    foreach (var item in modsLeft)
+                    {
+                        sb.AppendLine().Append(item);
+                    }
+                }
+
+                if (!hasDiff && sb.Length == 0)
+                {
+                    sb.AppendLine();
+                    sb.Append("OC_HashCheckerResult_UnexpectedDiff".Translate());
                 }
             }
 
             if (DifferentFiles.Count > 0)
             {
-                result += Environment.NewLine
-                    + "OC_HashCheckerResult_DiffFiles".Translate();
+                sb.AppendLine();
+                sb.Append("OC_HashCheckerResult_DiffFiles".Translate());
             }
 
             if (ReplaceFiles.Count > 0)
             {
-                var cf = ReplaceFiles
-                    //.Select(fn => new { fn = fn, ix = fn.ToLower().IndexOf("mods\\") })
-                    //.Where(a => a.ix >= 0)
-                    //.Select(a => a.fn.Substring(a.ix + 5))
-                    .Where(fn => fn.Contains("\\"))
-                    .Select(fn => fn.Substring(0, fn.IndexOf("\\")))
-                    .Distinct()
-                    .ToList();
+                var distinctDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < ReplaceFiles.Count; i++)
+                {
+                    var fn = ReplaceFiles[i];
+                    int slashIdx = fn.IndexOf('\\');
+                    if (slashIdx >= 0)
+                    {
+                        distinctDirs.Add(fn.Substring(0, slashIdx));
+                    }
+                }
 
-                if (cf.Count > 0)
-                    result += Environment.NewLine
-                        + "OC_HashCheckerResult_ChangedDir".Translate() + " "
-                        + cf.Aggregate("", (r, i) => r + Environment.NewLine + i);
+                if (distinctDirs.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.Append("OC_HashCheckerResult_ChangedDir".Translate()).Append(" ");
+                    foreach (var dir in distinctDirs)
+                    {
+                        sb.AppendLine().Append(dir);
+                    }
+                }
 
-                result += Environment.NewLine
-                    + Environment.NewLine
-                    + "OC_HashCheckerResult_ChangedFiles".Translate() + " "
-                    + ReplaceFiles.Aggregate("", (r, i) => r + Environment.NewLine + i);
+                sb.AppendLine().AppendLine();
+                sb.Append("OC_HashCheckerResult_ChangedFiles".Translate()).Append(" ");
+                for (int i = 0; i < ReplaceFiles.Count; i++)
+                {
+                    sb.AppendLine().Append(ReplaceFiles[i]);
+                }
             }
 
             if (DifferentFiles.Count > 0)
             {
-                result += Environment.NewLine
-                    + Environment.NewLine
-                    + "OC_HashCheckerResult_CriticalDiff".Translate() + " "
-                    + DifferentFiles.Aggregate("", (r, i) => r + Environment.NewLine + i);
+                sb.AppendLine().AppendLine();
+                sb.Append("OC_HashCheckerResult_CriticalDiff".Translate()).Append(" ");
+                for (int i = 0; i < DifferentFiles.Count; i++)
+                {
+                    sb.AppendLine().Append(DifferentFiles[i]);
+                }
             }
+
+            string result = sb.Length > 0 ? sb.ToString() : null;
 
             if (!string.IsNullOrEmpty(result))
             {
@@ -147,16 +186,27 @@ namespace RimWorldOnlineCity.Model
                 catch
                 { }
             }
+
             return result;
         }
 
         internal void FileSynchronization(List<ModelFileInfo> files)
         {
-            foreach (var f in files)
+            if (files == null) return;
+
+            for (int i = 0; i < files.Count; i++)
             {
-                //Loger.Log("ReportFileSynchronization " + f.FileName);
-                if (f.NeedReplace) ReplaceFiles.Add(f.FileName);
-                else DifferentFiles.Add(f.FileName);
+                var f = files[i];
+                if (f == null) continue;
+
+                if (f.NeedReplace)
+                {
+                    ReplaceFiles.Add(f.FileName);
+                }
+                else
+                {
+                    DifferentFiles.Add(f.FileName);
+                }
             }
         }
     }
