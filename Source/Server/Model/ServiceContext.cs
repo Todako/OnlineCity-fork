@@ -15,13 +15,13 @@ namespace ServerOnlineCity.Model
         public string AddrIP;
 
         /// <summary>
-        /// Если при аунтификации не было предоставлено ключа.
-        /// С этим статусом можно обновляться, но при при попытке загрузить мир для игры диссконект
+        /// Якщо під час автентифікації не було надано ключа.
+        /// З цим статусом можна оновлюватися, але при спробі завантажити світ для гри відбудеться відключення.
         /// </summary>
         public bool PossiblyIntruder;
 
         /// <summary>
-        /// Временное поле для хранения ключей проверки Intruder
+        /// Тимчасове поле для зберігання ключів перевірки Intruder.
         /// </summary>
         public string IntruderKeys;
 
@@ -42,7 +42,6 @@ namespace ServerOnlineCity.Model
 
                 if (add.Count > 0) Player.IntruderKeys = lks.Union(add).Aggregate((r, k) => r + "@@@" + k);
             }
-
         }
 
         public void Disconnect(string logMsg)

@@ -8,19 +8,19 @@ namespace OCUnion.Transfer.Model
     public class ModelModsFilesRequest
     {
         /// <summary>
-        /// Дерево каталогов которое требуется восстановить
+        /// Дерево каталогів, яке потрібно відновити.
         /// </summary>
         public FolderType FolderType { get; set; }
 
         /// <summary>
-        /// После основного запроса на файлы из дериктории с 0, идут запросы на синхронизацию XML файлов
+        /// Після основного запиту на файли з директорії з 0, ідуть запити на синхронізацію XML-файлів.
         /// </summary>
         public int NumberFileRequest { get; set; }
 
         public int CodeRequest => (int)FolderType * 1000 + NumberFileRequest;
 
         /// <summary>
-        /// Файлы которые находятся в этих директориях
+        /// Файли, які знаходяться в цих директоріях.
         /// </summary>
         public List<ModelFileInfo> Files { get; set; }
     }
@@ -31,26 +31,25 @@ namespace OCUnion.Transfer.Model
         public FolderCheck Folder { get; set; }
 
         /// <summary>
-        /// Дерево каталогов которое требуется восстановить
+        /// Дерево каталогів, яке потрібно відновити.
         /// </summary>
         public FoldersTree FoldersTree { get; set; }
 
         /// <summary>
-        /// Файлы которые находятся в этих директориях
+        /// Файли, які знаходяться в цих директоріях.
         /// </summary>
         public List<ModelFileInfo> Files { get; set; }
 
         /// <summary>
-        /// Какой объем остался к отправке, без текущего пакета
+        /// Який обсяг даних залишився до відправки без урахування поточного пакета.
         /// </summary>
         public long TotalSize { get; set; }
 
         /// <summary>
-        /// Если задано, то в Path путь к XML файлу, у которого содержимое заданых тэгов не сравнивается
+        /// Якщо вказано, то в Path шлях до XML-файлу, вміст зазначених тегів якого не порівнюється.
         /// </summary>
         public List<string> IgnoreTag { get; set; }
     }
-
 
     [Serializable]
     public class FolderCheck
@@ -58,33 +57,31 @@ namespace OCUnion.Transfer.Model
         public FolderType FolderType { get; set; }
 
         /// <summary>
-        /// Полный путь на сервере
+        /// Повний шлях на сервері.
         /// </summary>
         public string ServerPath { get; set; }
 
         /// <summary>
-        /// Можно ли заменить файл по содержимому с сервера
+        /// Чи можна замінити файл за вмістом із сервера.
         /// </summary>
         public bool NeedReplace { get; set; }
 
         /// <summary>
-        /// Если задано, то в Path путь к XML файлу, у которого содержимое заданых тэгов не сравнивается
+        /// Якщо вказано, то в Path шлях до XML-файлу, вміст зазначених тегів якого не порівнюється.
         /// </summary>
         public List<string> IgnoreTag { get; set; }
 
-        /// <summary>
-        /// 
-        /// </summary>
         public string XMLFileName { get; set; }
 
         /// <summary>
-        /// Игнорировать файлы и подпапки с указанным именем
+        /// Ігнорувати файли з указаним ім'ям.
         /// </summary>
         public List<string> IgnoreFile { get; set; }
 
-
+        /// <summary>
+        /// Ігнорувати підпапки з указаним ім'ям.
+        /// </summary>
         public List<string> IgnoreFolder { get; set; }
-
     }
 
     [Serializable]
