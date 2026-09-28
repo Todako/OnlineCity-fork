@@ -1,19 +1,15 @@
 using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
-using ServerCore.Model;
-using ServerOnlineCity.Mechanics;
 using ServerOnlineCity.Model;
 using ServerOnlineCity.Services;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
-using Transfer;
-using Util;
+using System.Threading;
 
 namespace ServerOnlineCity
 {
@@ -41,23 +37,37 @@ namespace ServerOnlineCity
         private readonly RepositorySaveData RepSaveData;
         private readonly RepositoryFileSharing RepFileSharing;
 
-        private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
+        private static readonly HashSet<char> InvalidFileNameCharsSet = new HashSet<char>(Path.GetInvalidFileNameChars());
+        private static readonly object SaveLock = new object();
 
+        /// <summary>
+        /// Отримує об'єкт серверного гравця за логіном.
+        /// </summary>
         public static PlayerServer GetPlayerByLogin(string login, bool withNotApprove = false)
         {
             if (string.IsNullOrEmpty(login)) return null;
 
-            PlayerServer res;
-            if (withNotApprove) Repository.GetData.PlayersAllDicWithNotApprove.TryGetValue(login, out res);
-            else Repository.GetData.PlayersAllDic.TryGetValue(login, out res);
+            var data = Repository.GetData;
+            if (data == null) return null;
 
+            var dic = withNotApprove ? data.PlayersAllDicWithNotApprove : data.PlayersAllDic;
+            if (dic == null) return null;
+
+            dic.TryGetValue(login, out var res);
             return res;
         }
 
+        /// <summary>
+        /// Отримує державу за її назвою.
+        /// </summary>
         public static State GetStateByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            Repository.GetData.StatesDic.TryGetValue(name, out var res);
+
+            var data = Repository.GetData;
+            if (data?.StatesDic == null) return null;
+
+            data.StatesDic.TryGetValue(name, out var res);
             return res;
         }
 
@@ -67,7 +77,11 @@ namespace ServerOnlineCity
         {
             if (string.IsNullOrEmpty(nameState) || string.IsNullOrEmpty(namePosition)) return null;
 
-            if (Repository.GetData.StatePositionsDic.TryGetValue(nameState, out var resState)
+            var data = Repository.GetData;
+            if (data?.StatePositionsDic == null) return null;
+
+            if (data.StatePositionsDic.TryGetValue(nameState, out var resState)
+                && resState != null
                 && resState.TryGetValue(namePosition, out var res))
             {
                 return res;
@@ -136,208 +150,230 @@ namespace ServerOnlineCity
         private static HashSet<string> Blockkey = null;
         private static DateTime BlockkeyUpdate = DateTime.MinValue;
         private static DateTime BlockkeyLastWriteTime = DateTime.MinValue;
+        private static readonly object BlockkeyLock = new object();
 
         /// <summary>
         /// Перевіряє ключ у списку блокувань blockkey.txt.
-        /// ОПТИМІЗАЦІЯ: файл перечитується лише за умови реальної зміни мітки часу на диску.
         /// </summary>
         public static bool CheckIsIntruder(string key)
         {
-            if ((DateTime.UtcNow - BlockkeyUpdate).TotalSeconds > 30)
+            lock (BlockkeyLock)
             {
-                BlockkeyUpdate = DateTime.UtcNow;
-                var fileName = Loger.PathLog + "blockkey.txt";
+                if ((DateTime.UtcNow - BlockkeyUpdate).TotalSeconds > 30)
+                {
+                    BlockkeyUpdate = DateTime.UtcNow;
+                    var fileName = Loger.PathLog + "blockkey.txt";
 
-                if (!File.Exists(fileName))
-                {
-                    Blockkey = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    BlockkeyLastWriteTime = DateTime.MinValue;
-                }
-                else
-                {
-                    try
+                    if (!File.Exists(fileName))
                     {
-                        var lastWrite = File.GetLastWriteTimeUtc(fileName);
-                        if (Blockkey == null || lastWrite != BlockkeyLastWriteTime)
+                        Blockkey = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        BlockkeyLastWriteTime = DateTime.MinValue;
+                    }
+                    else
+                    {
+                        try
                         {
-                            BlockkeyLastWriteTime = lastWrite;
-
-                            var lines = File.ReadAllLines(fileName, Encoding.UTF8);
-                            var keySet = new HashSet<string>(lines.Length, StringComparer.OrdinalIgnoreCase);
-                            var addPl = new List<PlayerServer>();
-
-                            for (int i = 0; i < lines.Length; i++)
+                            var lastWrite = File.GetLastWriteTimeUtc(fileName);
+                            if (Blockkey == null || lastWrite != BlockkeyLastWriteTime)
                             {
-                                var line = lines[i].Replace("@@@", "").Trim();
-                                if (line.Length == 0) continue;
+                                BlockkeyLastWriteTime = lastWrite;
 
-                                int spaceIdx = line.IndexOf(' ');
-                                if (spaceIdx > 0) line = line.Substring(0, spaceIdx);
-                                if (line.Length == 0) continue;
+                                var lines = File.ReadAllLines(fileName, Encoding.UTF8);
+                                var keySet = new HashSet<string>(lines.Length, StringComparer.OrdinalIgnoreCase);
+                                var addPl = new List<PlayerServer>();
 
-                                keySet.Add(line);
-
-                                if (line.Length != 20)
+                                for (int i = 0; i < lines.Length; i++)
                                 {
-                                    var pl = GetPlayerByLogin(line);
-                                    if (pl != null) addPl.Add(pl);
+                                    var line = lines[i].Replace("@@@", "").Trim();
+                                    if (line.Length == 0) continue;
+
+                                    int spaceIdx = line.IndexOf(' ');
+                                    if (spaceIdx > 0) line = line.Substring(0, spaceIdx);
+                                    if (line.Length == 0) continue;
+
+                                    keySet.Add(line);
+
+                                    if (line.Length != 20)
+                                    {
+                                        var pl = GetPlayerByLogin(line);
+                                        if (pl != null) addPl.Add(pl);
+                                    }
+                                }
+
+                                Blockkey = keySet;
+
+                                foreach (var pl in addPl)
+                                {
+                                    if (string.IsNullOrEmpty(pl.IntruderKeys)) continue;
+                                    var add = pl.IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.None)
+                                        .Where(k => k.Length > 3 && !Blockkey.Contains(k))
+                                        .ToList();
+                                    if (add.Count > 0) AddIntruder(add, $" auto add by login {pl.Public.Login}");
                                 }
                             }
-
-                            Blockkey = keySet;
-
-                            foreach (var pl in addPl)
-                            {
-                                if (string.IsNullOrEmpty(pl.IntruderKeys)) continue;
-                                var add = pl.IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.None)
-                                    .Where(k => k.Length > 3 && !Blockkey.Contains(k))
-                                    .ToList();
-                                if (add.Count > 0) AddIntruder(add, $" auto add by login {pl.Public.Login}");
-                            }
+                        }
+                        catch (Exception exp)
+                        {
+                            Loger.Log("CheckIsIntruder error: " + exp.Message, Loger.LogLevel.ERROR);
+                            if (Blockkey == null) Blockkey = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            return false;
                         }
                     }
-                    catch (Exception exp)
-                    {
-                        Loger.Log("CheckIsIntruder error: " + exp.Message, Loger.LogLevel.ERROR);
-                        if (Blockkey == null) Blockkey = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        return false;
-                    }
                 }
-            }
 
-            if (string.IsNullOrEmpty(key) || Blockkey == null) return false;
-            var kk = key.Replace("@@@", "").Trim();
-            return Blockkey.Contains(kk);
+                if (string.IsNullOrEmpty(key) || Blockkey == null) return false;
+                var kk = key.Replace("@@@", "").Trim();
+                return Blockkey.Contains(kk);
+            }
         }
 
         public static void AddIntruder(List<string> keys, string comment)
         {
-            if (Blockkey == null) CheckIsIntruder("");
-
-            var sb = new StringBuilder();
-            foreach (var key in keys)
+            lock (BlockkeyLock)
             {
-                var k = key.Replace("@@@", "").Trim();
-                if (k.Length > 0 && (Blockkey == null || !Blockkey.Contains(k)))
+                if (Blockkey == null) CheckIsIntruder("");
+
+                var sb = new StringBuilder();
+                foreach (var key in keys)
                 {
-                    sb.AppendLine(k + " //" + comment.Replace("\r", "").Replace("\n", " "));
+                    var k = key.Replace("@@@", "").Trim();
+                    if (k.Length > 0 && (Blockkey == null || !Blockkey.Contains(k)))
+                    {
+                        sb.AppendLine(k + " //" + comment.Replace("\r", "").Replace("\n", " "));
+                    }
                 }
-            }
 
-            if (sb.Length > 0)
-            {
-                var fileName = Loger.PathLog + "blockkey.txt";
-                File.AppendAllText(fileName, sb.ToString(), Encoding.UTF8);
+                if (sb.Length > 0)
+                {
+                    var fileName = Loger.PathLog + "blockkey.txt";
+                    File.AppendAllText(fileName, sb.ToString(), Encoding.UTF8);
 
-                // Негайно скидаємо таймер для оновлення кешу
-                BlockkeyUpdate = DateTime.MinValue;
-                CheckIsIntruder("");
+                    // Негайно скидаємо таймер для оновлення кешу
+                    BlockkeyUpdate = DateTime.MinValue;
+                    CheckIsIntruder("");
+                }
             }
         }
 
         private static HashSet<string> Blockip = null;
         private static DateTime BlockipUpdate = DateTime.MinValue;
         private static DateTime BlockipLastWriteTime = DateTime.MinValue;
+        private static readonly object BlockipLock = new object();
 
         /// <summary>
         /// Перевіряє IP-адресу клієнта у списку заблокованих blockip.txt.
-        /// ОПТИМІЗАЦІЯ: файл перечитується лише у разі зміни файлу на диску.
         /// </summary>
         public static bool CheckIsBanIP(string IP)
         {
             if (string.IsNullOrEmpty(IP)) return false;
 
-            if ((DateTime.UtcNow - BlockipUpdate).TotalSeconds > 30)
+            lock (BlockipLock)
             {
-                BlockipUpdate = DateTime.UtcNow;
-                var fileName = Loger.PathLog + "blockip.txt";
+                if ((DateTime.UtcNow - BlockipUpdate).TotalSeconds > 30)
+                {
+                    BlockipUpdate = DateTime.UtcNow;
+                    var fileName = Loger.PathLog + "blockip.txt";
 
-                if (!File.Exists(fileName))
-                {
-                    Blockip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    BlockipLastWriteTime = DateTime.MinValue;
-                }
-                else
-                {
-                    try
+                    if (!File.Exists(fileName))
                     {
-                        var lastWrite = File.GetLastWriteTimeUtc(fileName);
-                        if (Blockip == null || lastWrite != BlockipLastWriteTime)
+                        Blockip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        BlockipLastWriteTime = DateTime.MinValue;
+                    }
+                    else
+                    {
+                        try
                         {
-                            BlockipLastWriteTime = lastWrite;
-
-                            var lines = File.ReadAllLines(fileName, Encoding.UTF8);
-                            bool hasSubnet = false;
-                            for (int i = 0; i < lines.Length; i++)
+                            var lastWrite = File.GetLastWriteTimeUtc(fileName);
+                            if (Blockip == null || lastWrite != BlockipLastWriteTime)
                             {
-                                if (lines[i].Contains("/"))
-                                {
-                                    hasSubnet = true;
-                                    break;
-                                }
-                            }
+                                BlockipLastWriteTime = lastWrite;
 
-                            if (hasSubnet)
-                            {
-                                var expanded = new List<string>(lines.Length);
-                                foreach (var b in lines)
+                                var lines = File.ReadAllLines(fileName, Encoding.UTF8);
+                                bool hasSubnet = false;
+                                for (int i = 0; i < lines.Length; i++)
                                 {
-                                    var bb = b.Trim();
-                                    var comment = "";
-                                    var ic = bb.IndexOf(" ");
-                                    if (ic > 0)
+                                    if (lines[i].Contains("/"))
                                     {
-                                        comment = bb.Substring(ic);
-                                        bb = bb.Substring(0, ic);
+                                        hasSubnet = true;
+                                        break;
                                     }
-                                    if (bb.Any(c => !char.IsDigit(c) && c != '.' && c != '/')) continue;
-                                    var ls = bb.LastIndexOf("/");
-                                    if (ls < 0) { expanded.Add(bb + comment); continue; }
-                                    var lp = bb.LastIndexOf(".");
-                                    if (lp <= 0) continue;
-                                    if (!int.TryParse(bb.Substring(lp + 1, ls - (lp + 1)), out int ib) ||
-                                        !int.TryParse(bb.Substring(ls + 1), out int ie)) continue;
-                                    var s = bb.Substring(0, lp + 1);
-                                    for (int i = ib; i <= ie; i++)
-                                        expanded.Add(s + i.ToString() + comment);
                                 }
-                                lines = expanded.ToArray();
-                                File.WriteAllLines(fileName, lines, Encoding.Default);
-                                BlockipLastWriteTime = File.GetLastWriteTimeUtc(fileName);
-                            }
 
-                            var ipSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            for (int i = 0; i < lines.Length; i++)
-                            {
-                                var line = lines[i].Trim();
-                                if (line.Length == 0) continue;
+                                if (hasSubnet)
+                                {
+                                    var expanded = new List<string>(lines.Length);
+                                    foreach (var b in lines)
+                                    {
+                                        var bb = b.Trim();
+                                        var comment = "";
+                                        var ic = bb.IndexOf(" ");
+                                        if (ic > 0)
+                                        {
+                                            comment = bb.Substring(ic);
+                                            bb = bb.Substring(0, ic);
+                                        }
 
-                                int spaceIdx = line.IndexOf(' ');
-                                if (spaceIdx > 0) line = line.Substring(0, spaceIdx);
-                                ipSet.Add(line);
+                                        bool validChars = true;
+                                        for (int c = 0; c < bb.Length; c++)
+                                        {
+                                            char ch = bb[c];
+                                            if (!char.IsDigit(ch) && ch != '.' && ch != '/')
+                                            {
+                                                validChars = false;
+                                                break;
+                                            }
+                                        }
+                                        if (!validChars) continue;
+
+                                        var ls = bb.LastIndexOf("/");
+                                        if (ls < 0) { expanded.Add(bb + comment); continue; }
+                                        var lp = bb.LastIndexOf(".");
+                                        if (lp <= 0) continue;
+                                        if (!int.TryParse(bb.Substring(lp + 1, ls - (lp + 1)), out int ib) ||
+                                            !int.TryParse(bb.Substring(ls + 1), out int ie)) continue;
+                                        var s = bb.Substring(0, lp + 1);
+                                        for (int i = ib; i <= ie; i++)
+                                            expanded.Add(s + i.ToString() + comment);
+                                    }
+                                    lines = expanded.ToArray();
+                                    File.WriteAllLines(fileName, lines, Encoding.Default);
+                                    BlockipLastWriteTime = File.GetLastWriteTimeUtc(fileName);
+                                }
+
+                                var ipSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < lines.Length; i++)
+                                {
+                                    var line = lines[i].Trim();
+                                    if (line.Length == 0) continue;
+
+                                    int spaceIdx = line.IndexOf(' ');
+                                    if (spaceIdx > 0) line = line.Substring(0, spaceIdx);
+                                    ipSet.Add(line);
+                                }
+                                Blockip = ipSet;
                             }
-                            Blockip = ipSet;
+                        }
+                        catch (Exception exp)
+                        {
+                            Loger.Log("CheckIsBanIP error: " + exp.Message, Loger.LogLevel.ERROR);
+                            if (Blockip == null) Blockip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            return false;
                         }
                     }
-                    catch (Exception exp)
-                    {
-                        Loger.Log("CheckIsBanIP error: " + exp.Message, Loger.LogLevel.ERROR);
-                        if (Blockip == null) Blockip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        return false;
-                    }
                 }
-            }
 
-            return Blockip != null && Blockip.Contains(IP.Trim());
+                return Blockip != null && Blockip.Contains(IP.Trim());
+            }
         }
 
         /// <summary>
-        /// Повне очищення світу від об'єктів, угод та скріншотів вказаного гравця.
-        /// ОПТИМІЗАЦІЯ: видалення зі списків виконується з кінця за O(N) замість O(N^2).
+        /// Повне очищення світу від об'єктів, угод та скриншотів вказаного гравця.
         /// </summary>
         public static void DropUserFromMap(string login)
         {
             var data = Repository.GetData;
+            if (data == null) return;
+
             lock (data)
             {
                 if (data.WorldObjectsDeleted == null) data.WorldObjectsDeleted = new List<WorldObjectEntry>();
@@ -399,89 +435,93 @@ namespace ServerOnlineCity
 
         public void Load()
         {
-            bool needResave = false;
-            if (!Directory.Exists(SaveFolderDataPlayers))
-                Directory.CreateDirectory(SaveFolderDataPlayers);
+            lock (SaveLock)
+            {
+                bool needResave = false;
+                if (!Directory.Exists(SaveFolderDataPlayers))
+                    Directory.CreateDirectory(SaveFolderDataPlayers);
 
-            if (!File.Exists(SaveFileName))
-            {
-                Data = new BaseContainer();
-                Save();
-                Data.PostLoad();
-                Loger.Log("Server Create Data");
-            }
-            else
-            {
-                using (var fs = new FileStream(SaveFileName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
+                if (!File.Exists(SaveFileName))
                 {
-                    var bf = new BinaryFormatter { Binder = new ServerCoreSerializationBinder() };
-                    Loger.Log("Server Load... " + (new FileInfo(SaveFileName).FullName));
-                    Data = (BaseContainer)bf.Deserialize(fs);
-
-                    Loger.Log("Server Version data: " + Data.Version + " Current version: " + MainHelper.VersionInfo);
-                    Loger.Log($"Server unified version {MainHelper.VersionNum}");
-
-                    if (Data.Version != MainHelper.VersionInfo || Data.VersionNum < MainHelper.VersionNum + 1)
+                    Data = new BaseContainer();
+                    Save();
+                    Data.PostLoad();
+                    Loger.Log("Server Create Data");
+                }
+                else
+                {
+                    using (var fs = new FileStream(SaveFileName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
                     {
-                        needResave = true;
+                        var bf = new BinaryFormatter { Binder = new ServerCoreSerializationBinder() };
+                        Loger.Log("Server Load... " + (new FileInfo(SaveFileName).FullName));
+                        Data = (BaseContainer)bf.Deserialize(fs);
+
+                        Loger.Log("Server Version data: " + Data.Version + " Current version: " + MainHelper.VersionInfo);
+                        Loger.Log($"Server unified version {MainHelper.VersionNum}");
+
+                        if (Data.Version != MainHelper.VersionInfo || Data.VersionNum < MainHelper.VersionNum + 1)
+                        {
+                            needResave = true;
+                        }
+
+                        Data.PostLoad();
+
+                        Loger.Log("Server Load done. Users " + Data.GetPlayersAll.Count + ": "
+                            + string.Join(", ", Data.GetPlayerLoginsAll));
+
+                        ChatManager.Instance.NewChatManager(Data.MaxIdChat, Data.PlayerSystem.Chats.Keys.First());
                     }
 
-                    Data.PostLoad();
-
-                    Loger.Log("Server Load done. Users " + Data.GetPlayersAll.Count + ": "
-                        + string.Join(", ", Data.GetPlayerLoginsAll));
-
-                    ChatManager.Instance.NewChatManager(Data.MaxIdChat, Data.PlayerSystem.Chats.Keys.First());
+                    Loger.Log($"Server local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss.ffff}");
+                    Loger.Log($"The difference between time zones: {(DateTime.UtcNow - DateTime.Now):g}");
                 }
 
-                Loger.Log($"Server local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss.ffff}");
-                Loger.Log($"The difference between time zones: {(DateTime.UtcNow - DateTime.Now):g}");
+                if (needResave) Save();
+                ChangeData = false;
             }
-
-            if (needResave) Save();
-            ChangeData = false;
         }
 
         /// <summary>
         /// Збереження глобального стану сервера з підтримкою резервної копії .bak.
-        /// ОПТИМІЗАЦІЯ: використання 64-КБ буфера та FileMode.Create для надійного блокового запису.
         /// </summary>
         public void Save(bool onlyChangeData = false)
         {
-            if (onlyChangeData && !ChangeData) return;
-            Loger.Log("Server Saving");
-
-            try
+            lock (SaveLock)
             {
-                if (File.Exists(SaveFileName))
+                if (onlyChangeData && !ChangeData) return;
+                Loger.Log("Server Saving");
+
+                try
                 {
-                    if (File.Exists(SaveFileName + ".bak")) File.Delete(SaveFileName + ".bak");
-                    File.Move(SaveFileName, SaveFileName + ".bak");
+                    if (File.Exists(SaveFileName))
+                    {
+                        if (File.Exists(SaveFileName + ".bak")) File.Delete(SaveFileName + ".bak");
+                        File.Move(SaveFileName, SaveFileName + ".bak");
+                    }
+
+                    Data.MaxIdChat = ChatManager.Instance.MaxChatId;
+
+                    using (var fs = new FileStream(SaveFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                    {
+                        var bf = new BinaryFormatter();
+                        bf.Serialize(fs, Data);
+                    }
+
+                    ChangeData = false;
+                }
+                catch
+                {
+                    if (File.Exists(SaveFileName + ".bak"))
+                        File.Copy(SaveFileName + ".bak", SaveFileName, true);
+                    throw;
                 }
 
-                Data.MaxIdChat = ChatManager.Instance.MaxChatId;
-
-                using (var fs = new FileStream(SaveFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
-                {
-                    var bf = new BinaryFormatter();
-                    bf.Serialize(fs, Data);
-                }
-
-                ChangeData = false;
+                Loger.Log("Server Saved");
             }
-            catch
-            {
-                if (File.Exists(SaveFileName + ".bak"))
-                    File.Copy(SaveFileName + ".bak", SaveFileName, true);
-                throw;
-            }
-
-            Loger.Log("Server Saved");
         }
 
         /// <summary>
         /// Очищає логін від неприпустимих символів для файлової системи.
-        /// ОПТИМІЗАЦІЯ: швидкий прохід через StringBuilder без викликів Path.GetInvalidFileNameChars() на кожен запуск.
         /// </summary>
         public static string NormalizeLogin(string login)
         {
@@ -491,16 +531,7 @@ namespace ServerOnlineCity
             for (int i = 0; i < login.Length; i++)
             {
                 char c = login[i];
-                bool invalid = false;
-                for (int j = 0; j < InvalidFileNameChars.Length; j++)
-                {
-                    if (c == InvalidFileNameChars[j])
-                    {
-                        invalid = true;
-                        break;
-                    }
-                }
-                sb.Append(invalid ? '_' : char.ToLowerInvariant(c));
+                sb.Append(InvalidFileNameCharsSet.Contains(c) ? '_' : char.ToLowerInvariant(c));
             }
             return sb.ToString();
         }

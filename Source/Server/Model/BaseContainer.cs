@@ -1,34 +1,47 @@
 ﻿using Model;
 using OCUnion;
+using OCUnion.Transfer.Model;
+using Server.Mechanics;
+using ServerOnlineCity.Mechanics;
+using ServerOnlineCity.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using Transfer;
 using System.Linq;
-using ServerOnlineCity.Services;
-using ServerOnlineCity.Mechanics;
-using OCUnion.Transfer.Model;
-using Server.Mechanics;
+using System.Threading;
+using Transfer;
 
 namespace ServerOnlineCity.Model
 {
+    /// <summary>
+    /// Головне сховище стану сервера: зберігає облікові записи гравців, стан світу, 
+    /// активні торгові ордери, держави та списки видалених об'єктів.
+    /// </summary>
     [Serializable]
     public class BaseContainer
     {
         public string Version { get; set; }
         public long VersionNum { get; set; }
 
-        //public long VersionNum => long.Parse((Version ?? "0").Where(c => Char.IsDigit(c)).Aggregate("0", (r, i) => r + i));
-
         public List<PlayerServer> PlayersAll { get; set; }
-        public PlayerServer PlayerSystem { get { return PlayersAll[0]; } }
+        public PlayerServer PlayerSystem
+        {
+            get
+            {
+                var all = PlayersAll;
+                return (all != null && all.Count > 0) ? all[0] : null;
+            }
+        }
+
         [NonSerialized]
         public ICollection<string> GetPlayerLoginsAll;
 
         [NonSerialized]
         public ICollection<PlayerServer> GetPlayersAll;
+
         [NonSerialized]
         public ConcurrentDictionary<string, PlayerServer> PlayersAllDic;
+
         [NonSerialized]
         public ConcurrentDictionary<string, PlayerServer> PlayersAllDicWithNotApprove;
 
@@ -38,12 +51,41 @@ namespace ServerOnlineCity.Model
         public List<string> PlayersRankingLast { get; set; }
         public List<string> StatesRankingLast { get; set; }
 
+        /// <summary>
+        /// Потокобезпечне атомарне оновлення словників та наборів гравців.
+        /// </summary>
         public void UpdatePlayersAllDic()
         {
-            PlayersAllDic = new ConcurrentDictionary<string, PlayerServer>(PlayersAll.Where(p => p.Approve).ToDictionary(p => p.Public.Login));
-            PlayersAllDicWithNotApprove = new ConcurrentDictionary<string, PlayerServer>(PlayersAll.ToDictionary(p => p.Public.Login));
-            GetPlayersAll = PlayersAllDic.Values.ToHashSet();
-            GetPlayerLoginsAll = GetPlayersAll.Select(p => p.Public.Login).ToHashSet();
+            var all = PlayersAll;
+            if (all == null) return;
+
+            var approvedDic = new ConcurrentDictionary<string, PlayerServer>(StringComparer.Ordinal);
+            var allDic = new ConcurrentDictionary<string, PlayerServer>(StringComparer.Ordinal);
+            var approvedList = new HashSet<PlayerServer>();
+            var approvedLogins = new HashSet<string>(StringComparer.Ordinal);
+
+            lock (all)
+            {
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var p = all[i];
+                    if (p?.Public?.Login == null) continue;
+
+                    allDic[p.Public.Login] = p;
+                    if (p.Approve)
+                    {
+                        approvedDic[p.Public.Login] = p;
+                        approvedList.Add(p);
+                        approvedLogins.Add(p.Public.Login);
+                    }
+                }
+            }
+
+            // Атомарна підміна посилань
+            PlayersAllDic = approvedDic;
+            PlayersAllDicWithNotApprove = allDic;
+            GetPlayersAll = approvedList;
+            GetPlayerLoginsAll = approvedLogins;
         }
 
         public string WorldSeed { get; set; }
@@ -52,10 +94,10 @@ namespace ServerOnlineCity.Model
         public string WorldDifficulty { get; set; }
         public int WorldMapSize { get; set; }
         public float WorldPlanetCoverage { get; set; }
-        public long MaxServerIdWorldObjectEntry { get; set; }
+        public long MaxServerIdWorldObjectEntry;
         public int MaxIdChat { get; set; }
 
-        public int MaxPlayerId { get; set; }
+        public int MaxPlayerId;
 
         public List<WorldObjectEntry> WorldObjects { get; set; }
         [NonSerialized]
@@ -71,22 +113,26 @@ namespace ServerOnlineCity.Model
         private ExchengeOperator _OrderOperator;
 
         [NonSerialized]
-        public Dictionary<long, string> UploadService; //не реализовано удаление (только перезагрузкой), если будет жрать память сделать отслеживания по кол-во добавлений
+        public ConcurrentDictionary<long, string> UploadService;
 
         internal long SetInUploadService(string data)
         {
-            long hash = data.GetHashCode(); //to do?
+            if (data == null) return 0;
+            long hash = (long)data.GetHashCode();
+            if (UploadService == null)
+            {
+                UploadService = new ConcurrentDictionary<long, string>();
+            }
             UploadService[hash] = data;
             return hash;
         }
 
-        // WorldObject Online
+        // Об'єкти світу онлайн (NPC, фракції)
         public List<WorldObjectOnline> WorldObjectOnlineList { get; set; }
         public List<FactionOnline> FactionOnlineList { get; set; }
 
         [NonSerialized]
         public bool EverybodyLogoff;
-
 
         public List<State> States { get; set; }
 
@@ -99,32 +145,102 @@ namespace ServerOnlineCity.Model
 
         [NonSerialized]
         public ICollection<State> GetStates;
+
         [NonSerialized]
         public ConcurrentDictionary<string, State> StatesDic;
+
         [NonSerialized]
         public ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>> StatePositionsDic;
+
         [NonSerialized]
         private ConcurrentDictionary<string, HashSet<PlayerServer>> StatePlayersDic;
+
         [NonSerialized]
         public DateTime StateUpdateTime;
 
+        private static readonly HashSet<PlayerServer> EmptyPlayerSet = new HashSet<PlayerServer>();
+
+        /// <summary>
+        /// Потокобезпечне атомарне оновлення словників держав та посад.
+        /// </summary>
         public void UpdateStatesDic()
         {
-            StatesDic = new ConcurrentDictionary<string, State>(States.ToDictionary(p => p.Name));
-            GetStates = StatesDic.Values.ToHashSet();
-            var pd = States.ToDictionary(p => p.Name, p => new ConcurrentDictionary<string, StatePosition>(StatePositions.Where(sp => sp.StateName == p.Name).ToDictionary(sp => sp.Name)));
-            StatePositionsDic = new ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>>(pd);
-            StatePlayersDic = new ConcurrentDictionary<string, HashSet<PlayerServer>>();
+            var states = States;
+            var positions = StatePositions;
+            if (states == null) return;
+
+            var statesDic = new ConcurrentDictionary<string, State>(StringComparer.Ordinal);
+            var statesList = new HashSet<State>();
+            var positionsDic = new ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>>(StringComparer.Ordinal);
+
+            lock (states)
+            {
+                for (int i = 0; i < states.Count; i++)
+                {
+                    var s = states[i];
+                    if (string.IsNullOrEmpty(s?.Name)) continue;
+
+                    statesDic[s.Name] = s;
+                    statesList.Add(s);
+
+                    var spDic = new ConcurrentDictionary<string, StatePosition>(StringComparer.Ordinal);
+                    if (positions != null)
+                    {
+                        lock (positions)
+                        {
+                            for (int j = 0; j < positions.Count; j++)
+                            {
+                                var pos = positions[j];
+                                if (pos?.StateName == s.Name && !string.IsNullOrEmpty(pos.Name))
+                                {
+                                    spDic[pos.Name] = pos;
+                                }
+                            }
+                        }
+                    }
+                    positionsDic[s.Name] = spDic;
+                }
+            }
+
+            StatesDic = statesDic;
+            GetStates = statesList;
+            StatePositionsDic = positionsDic;
+            StatePlayersDic = new ConcurrentDictionary<string, HashSet<PlayerServer>>(StringComparer.Ordinal);
             StateUpdateTime = DateTime.UtcNow;
         }
-        public HashSet<PlayerServer> GetStatePlayers(string StateName) => string.IsNullOrEmpty(StateName) ? new HashSet<PlayerServer>()
-            : StatePlayersDic.GetOrAdd(StateName, GetPlayersAll.Where(p => p.Public.StateName == StateName).ToHashSet());
+
+        /// <summary>
+        /// Повертає список гравців вказаної держави.
+        /// ОПТИМІЗАЦІЯ: використання фабричного делегата виключає виділення пам'яті під час кожного звернення.
+        /// </summary>
+        public HashSet<PlayerServer> GetStatePlayers(string stateName)
+        {
+            if (string.IsNullOrEmpty(stateName)) return EmptyPlayerSet;
+
+            var dic = StatePlayersDic;
+            if (dic == null) return EmptyPlayerSet;
+
+            return dic.GetOrAdd(stateName, sn =>
+            {
+                var players = GetPlayersAll;
+                if (players == null) return EmptyPlayerSet;
+
+                var result = new HashSet<PlayerServer>();
+                foreach (var p in players)
+                {
+                    if (p?.Public?.StateName == sn)
+                    {
+                        result.Add(p);
+                    }
+                }
+                return result;
+            });
+        }
 
         public NameValidator NameValidator => _NameValidator;
 
         [NonSerialized]
         private NameValidator _NameValidator;
-
 
         public BaseContainer()
         {
@@ -139,17 +255,17 @@ namespace ServerOnlineCity.Model
                 LastChanged = DateTime.UtcNow,
             };
 
-            MaxIdChat = 1; //Id = 1 Занят на общий чат, 0 - системный приватный чат
+            MaxIdChat = 1; // Id = 1 закріплено за загальним чатом, 0 — системний приватний чат
             ChatManager.Instance.NewChatManager(1, publicChat);
 
             PlayersAll = new List<PlayerServer>()
             {
-                new PlayerServer("system")               
+                new PlayerServer("system")
             };
 
             States = new List<State>();
             StatePositions = new List<StatePosition>();
-           
+
             WorldObjects = new List<WorldObjectEntry>();
             WorldObjectsDeleted = new List<WorldObjectEntry>();
             Orders = new List<TradeOrder>();
@@ -165,30 +281,13 @@ namespace ServerOnlineCity.Model
         {
             if (Orders == null) Orders = new List<TradeOrder>();
             if (OrdersPlaceServerIdByTile == null) OrdersPlaceServerIdByTile = new Dictionary<int, long>();
-            if (UploadService == null) UploadService = new Dictionary<long, string>();
+            if (UploadService == null) UploadService = new ConcurrentDictionary<long, string>();
             if (States == null) States = new List<State>();
             if (StatePositions == null) StatePositions = new List<StatePosition>();
             if (PlayersRanking == null) PlayersRanking = new List<string>();
             if (StatesRanking == null) StatesRanking = new List<string>();
             if (PlayersRankingLast == null) PlayersRankingLast = new List<string>();
             if (StatesRankingLast == null) StatesRankingLast = new List<string>();
-
-            // Преобразования при обновлениях {
-
-            ////Переход на 0.4.75
-            //foreach (var order in Orders)
-            //{
-            //    foreach (var item in order.BuyThings) if (item.PawnParam != null) item.PawnParam = item.PawnParam.Replace("Tribesperson", "Colonist");
-            //    foreach (var item in order.SellThings) if (item.PawnParam != null) item.PawnParam = item.PawnParam.Replace("Tribesperson", "Colonist");
-            //}
-            //foreach (var player in PlayersAll)
-            //{
-            //    foreach(var tt in player.TradeThingStorages)
-            //        foreach (var item in tt.Things)
-            //            if (item.PawnParam != null) item.PawnParam = item.PawnParam.Replace("Tribesperson", "Colonist");
-            //}
-
-            // }
 
             if (!ServerManager.ServerSettings.PlayerNeedApprove)
             {
@@ -202,29 +301,37 @@ namespace ServerOnlineCity.Model
             _StateOperator = new StateOperator(this);
             _NameValidator = new NameValidator(this);
             if (WorldObjectsDeleted == null) WorldObjectsDeleted = new List<WorldObjectEntry>();
+
             UpdatePlayersAllDic();
             UpdateStatesDic();
 
-            //Если PVP выключили, то выключаем его в настройках всех игроков
+            // Якщо PVP вимкнено в конфігурації сервера — вимикаємо його у всіх гравців
             if (!ServerManager.ServerSettings.GeneralSettings.EnablePVP)
             {
-                foreach(var player in PlayersAll)
+                foreach (var player in PlayersAll)
                 {
-                    player.Public.EnablePVP = false;
+                    if (player?.Public != null)
+                    {
+                        player.Public.EnablePVP = false;
+                    }
                 }
             }
-
         }
 
+        /// <summary>
+        /// Потокобезпечна генерація унікального ServerId для об'єкта світу.
+        /// </summary>
         public long GetWorldObjectEntryId()
         {
-            return ++MaxServerIdWorldObjectEntry;
+            return Interlocked.Increment(ref MaxServerIdWorldObjectEntry);
         }
 
+        /// <summary>
+        /// Потокобезпечна генерація унікального Id для нового гравця.
+        /// </summary>
         public int GenerateMaxPlayerId()
         {
-            return ++MaxPlayerId;
+            return Interlocked.Increment(ref MaxPlayerId);
         }
-
     }
 }

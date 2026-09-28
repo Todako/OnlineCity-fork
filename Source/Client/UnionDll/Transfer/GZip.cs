@@ -17,15 +17,46 @@ namespace Util
         [ThreadStatic]
         public static long LastSizeObj;
 
+        // Потокобезпечний реюзабельний потік для серіалізації без виділення нових масивів у купі GC
+        [ThreadStatic]
+        private static MemoryStream t_SerializeStream;
+
         /// <summary>
         /// Евристичний розрахунок початкового розміру буфера на основі попереднього пакета.
-        /// Запобігає лавиноподібному розширенню MemoryStream (подвоєнню буфера та виділенню зайвої пам'яті).
+        /// Запобігає подвоєнню ємності MemoryStream під час запису.
         /// </summary>
         private static int GetInitialCapacity()
         {
             if (LastSizeObj <= 0) return 4096;
             if (LastSizeObj > 1024 * 1024 * 16) return 1024 * 1024 * 16; // Обмежуємо початкову планку 16 МБ
             return (int)LastSizeObj;
+        }
+
+        /// <summary>
+        /// Отримує готовий очищений потік для поточного потоку виконання.
+        /// </summary>
+        private static MemoryStream GetSerializeStream()
+        {
+            if (t_SerializeStream == null)
+            {
+                t_SerializeStream = new MemoryStream(GetInitialCapacity());
+            }
+            else
+            {
+                // Якщо потік розрісся понад 16 МБ після важкого збереження карти, перестворюємо його,
+                // щоб не тримати зайву пам'ять у фоні
+                if (t_SerializeStream.Capacity > 16 * 1024 * 1024)
+                {
+                    t_SerializeStream.Dispose();
+                    t_SerializeStream = new MemoryStream(GetInitialCapacity());
+                }
+                else
+                {
+                    t_SerializeStream.SetLength(0);
+                    t_SerializeStream.Position = 0;
+                }
+            }
+            return t_SerializeStream;
         }
 
         /// <summary>
@@ -43,30 +74,33 @@ namespace Util
 
         public static byte[] ZipByteByte(byte[] bytes)
         {
+            if (bytes == null || bytes.Length == 0) return new byte[0];
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
+            {
                 return ZipStreamByte(msi);
+            }
         }
 
         public static byte[] ZipByte(string str)
         {
+            if (string.IsNullOrEmpty(str)) return new byte[0];
             var bytes = Encoding.UTF8.GetBytes(str);
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
+            {
                 return ZipStreamByte(msi);
+            }
         }
 
         /// <summary>
         /// Серіалізація об'єкта в бінарний масив через кешований BinaryFormatter.
-        /// ОПТИМІЗАЦІЯ: початкова ємність задається заздалегідь, запобігаючи повторним виділенням буферів.
         /// </summary>
         public static byte[] Serialize(object obj)
         {
-            using (var msi = new MemoryStream(GetInitialCapacity()))
-            {
-                if (formatter == null) formatter = new BinaryFormatter();
-                formatter.Serialize(msi, obj);
-                LastSizeObj = msi.Length;
-                return msi.ToArray();
-            }
+            var msi = GetSerializeStream();
+            if (formatter == null) formatter = new BinaryFormatter();
+            formatter.Serialize(msi, obj);
+            LastSizeObj = msi.Length;
+            return msi.ToArray();
         }
 
         /// <summary>
@@ -74,14 +108,12 @@ namespace Util
         /// </summary>
         public static byte[] ZipObjByte(object obj)
         {
-            using (var msi = new MemoryStream(GetInitialCapacity()))
-            {
-                if (formatter == null) formatter = new BinaryFormatter();
-                formatter.Serialize(msi, obj);
-                LastSizeObj = msi.Length;
-                msi.Position = 0;
-                return ZipStreamByte(msi);
-            }
+            var msi = GetSerializeStream();
+            if (formatter == null) formatter = new BinaryFormatter();
+            formatter.Serialize(msi, obj);
+            LastSizeObj = msi.Length;
+            msi.Position = 0;
+            return ZipStreamByte(msi);
         }
 
         public static byte[] ZipStreamByte(Stream msi)
@@ -123,11 +155,13 @@ namespace Util
 
         public static string Unzip(string str)
         {
+            if (string.IsNullOrEmpty(str)) return string.Empty;
             return UnzipByte(Convert.FromBase64String(str));
         }
 
         public static byte[] UnzipByteByte(byte[] bytes)
         {
+            if (bytes == null || bytes.Length == 0) return new byte[0];
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 return UnzipStreamByte(msi);
@@ -136,6 +170,7 @@ namespace Util
 
         public static string UnzipByte(byte[] bytes)
         {
+            if (bytes == null || bytes.Length == 0) return string.Empty;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 byte[] bs = UnzipStreamByte(msi);
@@ -145,6 +180,7 @@ namespace Util
 
         public static object Deserialize(byte[] bytes)
         {
+            if (bytes == null || bytes.Length == 0) return null;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 if (formatter == null) formatter = new BinaryFormatter();
@@ -157,6 +193,7 @@ namespace Util
         /// </summary>
         public static object UnzipObjByte(byte[] bytes)
         {
+            if (bytes == null || bytes.Length == 0) return null;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             using (var mso = UnpackFromStream(msi))
             {
