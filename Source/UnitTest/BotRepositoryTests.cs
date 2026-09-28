@@ -1,17 +1,17 @@
-﻿using System;
-using System.Threading;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Types;
+using System;
+using System.Threading;
 using Transfer;
 using Util;
 
 namespace OC.UnitTest
 {
     // Important Start Server before
-    // Важно: сначала надо запустить сервер ;-)
-    // Если есть идеи как запустить консольку сервера и тесты, будет здорово
-    //[DeploymentItem("EntityFramework.SqlServer.dll")] // Потом атрибут
+    // Важливо: спочатку потрібно запустити сервер ;-)
+    // Якщо є ідеї, як запускати консоль сервера й тести, буде чудово.
+    //[DeploymentItem("EntityFramework.SqlServer.dll")] // Потім додати атрибут.
 
     // before must be two users:111 (admin)
     // 222 Usaly user

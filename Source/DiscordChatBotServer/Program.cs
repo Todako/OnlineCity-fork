@@ -1,17 +1,17 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using System;
-using System.Reflection;
-using System.Threading.Tasks;
+﻿using Discord.Commands;
 using Discord.WebSocket;
-using Discord.Commands;
-using OCUnion;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using OC.DiscordBotServer.Commands;
 using OC.DiscordBotServer.Models;
 using OC.DiscordBotServer.Repositories;
-using Microsoft.EntityFrameworkCore;
-using OC.DiscordBotServer.Commands;
+using OCUnion;
+using System;
 using System.IO;
-using System.Text;
 using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
 
 //https://discord.foxbot.me/docs/api/
 namespace OC.DiscordBotServer
@@ -21,7 +21,7 @@ namespace OC.DiscordBotServer
         private DiscordSocketClient _discordClient;
         private CommandService _commands;
         private IServiceProvider _services;
-       // private ApplicationContext _appContext;
+        // private ApplicationContext _appContext;
         private MessageParser _messageParser;
 
         /// <summary>
@@ -85,7 +85,7 @@ namespace OC.DiscordBotServer
                 {
                     continue;
                 }
-                
+
                 if (type.GetInterfaces().Any(x => x == typeof(ICommand)))
                 {
                     services.AddSingleton(type);
@@ -135,8 +135,8 @@ namespace OC.DiscordBotServer
 
         public async Task RegisterCommandAsync()
         {
-             _messageParser = new MessageParser(_services);
-             _discordClient.MessageReceived += _messageParser.Execute;
+            _messageParser = new MessageParser(_services);
+            _discordClient.MessageReceived += _messageParser.Execute;
             await _commands.AddModulesAsync(Assembly.GetEntryAssembly(), _services);
         }
     }
