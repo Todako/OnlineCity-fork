@@ -1,16 +1,14 @@
 ﻿using OCUnion;
 using OCUnion.Common;
 using OCUnion.Transfer.Model;
-using OCUnion.Transfer.Types;
 using RimWorldOnlineCity.ClientHashCheck;
+using RimWorldOnlineCity.Model;
 using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using Verse;
-using RimWorldOnlineCity.Model;
 
 namespace RimWorldOnlineCity.Services
 {
@@ -23,11 +21,6 @@ namespace RimWorldOnlineCity.Services
 
         public ClientHashCheckerResult Report { get; set; }
 
-        /// <summary>
-        /// null - вибір ще не зроблено;
-        /// true - користувач підтвердив заміну;
-        /// false - користувач скасував синхронізацію (вихід у меню).
-        /// </summary>
         public bool? UserConfirmedReplacement { get; private set; } = null;
 
         public ClientHashChecker(Transfer.SessionClient sessionClient)
@@ -37,7 +30,6 @@ namespace RimWorldOnlineCity.Services
 
         public bool GenerateRequestAndDoJob(object context)
         {
-            // Якщо користувач раніше обрав вихід у меню — припиняємо обробку наступних папок
             if (UserConfirmedReplacement == false)
             {
                 return false;
@@ -49,7 +41,7 @@ namespace RimWorldOnlineCity.Services
             UpdateModsWindow.SummaryList = null;
 
             var clientFileChecker = (ClientFileChecker)context;
-            var model = new ModelModsFilesRequest()
+            var model = new ModelModsFilesRequest
             {
                 FolderType = clientFileChecker.Folder.FolderType,
                 Files = clientFileChecker.FilesHash,
@@ -88,7 +80,13 @@ namespace RimWorldOnlineCity.Services
                         var xmlServer = FileChecker.GenerateHashXML(res.Files[0].Hash, res.IgnoreTag);
                         var xmlClient = FileChecker.GenerateHashXML(XMLFileName, res.IgnoreTag);
 
-                        if (xmlClient != null && xmlServer.Equals(xmlClient))
+                        bool matches = false;
+                        if (xmlClient?.Hash != null && xmlServer?.Hash != null)
+                        {
+                            matches = ArrayEquals(xmlClient.Hash, xmlServer.Hash);
+                        }
+
+                        if (matches)
                         {
                             Loger.Log("File XML good: " + res.Files[0].FileName);
                             res.Files.RemoveAt(0);
@@ -117,7 +115,6 @@ namespace RimWorldOnlineCity.Services
 
                         result = false;
 
-                        // Перевіряємо чи є файли, які потребують заміни/видалення
                         bool hasNeedReplace = false;
                         for (int i = 0; i < res.Files.Count; i++)
                         {
@@ -135,14 +132,13 @@ namespace RimWorldOnlineCity.Services
                                 UserConfirmedReplacement = AskUserForFileReplacement();
                             }
 
-                            // Користувач відмовився: тихо перериваємо з'єднання без показу додаткових вікон
                             if (UserConfirmedReplacement == false)
                             {
                                 Loger.Log("ClientHashChecker: User declined file replacement. Aborting to main menu.", Loger.LogLevel.INFO);
                                 ModBaseData.RunMainThread(() =>
                                 {
                                     UpdateModsWindow.CompletedAndClose = true;
-                                    SessionClientController.Disconnected(null); // null = вихід у головне меню без діалогового вікна
+                                    SessionClientController.Disconnected(null);
                                 });
                                 return false;
                             }
@@ -168,7 +164,9 @@ namespace RimWorldOnlineCity.Services
                         for (int i = 0; i < res.Files.Count; i++)
                         {
                             var fileName = res.Files[i].FileName;
-                            var slashPos = fileName.IndexOf('\\');
+                            if (string.IsNullOrEmpty(fileName)) continue;
+
+                            int slashPos = fileName.IndexOfAny(new[] { '\\', '/' });
                             if (slashPos > 0)
                             {
                                 var topFolder = fileName.Substring(0, slashPos);
@@ -180,9 +178,19 @@ namespace RimWorldOnlineCity.Services
                         }
                     }
 
+                    bool anyNotNeedReplace = false;
+                    for (int i = 0; i < res.Files.Count; i++)
+                    {
+                        if (!res.Files[i].NeedReplace)
+                        {
+                            anyNotNeedReplace = true;
+                            break;
+                        }
+                    }
+
                     if (res.TotalSize == 0
                         || (res.IgnoreTag != null && res.IgnoreTag.Count > 0)
-                        || res.Files.Any(f => !f.NeedReplace))
+                        || anyNotNeedReplace)
                     {
                         model.NumberFileRequest++;
                     }
@@ -197,11 +205,22 @@ namespace RimWorldOnlineCity.Services
             }
         }
 
+        private static bool ArrayEquals(byte[] a, byte[] b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null || a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (a[i] != b[i]) return false;
+            }
+            return true;
+        }
+
         private bool AskUserForFileReplacement()
         {
             bool userDecision = false;
 
-            using (var waitEvent = new ManualResetEvent(false))
+            using (var waitEvent = new ManualResetEventSlim(false))
             {
                 ModBaseData.RunMainThread(() =>
                 {
@@ -265,7 +284,7 @@ namespace RimWorldOnlineCity.Services
                     }
                 });
 
-                waitEvent.WaitOne();
+                waitEvent.Wait();
             }
 
             return userDecision;

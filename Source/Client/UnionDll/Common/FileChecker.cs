@@ -1,21 +1,17 @@
-﻿using System;
+﻿using OCUnion.Transfer;
+using OCUnion.Transfer.Model;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
-using OCUnion.Transfer;
-using OCUnion.Transfer.Model;
 
 namespace OCUnion.Common
 {
     public static class FileChecker
     {
-        /// <summary>
-        /// Розширення файлів, що виключаються з перевірки
-        /// </summary>
         public static readonly List<string> IgnoredModFiles = new List<string>
             { ".cs", ".csproj", ".sln", ".gitignore", ".gitattributes", ".DS_Store" };
 
@@ -24,6 +20,9 @@ namespace OCUnion.Common
 
         public static readonly List<string> IgnoredConfigFiles = new List<string>
             { "KeyPrefs.xml", "Knowledge.xml", "LastPlayedVersion.txt", "Prefs.xml", ".DS_Store" };
+
+        private static readonly HashSet<string> IgnoredModFilesSet =
+            new HashSet<string>(IgnoredModFiles, StringComparer.OrdinalIgnoreCase);
 
         public static string GetCheckSum(byte[] data)
         {
@@ -80,18 +79,38 @@ namespace OCUnion.Common
                 {
                     if (File.Exists(fullName))
                     {
-                        File.Delete(fullName);
+                        try
+                        {
+                            File.Delete(fullName);
+                        }
+                        catch (Exception ex)
+                        {
+                            Loger.Log($"FileSynchronization: failed to delete {fullName}: {ex.Message}", Loger.LogLevel.WARNING);
+                        }
                     }
                     continue;
                 }
 
-                using (var fs = new FileStream(fullName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                try
                 {
-                    Loger.Log("Restore: " + fullName);
-                    if (serverFile.Hash.Length > 0)
+                    var dir = Path.GetDirectoryName(fullName);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     {
-                        fs.Write(serverFile.Hash, 0, serverFile.Hash.Length);
+                        Directory.CreateDirectory(dir);
                     }
+
+                    using (var fs = new FileStream(fullName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                    {
+                        Loger.Log("Restore: " + fullName);
+                        if (serverFile.Hash.Length > 0)
+                        {
+                            fs.Write(serverFile.Hash, 0, serverFile.Hash.Length);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log($"FileSynchronization: failed to write {fullName}: {ex.Message}", Loger.LogLevel.ERROR);
                 }
             }
         }
@@ -103,11 +122,13 @@ namespace OCUnion.Common
         /// </summary>
         private static ModelFileInfo GenerateHashXMLString(string XML, List<string> ignoreTag)
         {
-            if (ignoreTag != null)
+            if (ignoreTag != null && ignoreTag.Count > 0)
             {
                 for (int i = 0; i < ignoreTag.Count; i++)
                 {
                     var item = ignoreTag[i];
+                    if (string.IsNullOrEmpty(item)) continue;
+
                     if (item.StartsWith("{lineWith}", StringComparison.OrdinalIgnoreCase))
                     {
                         var lineKey = item.Substring("{lineWith}".Length);
@@ -149,7 +170,6 @@ namespace OCUnion.Common
             int offset = 0;
             int count = xb.Length;
 
-            // ОПТИМІЗАЦІЯ: обрізання UTF-8 BOM через зсув без виділення нового масиву й Array.Copy
             if (xb.Length >= 3 && xb[0] == 0xEF && xb[1] == 0xBB && xb[2] == 0xBF)
             {
                 offset = 3;
@@ -184,17 +204,14 @@ namespace OCUnion.Common
         }
 
         /// <summary>
-        /// Перевірка чи належить шлях до ігнорованих каталогів без зайвих алокацій ToLower() та LINQ.
+        /// Перевірка чи належить шлях до ігнорованих каталогів без алокацій пам'яті в купі GC.
         /// </summary>
         public static bool IsIgnoreFolder(string path, List<string> ignoreFolder)
         {
             if (ignoreFolder == null || ignoreFolder.Count == 0 || string.IsNullOrEmpty(path)) return false;
 
             char sep = Path.DirectorySeparatorChar;
-            string normPath = path.Replace('/', sep).Replace('\\', sep);
-            if (normPath.Length == 0) return false;
-            if (normPath[0] != sep) normPath = sep + normPath;
-            if (normPath[normPath.Length - 1] != sep) normPath = normPath + sep;
+            char altSep = Path.AltDirectorySeparatorChar;
 
             for (int i = 0; i < ignoreFolder.Count; i++)
             {
@@ -204,10 +221,16 @@ namespace OCUnion.Common
                 var trimmed = f.Trim('/', '\\');
                 if (trimmed.Length == 0) continue;
 
-                var pattern = sep + trimmed + sep;
-                if (normPath.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0)
+                int index = 0;
+                while ((index = path.IndexOf(trimmed, index, StringComparison.OrdinalIgnoreCase)) >= 0)
                 {
-                    return true;
+                    bool startOk = index == 0 || path[index - 1] == sep || path[index - 1] == altSep;
+                    int endIdx = index + trimmed.Length;
+                    bool endOk = endIdx == path.Length || path[endIdx] == sep || path[endIdx] == altSep;
+
+                    if (startOk && endOk) return true;
+
+                    index += trimmed.Length;
                 }
             }
 
@@ -273,8 +296,8 @@ namespace OCUnion.Common
         }
 
         /// <summary>
-        /// Сканування та паралельний розрахунок контрольних сум файлів.
-        /// ОПТИМІЗАЦІЯ: усунено цикл Thread.Sleep(0) та виділення задач на користь пулу SHA512 у Parallel.ForEach.
+        /// Сканування та розрахунок контрольних сум файлів.
+        /// ОПТИМІЗАЦІЯ: для малих папок розрахунок іде послідовно, усуваючи накладні витрати на пул потоків.
         /// </summary>
         private static void generateHashFiles(List<ModelFileInfo> result, ref string rootFolder, string folder, List<string> ignoreFolder, bool level0 = false)
         {
@@ -305,36 +328,49 @@ namespace OCUnion.Common
 
             var batchResults = new ModelFileInfo[targetFiles.Count];
 
-            Parallel.ForEach(
-                Partitioner.Create(0, targetFiles.Count),
-                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-                () => SHA512.Create(),
-                (range, loopState, sha) =>
+            if (targetFiles.Count < 4)
+            {
+                using (var sha = SHA512.Create())
                 {
-                    for (int i = range.Item1; i < range.Item2; i++)
+                    for (int i = 0; i < targetFiles.Count; i++)
                     {
                         var tf = targetFiles[i];
                         var mfi = new ModelFileInfo { FileName = tf.RelPath };
                         ComputeHashDirect(mfi, tf.FullPath, sha);
                         batchResults[i] = mfi;
                     }
-                    return sha;
-                },
-                sha => sha?.Dispose()
-            );
+                }
+            }
+            else
+            {
+                Parallel.ForEach(
+                    Partitioner.Create(0, targetFiles.Count),
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
+                    () => SHA512.Create(),
+                    (range, loopState, sha) =>
+                    {
+                        for (int i = range.Item1; i < range.Item2; i++)
+                        {
+                            var tf = targetFiles[i];
+                            var mfi = new ModelFileInfo { FileName = tf.RelPath };
+                            ComputeHashDirect(mfi, tf.FullPath, sha);
+                            batchResults[i] = mfi;
+                        }
+                        return sha;
+                    },
+                    sha => sha?.Dispose()
+                );
+            }
 
             for (int i = 0; i < batchResults.Length; i++)
             {
-                if (batchResults[i] != null)
+                if (batchResults[i] != null && batchResults[i].Hash != null)
                 {
                     result.Add(batchResults[i]);
                 }
             }
         }
 
-        /// <summary>
-        /// Повторний розрахунок хешів окремих файлів без блокуючих очікувань.
-        /// </summary>
         public static void ReHashFiles(List<ModelFileInfo> rep, string folder, List<string> fileNames)
         {
             if (fileNames == null || fileNames.Count == 0) return;
@@ -364,31 +400,42 @@ namespace OCUnion.Common
                 itemsToHash.Add((mfi, fullPath));
             }
 
-            Parallel.ForEach(
-                itemsToHash,
-                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-                () => SHA512.Create(),
-                (item, loopState, sha) =>
+            if (itemsToHash.Count < 4)
+            {
+                using (var sha = SHA512.Create())
                 {
-                    ComputeHashDirect(item.Mfi, item.FullPath, sha);
-                    return sha;
-                },
-                sha => sha?.Dispose()
-            );
+                    for (int i = 0; i < itemsToHash.Count; i++)
+                    {
+                        ComputeHashDirect(itemsToHash[i].Mfi, itemsToHash[i].FullPath, sha);
+                    }
+                }
+            }
+            else
+            {
+                Parallel.ForEach(
+                    itemsToHash,
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
+                    () => SHA512.Create(),
+                    (item, loopState, sha) =>
+                    {
+                        ComputeHashDirect(item.Mfi, item.FullPath, sha);
+                        return sha;
+                    },
+                    sha => sha?.Dispose()
+                );
+            }
 
-            // ОПТИМІЗАЦІЯ: швидке лінійне O(N) очищення без RemoveAt
             rep.RemoveAll(x => x.Hash == null);
         }
 
         private static bool ApproveExt(string fileName)
         {
-            for (int i = 0; i < IgnoredModFiles.Count; i++)
-            {
-                if (fileName.EndsWith(IgnoredModFiles[i], StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
+            var ext = Path.GetExtension(fileName);
+            if (!string.IsNullOrEmpty(ext) && IgnoredModFilesSet.Contains(ext)) return false;
+
+            var name = Path.GetFileName(fileName);
+            if (!string.IsNullOrEmpty(name) && IgnoredModFilesSet.Contains(name)) return false;
+
             return true;
         }
     }
