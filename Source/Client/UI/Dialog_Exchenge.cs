@@ -1,14 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Model;
+﻿using Model;
 using OCUnion;
 using RimWorld;
 using RimWorld.Planet;
-using RimWorldOnlineCity.GameClasses.Harmony;
 using RimWorldOnlineCity.Services;
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Threading.Tasks;
 using Transfer;
 using UnityEngine;
 using Verse;
@@ -57,7 +55,7 @@ namespace RimWorldOnlineCity.UI
         private string EditOrderTitle = "";
         private Vector2 ScrollPositionEditOrder;
 
-        private bool EditOrderIsMy => EditOrder != null && EditOrder.Owner.Login == SessionClientController.My.Login;
+        private bool EditOrderIsMy => EditOrder != null && EditOrder.Owner.Login == SessionClientController.My?.Login;
 
         private bool EditOrderToTrade;
         private int EditOrderCountReady;
@@ -67,6 +65,68 @@ namespace RimWorldOnlineCity.UI
         private static float CachedHitPointsMeasureWidth = 0f;
         private static float CachedPercentMeasureWidth = 0f;
         private string CachedPlaneTitle = "";
+
+        // Кешування тексту інтерфейсу для усунення перекладів на кожному кадрі OnGUI
+        private static string _cachedBtnClose;
+        private static string _cachedLabelThingsTab;
+        private static string _cachedLabelDealTab;
+        private static string _cachedLabelSell;
+        private static string _cachedLabelOnExchange;
+        private static string _cachedLabelMove;
+        private static string _cachedLabelInThisPosition;
+        private static string _cachedLabelDelivery;
+        private static string _cachedLabelToRemotePoint;
+        private static string _cachedLabelDestroy;
+        private static string _cachedLabelForTenPercent;
+        private static string _cachedLabelAcquire;
+        private static string _cachedLabelGiveTo;
+        private static string _cachedLabelNumber;
+        private static string _cachedLabelLocation;
+        private static string _cachedLabelSeller;
+
+        // Кешовані об'єкти закладок для ліквідації щокадрових алокацій
+        private List<TabRecord> _tabsList;
+        private TabRecord _tabThings;
+        private TabRecord _tabDeal;
+
+        // Кеш ширини числових значень лічильників
+        private static readonly Dictionary<int, float> CountWidthCache = new Dictionary<int, float>(128);
+
+        private static readonly List<WorldObject> s_RawTileObjectsBuffer = new List<WorldObject>(16);
+
+        private static float GetCountWidth(int count)
+        {
+            if (!CountWidthCache.TryGetValue(count, out float w))
+            {
+                w = Text.CalcSize(count.ToString()).x;
+                if (CountWidthCache.Count > 500) CountWidthCache.Clear();
+                CountWidthCache[count] = w;
+            }
+            return w;
+        }
+
+        private static void EnsureStaticTranslations()
+        {
+            if (_cachedBtnClose == null)
+            {
+                _cachedBtnClose = "OCity_Dialog_Exchenge_Close".TranslateCache();
+                _cachedLabelThingsTab = "OCity_DialogExchenge_Things".Translate().ToString();
+                _cachedLabelDealTab = "OCity_DialogExchenge_Deal".Translate().ToString();
+                _cachedLabelSell = "OCity_DialogExchenge_Sell".Translate().ToString();
+                _cachedLabelOnExchange = "OCity_DialogExchenge_OnExchange".Translate().ToString();
+                _cachedLabelMove = "OCity_DialogExchenge_Move".Translate().ToString();
+                _cachedLabelInThisPosition = "OCity_DialogExchenge_InThisPosition".Translate().ToString();
+                _cachedLabelDelivery = "OCity_DialogExchenge_Delivery".Translate().ToString();
+                _cachedLabelToRemotePoint = "OCity_DialogExchenge_ToARemotePoint".Translate().ToString();
+                _cachedLabelDestroy = "OCity_DialogExchenge_Destroy".Translate().ToString();
+                _cachedLabelForTenPercent = "OCity_DialogExchenge_ForTenPercentThePrice".Translate().ToString();
+                _cachedLabelAcquire = "OCity_Dialog_Exchenge_Acquire".TranslateCache();
+                _cachedLabelGiveTo = "OCity_Dialog_Exchenge_GiveTo".TranslateCache();
+                _cachedLabelNumber = "OCity_Dialog_Exchenge_Number".TranslateCache();
+                _cachedLabelLocation = "OCity_Dialog_Exchenge_Location".TranslateCache();
+                _cachedLabelSeller = "OCity_Dialog_Exchenge_Seller".TranslateCache();
+            }
+        }
 
         private class OrderEditBuffer
         {
@@ -111,7 +171,6 @@ namespace RimWorldOnlineCity.UI
             }
         }
 
-        // ОПТИМІЗАЦІЯ: об'єднання всіх даних рядка речей у єдиний контейнер (замість 4 окремих словників)
         private class ThingRowData
         {
             public string MaxCountStr;
@@ -129,7 +188,6 @@ namespace RimWorldOnlineCity.UI
             closeOnCancel = false;
             closeOnAccept = false;
 
-            // ОПТИМІЗАЦІЯ: безпечний виклик діалогу через чергу головного потоку замість сирого Thread
             if (!ShowedMessageExistsEnemyPawns && UpdateWorldController.ExistsEnemyPawns)
             {
                 ShowedMessageExistsEnemyPawns = true;
@@ -173,10 +231,6 @@ namespace RimWorldOnlineCity.UI
             Init();
         }
 
-        /// <summary>
-        /// Ініціалізація та оновлення контексту поточної локації.
-        /// ОПТИМІЗАЦІЯ: об'єднано обхід об'єктів тайла в один прохід, кешовано заголовок координат.
-        /// </summary>
         private void SetPlaceCurrent(WorldObject placeWorldObject)
         {
             try
@@ -196,13 +250,15 @@ namespace RimWorldOnlineCity.UI
                 Vector2 vector = Find.WorldGrid.LongLatOf(placeWorldObject.Tile);
                 CachedPlaneTitle = vector.y.ToStringLatitude() + " " + vector.x.ToStringLongitude();
 
-                var rawTileObjects = ExchengeUtils.WorldObjectsByTile(placeWorldObject.Tile);
-                WorldObjectsTile = new List<WorldObject>(rawTileObjects.Count);
-                WorldObjectCaravanOnlinesTile = new List<CaravanOnline>(rawTileObjects.Count);
+                s_RawTileObjectsBuffer.Clear();
+                ExchengeUtils.WorldObjectsByTile(placeWorldObject.Tile, s_RawTileObjectsBuffer);
 
-                for (int i = 0; i < rawTileObjects.Count; i++)
+                WorldObjectsTile = new List<WorldObject>(s_RawTileObjectsBuffer.Count);
+                WorldObjectCaravanOnlinesTile = new List<CaravanOnline>(s_RawTileObjectsBuffer.Count);
+
+                for (int i = 0; i < s_RawTileObjectsBuffer.Count; i++)
                 {
-                    var o = rawTileObjects[i];
+                    var o = s_RawTileObjectsBuffer[i];
                     if (o is CaravanOnline co)
                     {
                         WorldObjectCaravanOnlinesTile.Add(co);
@@ -302,9 +358,6 @@ namespace RimWorldOnlineCity.UI
             }
         }
 
-        /// <summary>
-        /// Повертає список доступних речей для угоди без важких LINQ Concat.
-        /// </summary>
         private List<Thing> GetAvailableThings(bool withoutInEditOrder = false, bool withoutCashless = false)
         {
             var result = new List<Thing>((AllThings?.Count ?? 0) + 16);
@@ -375,11 +428,13 @@ namespace RimWorldOnlineCity.UI
         {
             try
             {
+                EnsureStaticTranslations();
+
                 float margin = 5f;
                 var btnSize = new Vector2(140f, 35f);
                 Text.Font = GameFont.Small;
 
-                if (Widgets.ButtonText(new Rect(inRect.width - btnSize.x, 0, btnSize.x, btnSize.y), "OCity_Dialog_Exchenge_Close".TranslateCache()))
+                if (Widgets.ButtonText(new Rect(inRect.width - btnSize.x, 0, btnSize.x, btnSize.y), _cachedBtnClose))
                 {
                     Close();
                 }
@@ -407,11 +462,15 @@ namespace RimWorldOnlineCity.UI
                 var screenRect = new Rect(regionRectOut.x, regionRectOut.y + 31f, 400f, 0);
                 var tabRect = new Rect(regionRectOut.x, regionRectOut.y + 31f, regionRectOut.width, regionRectOut.height - 31f);
 
-                List<TabRecord> list = new List<TabRecord>(2)
+                // ОПТИМІЗАЦІЯ: кешування списку закладок без виділення пам'яті щокадрово
+                if (_tabsList == null)
                 {
-                    new TabRecord("OCity_DialogExchenge_Things".Translate(), () => { TabIndex = 0; }, TabIndex == 0),
-                    new TabRecord("OCity_DialogExchenge_Deal".Translate(), () => { TabIndex = 1; }, TabIndex == 1)
-                };
+                    _tabThings = new TabRecord(_cachedLabelThingsTab, () => { TabIndex = 0; }, TabIndex == 0);
+                    _tabDeal = new TabRecord(_cachedLabelDealTab, () => { TabIndex = 1; }, TabIndex == 1);
+                    _tabsList = new List<TabRecord>(2) { _tabThings, _tabDeal };
+                }
+                _tabThings.selected = (TabIndex == 0);
+                _tabDeal.selected = (TabIndex == 1);
 
                 Widgets.DrawMenuSection(tabRect);
                 if (TabIndex == 0)
@@ -420,7 +479,7 @@ namespace RimWorldOnlineCity.UI
                     rt0.xMin += 251f;
                     Widgets.DrawMenuSection(rt0);
                 }
-                TabDrawer.DrawTabs(screenRect, list);
+                TabDrawer.DrawTabs(screenRect, _tabsList);
 
                 var regionRect = tabRect.ContractedBy(margin * 2f);
                 GUI.BeginGroup(regionRect);
@@ -449,10 +508,6 @@ namespace RimWorldOnlineCity.UI
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Відмальовка таблиці ордерів.
-        /// ОПТИМІЗАЦІЯ: підказки TooltipHandler.TipRegion формуються ЛИШЕ коли курсор миші знаходиться над елементом (Mouse.IsOver).
-        /// </summary>
         public void DoWindowOrders(Rect inRect)
         {
             if (OrdersGrid == null && Orders != null && Orders.Count > 0)
@@ -560,10 +615,10 @@ namespace RimWorldOnlineCity.UI
                         {
                             var th = item.SellThings[i];
                             GameUtils.DravLineThing(rect3, th, false);
-                            var textCnt = item.SellThings[i].Count.ToString();
-                            var textCntW = Text.CalcSize(textCnt).x;
+                            int cnt = th.Count;
+                            float textCntW = GetCountWidth(cnt);
                             var labelRect = new Rect(rect3.xMax, rect3.y, textCntW, rect3.height);
-                            Widgets.Label(labelRect, textCnt);
+                            Widgets.Label(labelRect, cnt.ToString());
 
                             var totalItemRect = new Rect(rect3.x, rect3.y, rect3.width + textCntW, rect3.height);
                             if (Mouse.IsOver(totalItemRect))
@@ -580,10 +635,10 @@ namespace RimWorldOnlineCity.UI
                         {
                             var th = item.BuyThings[i];
                             GameUtils.DravLineThing(rect3, th, false);
-                            var textCnt = item.BuyThings[i].Count.ToString();
-                            var textCntW = Text.CalcSize(textCnt).x;
+                            int cnt = th.Count;
+                            float textCntW = GetCountWidth(cnt);
                             var labelRect = new Rect(rect3.xMax, rect3.y, textCntW, rect3.height);
-                            Widgets.Label(labelRect, textCnt);
+                            Widgets.Label(labelRect, cnt.ToString());
 
                             var totalItemRect = new Rect(rect3.x, rect3.y, rect3.width + textCntW, rect3.height);
                             if (Mouse.IsOver(totalItemRect))
@@ -659,7 +714,7 @@ namespace RimWorldOnlineCity.UI
                 GUI.color = Color.white;
             }
 
-            // Прямий рендеринг заголовків колонок таблиці
+            // Заголовки колонок таблиці
             var rectTop = new Rect(inRect.x, inRect.y, inRect.width, 18f);
             inRect.yMin += rectTop.height;
 
@@ -672,11 +727,11 @@ namespace RimWorldOnlineCity.UI
             float giveToW = lineGridW - acquireW;
 
             Text.Anchor = TextAnchor.MiddleCenter;
-            Widgets.Label(new Rect(5f, rectTop.y, acquireW, rectTop.height), "OCity_Dialog_Exchenge_Acquire".TranslateCache());
-            Widgets.Label(new Rect(5f + acquireW, rectTop.y, giveToW, rectTop.height), "OCity_Dialog_Exchenge_GiveTo".TranslateCache());
-            Widgets.Label(new Rect(countX, rectTop.y, 60f, rectTop.height), "OCity_Dialog_Exchenge_Number".TranslateCache());
-            Widgets.Label(new Rect(locX, rectTop.y, 200f, rectTop.height), "OCity_Dialog_Exchenge_Location".TranslateCache());
-            Widgets.Label(new Rect(sellerX, rectTop.y, 200f, rectTop.height), "OCity_Dialog_Exchenge_Seller".TranslateCache());
+            Widgets.Label(new Rect(5f, rectTop.y, acquireW, rectTop.height), _cachedLabelAcquire);
+            Widgets.Label(new Rect(5f + acquireW, rectTop.y, giveToW, rectTop.height), _cachedLabelGiveTo);
+            Widgets.Label(new Rect(countX, rectTop.y, 60f, rectTop.height), _cachedLabelNumber);
+            Widgets.Label(new Rect(locX, rectTop.y, 200f, rectTop.height), _cachedLabelLocation);
+            Widgets.Label(new Rect(sellerX, rectTop.y, 200f, rectTop.height), _cachedLabelSeller);
 
             Text.Font = GameFont.Tiny;
             Text.Anchor = TextAnchor.MiddleLeft;
@@ -786,7 +841,6 @@ namespace RimWorldOnlineCity.UI
             Text.Font = GameFont.Tiny;
             Text.Anchor = TextAnchor.UpperLeft;
 
-            // ОПТИМІЗАЦІЯ: кешування рядків через єдиний словник ThingRowData (1 пошук замість 4)
             if (AddThingGrid == null)
             {
                 AddThingGrid = new GridBox<TransferableOneWay>();
@@ -866,10 +920,10 @@ namespace RimWorldOnlineCity.UI
             rectText.y += btnRect.height;
             Text.Anchor = TextAnchor.MiddleCenter;
             if (ActiveElementBlock || !AddThingListOK || EditOrder?.SellThings?.Count >= 6) GUI.color = Color.red;
-            Widgets.Label(rectText, "OCity_DialogExchenge_Sell".Translate());
+            Widgets.Label(rectText, _cachedLabelSell);
             btnRect.y += rectText.height;
             rectText.y += rectText.height;
-            Widgets.Label(rectText, "OCity_DialogExchenge_OnExchange".Translate());
+            Widgets.Label(rectText, _cachedLabelOnExchange);
             GUI.color = Color.white;
             btnRect.y += rectText.height + 10f;
             rectText.y += rectText.height + 10f;
@@ -895,10 +949,10 @@ namespace RimWorldOnlineCity.UI
             btnRect.y += btnRect.height;
             rectText.y += btnRect.height;
             Text.Anchor = TextAnchor.MiddleCenter;
-            Widgets.Label(rectText, "OCity_DialogExchenge_Move".Translate());
+            Widgets.Label(rectText, _cachedLabelMove);
             btnRect.y += rectText.height;
             rectText.y += rectText.height;
-            Widgets.Label(rectText, "OCity_DialogExchenge_InThisPosition".Translate());
+            Widgets.Label(rectText, _cachedLabelInThisPosition);
             btnRect.y += rectText.height + 10f;
             rectText.y += rectText.height + 10f;
 
@@ -922,14 +976,15 @@ namespace RimWorldOnlineCity.UI
                 btnRect.y += btnRect.height;
                 rectText.y += btnRect.height;
                 Text.Anchor = TextAnchor.MiddleCenter;
-                Widgets.Label(rectText, "OCity_DialogExchenge_Delivery".Translate());
+                Widgets.Label(rectText, _cachedLabelDelivery);
                 btnRect.y += rectText.height;
                 rectText.y += rectText.height;
-                Widgets.Label(rectText, "OCity_DialogExchenge_ToARemotePoint".Translate());
+                Widgets.Label(rectText, _cachedLabelToRemotePoint);
                 btnRect.y += rectText.height + 10f;
                 rectText.y += rectText.height + 10f;
             }
 
+            // Кнопка "Знищити"
             if (!(WorldObjectCurrent is TradeThingsOnline))
             {
                 GUI.color = Color.white;
@@ -949,10 +1004,10 @@ namespace RimWorldOnlineCity.UI
                 btnRect.y += btnRect.height;
                 rectText.y += btnRect.height;
                 Text.Anchor = TextAnchor.MiddleCenter;
-                Widgets.Label(rectText, "OCity_DialogExchenge_Destroy".Translate());
+                Widgets.Label(rectText, _cachedLabelDestroy);
                 btnRect.y += rectText.height;
                 rectText.y += rectText.height;
-                Widgets.Label(rectText, "OCity_DialogExchenge_ForTenPercentThePrice".Translate());
+                Widgets.Label(rectText, _cachedLabelForTenPercent);
                 btnRect.y += rectText.height + 10f;
                 rectText.y += rectText.height + 10f;
             }
@@ -1119,11 +1174,14 @@ namespace RimWorldOnlineCity.UI
             {
                 var item = ds[i];
                 if (item.CountToTransfer == 0) continue;
-                var th = ThingTrade.CreateTrade(item.AnyThing, item.CountToTransfer);
-                if (th.IsCorpse || th.IsPawn) return;
-                if (th.GameCost < 1) continue;
 
-                dropCost += th.GameCost * item.CountToTransfer;
+                // ОПТИМІЗАЦІЯ: перевірка напряму по Thing без створення непотрібного ThingTrade
+                var thing = item.AnyThing;
+                if (thing is Pawn || thing is Corpse) return;
+                float marketValue = thing.MarketValue;
+                if (marketValue < 1f) continue;
+
+                dropCost += marketValue * item.CountToTransfer;
             }
 
             if (dropCost == 0f) return;
@@ -1723,7 +1781,6 @@ namespace RimWorldOnlineCity.UI
             }
             GUI.color = Color.white;
 
-            // ОПТИМІЗАЦІЯ: розрахунок рядка підказки лише під час наведення миші
             if (CachedHitPointsMeasureWidth == 0f)
             {
                 CachedHitPointsMeasureWidth = Text.CalcSize("888/888 ").x;
@@ -1817,10 +1874,7 @@ namespace RimWorldOnlineCity.UI
                             for (int i = 0; i < loader.ListLoad.Count; i++)
                             {
                                 var item = loader.ListLoad[i];
-                                if (!dicHash.ContainsKey(item.Hash))
-                                {
-                                    dicHash[item.Hash] = item.Data;
-                                }
+                                dicHash[item.Hash] = item.Data;
                             }
 
                             for (int i = 0; i < orders.Count; i++)

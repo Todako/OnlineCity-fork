@@ -1,15 +1,12 @@
 ﻿using HarmonyLib;
 using Model;
 using OCUnion;
-using OCUnion.Transfer.Model;
 using RimWorld;
 using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses.Harmony;
-using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using Transfer;
 using UnityEngine;
 using Verse;
 using Verse.Sound;
@@ -311,17 +308,17 @@ namespace RimWorldOnlineCity
             var freeThings = new List<Thing>(select.Count);
 
             int pawnSelectCount = 0;
-            foreach (var k in select.Keys)
+            foreach (var pair in select)
             {
-                if (k is Pawn) pawnSelectCount++;
+                if (pair.Key is Pawn) pawnSelectCount++;
             }
 
             bool selectAllCaravan = caravan.PawnsListForReading.Count == pawnSelectCount;
             if (selectAllCaravan)
             {
                 Loger.Log("DeSpawnCaravan: Select all Caravan");
-                select = new Dictionary<Thing, int>();
                 var pawnsList = caravan.PawnsListForReading;
+                select = new Dictionary<Thing, int>(pawnsList.Count * 4);
                 for (int i = 0; i < pawnsList.Count; i++)
                 {
                     var p = pawnsList[i];
@@ -379,6 +376,9 @@ namespace RimWorldOnlineCity
             return freeThings;
         }
 
+        /// <summary>
+        /// Знищує список речей та пішаків за один прохід циклу.
+        /// </summary>
         public static void DestroyThings(List<Thing> things)
         {
             if (things == null) return;
@@ -386,16 +386,15 @@ namespace RimWorldOnlineCity
             for (int i = 0; i < things.Count; i++)
             {
                 var thing = things[i];
-                if (thing == null || thing is Pawn) continue;
-                thing.Destroy();
-            }
+                if (thing == null) continue;
 
-            for (int i = 0; i < things.Count; i++)
-            {
-                var thing = things[i];
                 if (thing is Pawn pawn)
                 {
                     GameUtils.PawnDestroy(pawn);
+                }
+                else
+                {
+                    thing.Destroy();
                 }
             }
         }
@@ -683,61 +682,75 @@ namespace RimWorldOnlineCity
     /// <summary>
     /// Гармоні-патч для перехоплення прямого ПКМ на карті світу по онлайн-каравану.
     /// Дозволяє одразу правим кліком по прибулому онлайн-каравану відкрити меню торгівлі з домашньої колонії
-    /// БЕЗ попереднього виділення колонії або каравану!
+    /// БЕЗ попереднього виділення колонії або каравану.
     /// </summary>
-    [HarmonyPatch(typeof(WorldSelector), "AutoOrder")]
+    [HarmonyPatch(typeof(WorldSelector), nameof(WorldSelector.WorldSelectorOnGUI))]
     internal static class WorldSelector_AutoOrder_DirectTrade_Patch
     {
+        private static readonly List<WorldObject> s_TileObjectsBuffer = new List<WorldObject>(8);
+        private static readonly List<CaravanOnline> s_OnlineCaravansBuffer = new List<CaravanOnline>(4);
+
         [HarmonyPrefix]
         public static bool Prefix(WorldSelector __instance)
         {
-            // Якщо у гравця вже виділено власний рухомий караван — нехай ваніль обробляє команди руху
-            if (__instance.SingleSelectedObject is Caravan) return true;
+            // Перехоплюємо виключно подію кліку правою кнопкою миші (кнопка 1)
+            if (Event.current.type != EventType.MouseDown || Event.current.button != 1) return true;
+
+            // Якщо у гравця вже виділено власний рухомий караван — залишаємо стандартну ванільну обробку наказів руху
+            if (__instance.SingleSelectedObject is Caravan caravan && (caravan.Faction?.IsPlayer ?? false)) return true;
 
             int targetTile = GenWorld.MouseTile();
             if (targetTile < 0) return true;
 
-            var objectsOnTile = Find.WorldObjects.ObjectsAt(targetTile);
+            s_TileObjectsBuffer.Clear();
+            ExchengeUtils.WorldObjectsByTile(targetTile, s_TileObjectsBuffer);
+            if (s_TileObjectsBuffer.Count == 0) return true;
+
             Settlement localSettlement = null;
             Caravan localCaravan = null;
+            s_OnlineCaravansBuffer.Clear();
 
-            // 1. Шукаємо базу або наш караван на цій клітинці
-            foreach (var o in objectsOnTile)
+            var myLogin = SessionClientController.My?.Login;
+
+            // Однопрохідний збір наших об'єктів та цільових онлайн-караванів на тайлі
+            for (int i = 0; i < s_TileObjectsBuffer.Count; i++)
             {
+                var o = s_TileObjectsBuffer[i];
                 if (o is Settlement s && (s.Faction?.IsPlayer ?? false))
                 {
-                    localSettlement = s;
-                    break;
+                    if (localSettlement == null) localSettlement = s;
                 }
-                if (o is Caravan c && (c.Faction?.IsPlayer ?? false))
+                else if (o is Caravan c && (c.Faction?.IsPlayer ?? false))
                 {
-                    localCaravan = c;
+                    if (localCaravan == null) localCaravan = c;
+                }
+                else if (o is CaravanOnline targetOnline && targetOnline.OnlineWObject != null
+                    && targetOnline.OnlinePlayerLogin != myLogin)
+                {
+                    s_OnlineCaravansBuffer.Add(targetOnline);
                 }
             }
 
             WorldObject localSource = (WorldObject)localSettlement ?? localCaravan;
-            if (localSource == null) return true; // На тайлі немає нашого поселення чи каравану
+            if (localSource == null || s_OnlineCaravansBuffer.Count == 0) return true;
 
-            // 2. Шукаємо каравани інших гравців
-            List<FloatMenuOption> options = new List<FloatMenuOption>();
-            foreach (var o in objectsOnTile)
+            var options = new List<FloatMenuOption>(s_OnlineCaravansBuffer.Count);
+            for (int i = 0; i < s_OnlineCaravansBuffer.Count; i++)
             {
-                if (o is CaravanOnline targetOnline && targetOnline.OnlineWObject != null
-                    && targetOnline.OnlinePlayerLogin != SessionClientController.My?.Login)
+                var targetOnline = s_OnlineCaravansBuffer[i];
+                var opt = ExchengeUtils.ExchangeOfGoods_GetFloatMenu(targetOnline, () =>
                 {
-                    var opt = ExchengeUtils.ExchangeOfGoods_GetFloatMenu(targetOnline, () =>
-                    {
-                        ExchengeUtils.ExchangeOfGoods_DoAction(targetOnline, localSource);
-                    });
-                    options.Add(opt);
-                }
+                    ExchengeUtils.ExchangeOfGoods_DoAction(targetOnline, localSource);
+                });
+                options.Add(opt);
             }
 
             if (options.Count > 0)
             {
                 Find.WindowStack.Add(new FloatMenu(options));
                 SoundDefOf.FloatMenu_Open.PlayOneShotOnCamera(null);
-                return false; // Повністю перехоплюємо ПКМ і виводимо меню обміну!
+                Event.current.Use(); // Позначаємо подію миші в Unity GUI як спожиту
+                return false;        // Скасовуємо стандартний ванільний обробник
             }
 
             return true;
