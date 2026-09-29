@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using Transfer;
 using Util;
 
 namespace Transfer
@@ -31,12 +30,12 @@ namespace Transfer
         }
 
         /// <summary>
-        /// Об'єкт блокування для синхронізації операцій запису та читання через сокет.
+        /// Об'єкт блокування для синхронізації фізичних операцій запису та читання через сокет.
         /// </summary>
         private readonly object LockObj = new object();
 
         /// <summary>
-        /// Статичні буфери для службових сигналів (усувають постійні дрібні алокації в купі).
+        /// Статичні буфери для службових сигналів (усувають виділення пам'яті в купі).
         /// </summary>
         private static readonly byte[] PingByte = new byte[1] { 0x00 };
         private static readonly byte[] CheckByte = new byte[1] { 0x01 };
@@ -46,9 +45,6 @@ namespace Transfer
 
         #region Стан сесії та підключення
 
-        /// <summary>
-        /// Ознака активного процесу перепідключення до сервера.
-        /// </summary>
         public static bool IsRelogin = false;
 
         public bool IsLogined
@@ -61,7 +57,7 @@ namespace Transfer
 
         public ConnectClient Client;
         private byte[] Key;
-        private string KeyStr; // Кешований сесійний ключ для усунення перетворень масиву байтів у рядок
+        private string KeyStr;
         public int ErrorCode;
         public string ErrorMessage;
 
@@ -73,14 +69,13 @@ namespace Transfer
             try
             {
                 IsLogined = false;
-                if (Client != null) Client.Dispose();
+                Client?.Dispose();
             }
-            catch
-            {
-            }
+            catch { }
 
             Client = null;
             KeyStr = null;
+            Key = null;
         }
 
         /// <summary>
@@ -91,12 +86,8 @@ namespace Transfer
             ErrorMessage = null;
             ErrorCode = 0;
             if (port == 0) port = DefaultPort;
-            try
-            {
-                IsLogined = false;
-                if (Client != null) Client.Dispose();
-            }
-            catch { }
+
+            Disconnect();
 
             try
             {
@@ -105,7 +96,7 @@ namespace Transfer
 
                 Client = new ConnectClient(addr, port);
 
-                // Перший пакет: передача відкритого ключа або нульового байта
+                // Перший пакет: надсилання відкритого ключа або пінг-байта
                 if (UseCryptoKeys)
                     Client.SendMessage(Encoding.UTF8.GetBytes(crypto.OpenKey));
                 else
@@ -118,10 +109,10 @@ namespace Transfer
                 else
                     Key = rc;
 
-                // ОПТИМІЗАЦІЯ: кешуємо рядок ключа для викликів SymmetricEncrypt/Decrypt
+                // Кешування рядка ключа для апаратного шифрування AES
                 KeyStr = Key != null ? Encoding.ASCII.GetString(Key) : string.Empty;
 
-                // Реєстрація клієнта у фоновому вартовому таймері для підтримки активності сокета
+                // Реєстрація клієнта у вартовому таймері підтримки з'єднання
                 ConnectSaver.AddClient(Client, (cl) =>
                 {
                     lock (LockObj)
@@ -137,13 +128,13 @@ namespace Transfer
             {
                 ErrorCode = -1;
                 ErrorMessage = FormatException(e);
-                ExceptionUtil.ExceptionLog(e, "Client");
+                ExceptionUtil.ExceptionLog(e, "Client Connect");
                 return false;
             }
         }
 
         /// <summary>
-        /// Службовий пінг для перевірки працездатності каналу зв'язку.
+        /// Службовий пінг для перевірки каналу зв'язку.
         /// </summary>
         public bool ServicePing()
         {
@@ -167,7 +158,7 @@ namespace Transfer
             {
                 ErrorCode = -1;
                 ErrorMessage = FormatException(e);
-                ExceptionUtil.ExceptionLog(e, "Client ServicePing ");
+                ExceptionUtil.ExceptionLog(e, "Client ServicePing");
                 return false;
             }
         }
@@ -197,15 +188,14 @@ namespace Transfer
             {
                 ErrorCode = -1;
                 ErrorMessage = FormatException(e);
-                ExceptionUtil.ExceptionLog(e, "Client ServiceCheck ");
+                ExceptionUtil.ExceptionLog(e, "Client ServiceCheck");
                 return null;
             }
         }
 
         /// <summary>
-        /// Відправка та прийом пакета даних типу ModelContainer.
-        /// ОПТИМІЗАЦІЯ: важка серіалізація, стиснення та дешифрування виконуються поза блокуванням LockObj.
-        /// Замінено DateTime.UtcNow на Stopwatch для усунення 7 запитів системного часу на пакет.
+        /// Відправка та прийом пакета даних ModelContainer.
+        /// ОПТИМІЗАЦІЯ: серіалізація, стиснення та дешифрування виконуються поза блокуванням LockObj.
         /// </summary>
         private ModelContainer Trans(ModelContainer sendObj)
         {
@@ -214,19 +204,20 @@ namespace Transfer
 
             var sw = Stopwatch.StartNew();
 
-            // 1. Серіалізація та шифрування поза блокуванням
+            // 1. Серіалізація та шифрування поза блокуванням сокета
             var ob = GZip.ZipObjByte(sendObj);
             var send = CryptoProvider.SymmetricEncrypt(ob, KeyStr);
 
             if (send.Length > 1024 * 512)
             {
-                Loger.Log($"Client Network toS {send.Length} unzip {GZip.LastSizeObj} ");
+                Loger.Log($"Client Network toS {send.Length} unzip {GZip.LastSizeObj}");
             }
 
-            long time2 = sw.ElapsedMilliseconds;
-            long time3 = 0, time4 = 0;
+            long timeSerialize = sw.ElapsedMilliseconds;
+            long timeWaitLock = 0;
+            long timeSocketIO = 0;
 
-            // 2. Блокування утримується виключно під час фізичного I/O обміну через сокет
+            // 2. Блокування утримується суто на час передачі/прийому байтів мережевим адаптером
             byte[] rec;
             lock (LockObj)
             {
@@ -235,10 +226,10 @@ namespace Transfer
                     throw new IOException("Клієнт не підключений до сервера.");
                 }
 
-                time3 = sw.ElapsedMilliseconds;
+                timeWaitLock = sw.ElapsedMilliseconds;
                 Client.SendMessage(send);
                 rec = Client.ReceiveBytes();
-                time4 = sw.ElapsedMilliseconds;
+                timeSocketIO = sw.ElapsedMilliseconds;
             }
 
             if (rec == null || rec.Length == 0)
@@ -246,35 +237,41 @@ namespace Transfer
                 throw new IOException("Сервер розірвав з'єднання або надіслав порожню відповідь.");
             }
 
-            long time5 = sw.ElapsedMilliseconds;
-
             // 3. Дешифрування та десеріалізація отриманого пакета поза блокуванням
             var rec2 = CryptoProvider.SymmetricDecrypt(rec, KeyStr);
-            long time6 = sw.ElapsedMilliseconds;
+            if (rec2 == null || rec2.Length == 0)
+            {
+                throw new IOException("Помилка дешифрування отриманого пакета від сервера.");
+            }
+            long timeDecrypt = sw.ElapsedMilliseconds;
 
             var res = (ModelContainer)GZip.UnzipObjByte(rec2);
-            long time7 = sw.ElapsedMilliseconds;
+            if (res == null)
+            {
+                throw new IOException("Помилка десеріалізації об'єкта відповіді сервера.");
+            }
+            long timeTotal = sw.ElapsedMilliseconds;
 
             if (rec.Length > 1024 * 512)
             {
-                Loger.Log($"Client Network fromS {rec.Length} unzip {GZip.LastSizeObj} ");
+                Loger.Log($"Client Network fromS {rec.Length} unzip {GZip.LastSizeObj}");
             }
 
-            if (time7 > 900)
+            if (timeTotal > 900)
             {
-                Loger.Log($"Client Network total {time7}ms: " +
-                    $"Serialize {time2}ms, " +
-                    $"WaitLock {time3 - time2}ms, " +
-                    $"SocketIO {time4 - time3}ms, " +
-                    $"Decrypt {time6 - time5}ms, " +
-                    $"Deserialize {time7 - time6}ms");
+                Loger.Log($"Client Network total {timeTotal}ms: " +
+                    $"Serialize {timeSerialize}ms, " +
+                    $"WaitLock {timeWaitLock - timeSerialize}ms, " +
+                    $"SocketIO {timeSocketIO - timeWaitLock}ms, " +
+                    $"Decrypt {timeDecrypt - timeSocketIO}ms, " +
+                    $"Deserialize {timeTotal - timeDecrypt}ms");
             }
 
             return res;
         }
 
         /// <summary>
-        /// Відправка об'єкта із зазначенням типів вихідного та вхідного пакетів.
+        /// Відправка об'єкта із перевіркою кодів вихідного та вхідного пакетів.
         /// </summary>
         protected T TransObject<T>(object objOut, int typeOut, int typeIn)
             where T : class
@@ -301,7 +298,7 @@ namespace Transfer
             {
                 ErrorCode = -1;
                 ErrorMessage = FormatException(e);
-                ExceptionUtil.ExceptionLog(e, "Client");
+                ExceptionUtil.ExceptionLog(e, "Client TransObject");
                 return null;
             }
         }
@@ -331,6 +328,8 @@ namespace Transfer
         }
 
         #endregion
+
+        #region Клієнтські запити API
 
         public bool Registration(string login, string pass, string email, string discord)
         {
@@ -381,7 +380,6 @@ namespace Transfer
 
         public ModelUpdateChat UpdateChat(ModelUpdateTime modelUpdate)
         {
-            // ОПТИМІЗАЦІЯ: переведено на рівень DEBUG для усунення спаму кожні 500 мс
             if (Loger.Enable)
             {
                 Loger.Log("Client UpdateChat " + modelUpdate.Time.ToGoodUtcString(), Loger.LogLevel.DEBUG);
@@ -460,5 +458,7 @@ namespace Transfer
             var packet = new ModelName { Value = playerName };
             return TransObject<ModelPlayerInfoExtended>(packet, (int)PackageType.Request55PlayerInfoExtended, (int)PackageType.Response56PlayerInfoExtended);
         }
+
+        #endregion
     }
 }

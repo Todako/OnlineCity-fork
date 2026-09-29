@@ -10,7 +10,7 @@ namespace Util
     /// <summary>
     /// Провайдер криптографічних операцій.
     /// Забезпечує асиметричне шифрування (RSA) для початкового рукостискання
-    /// та симетричне потокове шифрування (Rijndael / AES) мережевих пакетів.
+    /// та апаратно прискорене симетричне шифрування (AES-256) мережевих пакетів.
     /// </summary>
     public class CryptoProvider
     {
@@ -25,24 +25,26 @@ namespace Util
 
         public string OpenKeyBase64
         {
-            get { return ToBase64(OpenKey); }
-            set { OpenKey = FromBase64(value); }
+            get => ToBase64(OpenKey);
+            set => OpenKey = FromBase64(value);
         }
 
         public string PrivateKeyBase64
         {
-            get { return ToBase64(PrivateKey); }
-            set { PrivateKey = FromBase64(value); }
+            get => ToBase64(PrivateKey);
+            set => PrivateKey = FromBase64(value);
         }
 
         public string ToBase64(string source)
         {
+            if (string.IsNullOrEmpty(source)) return string.Empty;
             var sourceByte = Encoding.UTF8.GetBytes(source);
             return Convert.ToBase64String(sourceByte);
         }
 
         public string FromBase64(string source)
         {
+            if (string.IsNullOrEmpty(source)) return string.Empty;
             var sourceByte = Convert.FromBase64String(source);
             return Encoding.UTF8.GetString(sourceByte);
         }
@@ -57,17 +59,18 @@ namespace Util
             {
                 OpenKey = rsa.ToXmlString(false);
                 PrivateKey = rsa.ToXmlString(true);
-                rsa.Clear();
             }
         }
 
         public string Encrypt(string message)
         {
+            if (string.IsNullOrEmpty(message)) return string.Empty;
             return Convert.ToBase64String(Encrypt(Encoding.UTF8.GetBytes(message)));
         }
 
         public byte[] Encrypt(byte[] message)
         {
+            if (message == null || message.Length == 0) return new byte[0];
             using (var rsa = new RSACryptoServiceProvider(KeyBitSize))
             {
                 rsa.FromXmlString(OpenKey);
@@ -77,11 +80,13 @@ namespace Util
 
         public string Decrypt(string criptMessage)
         {
+            if (string.IsNullOrEmpty(criptMessage)) return string.Empty;
             return Encoding.UTF8.GetString(Decrypt(Convert.FromBase64String(criptMessage)));
         }
 
         public byte[] Decrypt(byte[] criptMessage)
         {
+            if (criptMessage == null || criptMessage.Length == 0) return new byte[0];
             using (var rsa = new RSACryptoServiceProvider(KeyBitSize))
             {
                 rsa.FromXmlString(PrivateKey);
@@ -95,13 +100,17 @@ namespace Util
 
         public List<string> GetListPart(string source)
         {
-            var list = new List<string>();
-            if (string.IsNullOrEmpty(source)) return list;
+            if (string.IsNullOrEmpty(source)) return new List<string>(0);
+
+            int count = (source.Length / PartByteSize) + 1;
+            var list = new List<string>(count);
+
             for (int i = 0; i <= source.Length / PartByteSize; i++)
             {
                 var stradd = i == source.Length / PartByteSize
                     ? source.Substring(i * PartByteSize)
                     : source.Substring(i * PartByteSize, PartByteSize);
+
                 if (!string.IsNullOrEmpty(stradd)) list.Add(stradd);
             }
             return list;
@@ -109,14 +118,11 @@ namespace Util
 
         #endregion
 
-        #region Симетричне шифрування (Rijndael / AES)
+        #region Симетричне шифрування (Апаратно прискорений AES-256)
 
         private static readonly byte[] SALT = new byte[] { 0x94, 0xF8, 0xEE, 0xA0, 0x00, 0x01, 0xFF, 0xE6, 0x74, 0x35, 0x07, 0xFE, 0x9D, 0x1E, 0x47, 0xBB };
         private static readonly Encoding KeyEncoding = Encoding.ASCII;
 
-        /// <summary>
-        /// Кешована пара згенерованого сесійного ключа та вектора ініціалізації (IV).
-        /// </summary>
         private class DerivedKey
         {
             public byte[] Key;
@@ -124,15 +130,12 @@ namespace Util
         }
 
         /// <summary>
-        /// Потокобезпечний кеш згенерованих ключів PBKDF2.
+        /// Потокобезпечний кеш ключів PBKDF2.
         /// Усуває виконання 1000 ітерацій HMAC-SHA1 на кожному мережевому пакеті.
         /// </summary>
         private static readonly ConcurrentDictionary<string, DerivedKey> KeyIvCache =
             new ConcurrentDictionary<string, DerivedKey>(StringComparer.Ordinal);
 
-        /// <summary>
-        /// Отримує або генерує 32-байтний ключ і 16-байтний вектор ініціалізації на основі пароля сесії.
-        /// </summary>
         private static DerivedKey GetDerivedKey(string password)
         {
             if (password == null) password = string.Empty;
@@ -142,7 +145,7 @@ namespace Util
                 return cached;
             }
 
-            using (var pdb = new Rfc2898DeriveBytes(password, SALT))
+            using (var pdb = new Rfc2898DeriveBytes(password, SALT, 1000))
             {
                 var derived = new DerivedKey
                 {
@@ -156,11 +159,13 @@ namespace Util
 
         public string SymmetricEncrypt(string message)
         {
+            if (string.IsNullOrEmpty(message)) return string.Empty;
             return Convert.ToBase64String(SymmetricEncrypt(Encoding.UTF8.GetBytes(message), SymmetricKey));
         }
 
         public string SymmetricDecrypt(string criptMessage)
         {
+            if (string.IsNullOrEmpty(criptMessage)) return string.Empty;
             return Encoding.UTF8.GetString(SymmetricDecrypt(Convert.FromBase64String(criptMessage), SymmetricKey));
         }
 
@@ -170,30 +175,24 @@ namespace Util
         }
 
         /// <summary>
-        /// Симетричне шифрування байтового масиву алгоритмом Rijndael.
-        /// ОПТИМІЗАЦІЯ: деривація ключів береться з кешу, усуваючи затримку PBKDF2.
+        /// Апаратно прискорене симетричне шифрування AES-256-CBC.
+        /// ОПТИМІЗАЦІЯ: прямий виклик TransformFinalBlock виключає виділення CryptoStream та MemoryStream.
         /// </summary>
         public static byte[] SymmetricEncrypt(byte[] plain, string password)
         {
             if (plain == null) plain = new byte[0];
 
             var derived = GetDerivedKey(password);
-            using (var rijndael = Rijndael.Create())
+            using (var aes = Aes.Create())
             {
-                rijndael.Key = derived.Key;
-                rijndael.IV = derived.IV;
+                aes.Key = derived.Key;
+                aes.IV = derived.IV;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
 
-                using (var memoryStream = new MemoryStream(plain.Length + 32))
+                using (var encryptor = aes.CreateEncryptor())
                 {
-                    using (var cryptoStream = new CryptoStream(memoryStream, rijndael.CreateEncryptor(), CryptoStreamMode.Write))
-                    {
-                        if (plain.Length > 0)
-                        {
-                            cryptoStream.Write(plain, 0, plain.Length);
-                        }
-                        cryptoStream.FlushFinalBlock();
-                    }
-                    return memoryStream.ToArray();
+                    return encryptor.TransformFinalBlock(plain, 0, plain.Length);
                 }
             }
         }
@@ -204,26 +203,24 @@ namespace Util
         }
 
         /// <summary>
-        /// Симетричне дешифрування байтового масиву алгоритмом Rijndael.
+        /// Апаратно прискорене симетричне дешифрування AES-256-CBC.
+        /// ОПТИМІЗАЦІЯ: прямий виклик TransformFinalBlock без зайвих алокацій потоків.
         /// </summary>
         public static byte[] SymmetricDecrypt(byte[] cipher, string password)
         {
             if (cipher == null || cipher.Length == 0) return new byte[0];
 
             var derived = GetDerivedKey(password);
-            using (var rijndael = Rijndael.Create())
+            using (var aes = Aes.Create())
             {
-                rijndael.Key = derived.Key;
-                rijndael.IV = derived.IV;
+                aes.Key = derived.Key;
+                aes.IV = derived.IV;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
 
-                using (var memoryStream = new MemoryStream(cipher.Length))
+                using (var decryptor = aes.CreateDecryptor())
                 {
-                    using (var cryptoStream = new CryptoStream(memoryStream, rijndael.CreateDecryptor(), CryptoStreamMode.Write))
-                    {
-                        cryptoStream.Write(cipher, 0, cipher.Length);
-                        cryptoStream.FlushFinalBlock();
-                    }
-                    return memoryStream.ToArray();
+                    return decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
                 }
             }
         }
@@ -234,7 +231,8 @@ namespace Util
 
         public byte[] GetHash(byte[] data)
         {
-            using (var sha = new SHA512Managed())
+            if (data == null || data.Length == 0) return new byte[0];
+            using (var sha = SHA512.Create())
             {
                 return sha.ComputeHash(data);
             }
@@ -242,7 +240,8 @@ namespace Util
 
         public string GetHash(string data)
         {
-            using (var sha = new SHA512Managed())
+            if (string.IsNullOrEmpty(data)) return string.Empty;
+            using (var sha = SHA512.Create())
             {
                 return KeyEncoding.GetString(sha.ComputeHash(KeyEncoding.GetBytes(data)));
             }

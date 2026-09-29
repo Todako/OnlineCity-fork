@@ -1,10 +1,10 @@
 using Model;
 using OCUnion;
+using OCUnion.Transfer;
 using ServerOnlineCity.Model;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -13,24 +13,38 @@ using Util;
 
 namespace ServerOnlineCity
 {
+    /// <summary>
+    /// Серверна сесія клієнта.
+    /// Відповідає за прийом, перевірку, дешифрування, виконання команд
+    /// та зворотне надсилання результатів клієнту гри.
+    /// </summary>
     public class SessionServer : IDisposable
     {
         public bool IsAPI = false;
         public bool IsActive = true;
         private ConnectClient Client;
         private byte[] Key;
-        private static Random Rnd = new Random();
-        private static Encoding KeyEncoding = Encoding.GetEncoding(1252);
-        private static Encoding JsonEncoding = Encoding.UTF8;
-        private CryptoProvider cryptoHash = new CryptoProvider();
+        private string KeyStr;
+
+        private static readonly Encoding KeyEncoding = Encoding.GetEncoding(1252);
+        private static readonly Encoding JsonEncoding = Encoding.UTF8;
+        private readonly CryptoProvider cryptoHash = new CryptoProvider();
         private Service Worker;
         private DateTime ServiceCheckTime;
 
+        // Статичні відповіді на службові пінг/чек пакети (0 байт GC на кожну перевірку)
+        private static readonly byte[] PingResponse = new byte[1] { 0x00 };
+        private static readonly byte[] CheckResponseTrue = new byte[1] { 0x01 };
+        private static readonly byte[] CheckResponseFalse = new byte[1] { 0x00 };
 
         public void Dispose()
         {
             IsActive = false;
-            Client.Dispose();
+            try
+            {
+                Client?.Dispose();
+            }
+            catch { }
         }
 
         public string GetNameWhoConnect()
@@ -44,6 +58,7 @@ namespace ServerOnlineCity
                 return "";
             }
         }
+
         public ServiceContext GetContext()
         {
             try
@@ -56,13 +71,16 @@ namespace ServerOnlineCity
             }
         }
 
+        /// <summary>
+        /// Потокобезпечна генерація унікального сесійного ключа.
+        /// </summary>
         private void SetKey()
         {
             var rnd = new Random();
-            var k = new byte[Rnd.Next(400, 600)];
+            var k = new byte[rnd.Next(400, 600)];
             for (int i = 0; i < k.Length; i++)
             {
-                k[i] = (byte)(Rnd.Next(0, 128) + rnd.Next(0, 128));
+                k[i] = (byte)(rnd.Next(0, 128) + rnd.Next(0, 128));
             }
             var k2 = KeyEncoding.GetBytes("g08Р·dfgиА▀ЫЮЁрЫГxч<2en]*♫7ПМпёf#hю,>√^p147&$`tgjРмБ^g9~hjЮf%#h");
 
@@ -71,54 +89,56 @@ namespace ServerOnlineCity
             Array.Copy(k2, 0, k, oldLen, k2.Length);
 
             Key = cryptoHash.GetHash(k);
+            KeyStr = Encoding.ASCII.GetString(Key);
         }
 
         public void DoServiceJson(ConnectClient c)
         {
-            var receiveReady = false;
+            var receiveReady = new ManualResetEventSlim(false);
+
             c.ReceiveAllByte((client, requestRaw) =>
             {
                 try
                 {
-                    Dictionary<string, byte[]> data = new Dictionary<string, byte[]>();
+                    var data = new Dictionary<string, byte[]>();
                     var request = JsonEncoding.GetString(requestRaw);
-                    var ii = request.IndexOf("\r\n\r\n");
-                    var iiBoundary = request.IndexOf("boundary=");
+                    int ii = request.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                    int iiBoundary = request.IndexOf("boundary=", StringComparison.Ordinal);
                     string isBoundary = null;
+
                     if (iiBoundary > 0 && iiBoundary < ii)
                     {
                         iiBoundary += "boundary=".Length;
-                        isBoundary = "\r\n--" + request.Substring(iiBoundary, request.IndexOf("\r\n", iiBoundary) - iiBoundary);
+                        isBoundary = "\r\n--" + request.Substring(iiBoundary, request.IndexOf("\r\n", iiBoundary, StringComparison.Ordinal) - iiBoundary);
                     }
+
                     if (isBoundary != null)
                     {
                         var requestRawCode = Encoding.ASCII.GetString(requestRaw);
-                        var rawCodeIndex = 0;
+                        int rawCodeIndex = 0;
                         var listBoundary = request.Split(new string[] { isBoundary }, StringSplitOptions.RemoveEmptyEntries);
                         request = null;
-                        for (var i = 1; i < listBoundary.Length; i++)
+
+                        for (int i = 1; i < listBoundary.Length; i++)
                         {
-                            rawCodeIndex = requestRawCode.IndexOf(isBoundary, rawCodeIndex);
-                            /* Content-Disposition: form-data; name="avatar"; filename="XGQKemif8eU.jpg"
-                             * Content-Type: image/jpeg
-                             * 
-                             * ����
-                             */
+                            rawCodeIndex = requestRawCode.IndexOf(isBoundary, rawCodeIndex, StringComparison.Ordinal);
                             var item = listBoundary[i];
-                            var itemi = item.IndexOf("name=\"");
+                            int itemi = item.IndexOf("name=\"", StringComparison.Ordinal);
                             if (itemi > 0)
                             {
                                 itemi += "name=\"".Length;
-                                var name = item.Substring(itemi, item.IndexOf("\"", itemi) - itemi);
+                                var name = item.Substring(itemi, item.IndexOf("\"", itemi, StringComparison.Ordinal) - itemi);
 
-                                rawCodeIndex = requestRawCode.IndexOf("\r\n\r\n", rawCodeIndex) + 4;
+                                rawCodeIndex = requestRawCode.IndexOf("\r\n\r\n", rawCodeIndex, StringComparison.Ordinal) + 4;
                                 if (rawCodeIndex >= 4)
                                 {
-                                    var rawCodeIndexNext = requestRawCode.IndexOf(isBoundary, rawCodeIndex);
+                                    int rawCodeIndexNext = requestRawCode.IndexOf(isBoundary, rawCodeIndex, StringComparison.Ordinal);
                                     if (rawCodeIndexNext < 0) rawCodeIndexNext = requestRaw.Length;
-                                    var content = new byte[rawCodeIndexNext - rawCodeIndex];
-                                    Array.Copy(requestRaw, rawCodeIndex, content, 0, rawCodeIndexNext - rawCodeIndex);
-                                    //File.WriteAllBytes("e:\\test.png", content);
+
+                                    int len = rawCodeIndexNext - rawCodeIndex;
+                                    var content = new byte[len];
+                                    Array.Copy(requestRaw, rawCodeIndex, content, 0, len);
+
                                     if (request != null) request += ", ";
                                     if (content.Length > 1000)
                                     {
@@ -135,55 +155,56 @@ namespace ServerOnlineCity
                     }
                     else
                     {
-                        //обрезаем и игнорируем весь заголовок
                         if (ii > 0 && request.Length - ii > 5)
                         {
                             request = request.Substring(ii + 4).Trim();
                         }
                         else
+                        {
                             request = null;
+                        }
                     }
+
                     if (request != null)
                     {
-                        byte[] sendButes;
+                        byte[] sendBytes;
                         var send = Service.GetPackageJson(request, data);
 
-                        if (send is byte[]) 
+                        if (send is byte[] body)
                         {
-                            var body = (byte[])send;
-                            var sendHTTP = "HTTP/1.0 200 OK\r\n"
-                                //+ "Accept-Ranges: bytes\r\n"
-                                //+ "Content-Length: " + body.Length + "\r\n"
-                                //+ "Content-Type: image/png\r\n"
-                                + "Connection: close\r\n\r\n";
+                            var sendHTTP = "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n";
                             var header = JsonEncoding.GetBytes(sendHTTP);
-                            sendButes = new byte[header.Length + body.Length];
-                            Array.Copy(header, 0, sendButes, 0, header.Length);
-                            Array.Copy(body, 0, sendButes, header.Length, body.Length);
+                            sendBytes = new byte[header.Length + body.Length];
+                            Array.Copy(header, 0, sendBytes, 0, header.Length);
+                            Array.Copy(body, 0, sendBytes, header.Length, body.Length);
                         }
                         else
-                        { 
-                            var sendHTTP = "HTTP/1.0 200 OK\r\n"
-                                + "Content-Type: application/json; charset=utf-8\r\n"
-                                + "Connection: close\r\n\r\n"
+                        {
+                            var sendHTTP = "HTTP/1.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n"
                                 + send.ToString();
-                            sendButes = JsonEncoding.GetBytes(sendHTTP);
+                            sendBytes = JsonEncoding.GetBytes(sendHTTP);
                         }
-                        client.SendAllByte(sendButes);
-                        //чтобы уменьшить спам отсекаем все запросы на статус 
+
+                        client.SendAllByte(sendBytes);
+
                         if (!request.ToLower().Replace(" ", "").Replace("\"q\"", "q").Contains("q:\"s\""))
-                            Loger.Log("DoServiceJson Request: " + request + Environment.NewLine + (send is byte[] ? sendButes.Length.ToString() : send.ToString()), Loger.LogLevel.INFO);
+                        {
+                            Loger.Log("DoServiceJson Request: " + request + Environment.NewLine + (send is byte[]? sendBytes.Length.ToString() : send.ToString()), Loger.LogLevel.INFO);
+                        }
                     }
                 }
                 catch (Exception ext)
                 {
                     Loger.Log("DoServiceJson Exception: " + ext.ToString(), Loger.LogLevel.ERROR);
                 }
-                receiveReady = true;
+                finally
+                {
+                    receiveReady.Set();
+                }
             }, 1024 * 1024 * 2);
-            var timeOut = DateTime.UtcNow.AddSeconds(2);
-            while (!receiveReady && timeOut > DateTime.UtcNow)
-                Thread.Sleep(1);
+
+            receiveReady.Wait(2000);
+            receiveReady.Dispose();
         }
 
         public void Do(ConnectClient client, Action<Action<SessionServer>> allSessionAction)
@@ -192,14 +213,13 @@ namespace ServerOnlineCity
             {
                 Client = client;
 
-                //Loger.Log("Server ReceiveBytes0");
-                //Считываем 4 байта, если они POST то переходим в режим запроса json, иначе пердаем эти байты  дальше как часть основного протокола
+                // Перевірка на REST API запит (перші 4 байти - 'POST')
                 var firstByte = Client.ReceiveFourByte();
-                if (firstByte?.Length == 4 
+                if (firstByte?.Length == 4
                     && firstByte[0] == 80
                     && firstByte[1] == 79
                     && firstByte[2] == 83
-                    && firstByte[3] == 84) // 'POST'
+                    && firstByte[3] == 84)
                 {
                     IsAPI = true;
                     DoServiceJson(client);
@@ -208,13 +228,11 @@ namespace ServerOnlineCity
 
                 Loger.Log("Server ReceiveBytes1");
 
-                ///установка условно защищенного соединения
-                //Строго первый пакет: Передаем серверу КОткр
+                // Початкове рукостискання
                 var rc = Client.ReceiveBytes(firstByte);
                 var crypto = new CryptoProvider();
                 if (SessionClient.UseCryptoKeys) crypto.OpenKey = Encoding.UTF8.GetString(rc);
 
-                //Строго первый ответ: Передаем клиенту КОткр(Сессия)
                 SetKey();
                 Loger.Log("Server SendMessage1");
                 if (SessionClient.UseCryptoKeys)
@@ -227,44 +245,40 @@ namespace ServerOnlineCity
                 context.AllSessionAction = allSessionAction;
                 Worker = new Service(context);
 
-                ///рабочий цикл
+                // Головний робочий цикл сесії
                 while (IsActive)
                 {
                     var rec = Client.ReceiveBytes();
                     if (!IsActive) break;
 
-                    if (context.Player != null)
-                    {
-                        lock (context.Player)
-                        {
-                            context.Player.Public.LastOnlineTime = DateTime.UtcNow;
-                        }
-                    }
-
-                    //отдельно обрабатываем пинг
+                    // Обробка швидких службових сигналів без витрат на дешифрування
                     if (rec.Length == 1)
                     {
                         if (rec[0] == 0x00)
                         {
-                            Client.SendMessage(new byte[1] { 0x00 });
+                            Client.SendMessage(PingResponse);
                         }
-                        //отдельно обрабатываем запрос на обновление (ответ 0 - нет ничего, 1 - что-то есть) 
                         else if (rec[0] == 0x01)
                         {
-                            var exists = ServiceCheck();
-                            Client.SendMessage(new byte[1] { exists ? (byte)0x01 : (byte)0x00 });
+                            bool exists = ServiceCheck();
+                            Client.SendMessage(exists ? CheckResponseTrue : CheckResponseFalse);
                         }
                         continue;
                     }
 
-                    var time1 = DateTime.UtcNow;
+                    var sw = Stopwatch.StartNew();
 
-                    var rec2 = CryptoProvider.SymmetricDecrypt(rec, Key);
-                    var recObj = (ModelContainer)GZip.UnzipObjByte(rec2); //Deserialize
+                    // Дешифрування та розпакування отриманого пакета
+                    var rec2 = CryptoProvider.SymmetricDecrypt(rec, KeyStr);
+                    var recObj = (ModelContainer)GZip.UnzipObjByte(rec2);
 
-                    if (rec.Length > 1024 * 512) Loger.Log($"Server Network fromC {rec.Length} unzip {GZip.LastSizeObj} ");
-                    var time2 = DateTime.UtcNow;
+                    if (rec.Length > 1024 * 512)
+                    {
+                        Loger.Log($"Server Network fromC {rec.Length} unzip {GZip.LastSizeObj}");
+                    }
+                    long timeDeserialize = sw.ElapsedMilliseconds;
 
+                    // Обробка бізнес-логіки пакета в службі Service
                     ModelContainer sendObj;
                     try
                     {
@@ -276,34 +290,37 @@ namespace ServerOnlineCity
                         Loger.Log("Exception GetPackage: " + ext.ToString(), Loger.LogLevel.ERROR);
                         sendObj = null;
                     }
+
                     if (sendObj == null)
                     {
-                        sendObj = new ModelContainer()
-                        {
-                            TypePacket = 0
-                        };
+                        sendObj = new ModelContainer { TypePacket = 0 };
                     }
+                    long timeWorker = sw.ElapsedMilliseconds;
 
-                    var time3 = DateTime.UtcNow;
+                    // Стиснення та шифрування пакета-відповіді
+                    var ob = GZip.ZipObjByte(sendObj);
+                    var send = CryptoProvider.SymmetricEncrypt(ob, KeyStr);
 
-                    var ob = GZip.ZipObjByte(sendObj); //Serialize
-                    var send = CryptoProvider.SymmetricEncrypt(ob, Key);
-
-                    if (send.Length > 1024 * 512) Loger.Log($"Server Network toC {send.Length} unzip {GZip.LastSizeObj} ");
-                    var time4 = DateTime.UtcNow;
-
-                    Client.SendMessage(send);
-
-                    var time5 = DateTime.UtcNow;
-
-                    if ((time5 - time1).TotalMilliseconds > 900)
+                    if (send.Length > 1024 * 512)
                     {
-                        Loger.Log($"Server Network timeDeserialize {(time2 - time1).TotalMilliseconds}" +
-                            $" timeWorker {(time3 - time2).TotalMilliseconds}" +
-                            $" timeSerialize {(time4 - time3).TotalMilliseconds}" +
-                            $" timeSend {(time5 - time4).TotalMilliseconds}");
+                        Loger.Log($"Server Network toC {send.Length} unzip {GZip.LastSizeObj}");
+                    }
+                    long timeSerialize = sw.ElapsedMilliseconds;
+
+                    // Відправка клієнту
+                    Client.SendMessage(send);
+                    long timeSend = sw.ElapsedMilliseconds;
+
+                    if (timeSend > 900)
+                    {
+                        Loger.Log($"Server Network total {timeSend}ms: " +
+                            $"Deserialize {timeDeserialize}ms, " +
+                            $"Worker {timeWorker - timeDeserialize}ms, " +
+                            $"Serialize {timeSerialize - timeWorker}ms, " +
+                            $"Send {timeSend - timeSerialize}ms");
                     }
 
+                    // Оновлення часу останньої активності та перевірка запиту на відключення
                     if (context.Player != null)
                     {
                         lock (context.Player)
@@ -311,8 +328,7 @@ namespace ServerOnlineCity
                             context.Player.Public.LastOnlineTime = DateTime.UtcNow;
                             if (context.Player.ExitReason != OCUnion.Transfer.DisconnectReason.AllGood)
                             {
-                                //context.Player.ExitReason = OCUnion.Transfer.DisconnectReason.AllGood;
-                                Loger.Log("Disconnect  . . ." + context.Player.ExitReason.ToString());
+                                Loger.Log("Disconnect . . . " + context.Player.ExitReason);
                                 break;
                             }
                         }
@@ -326,9 +342,8 @@ namespace ServerOnlineCity
         }
 
         /// <summary>
-        /// Есть ли изменения. Сейчас используется только для чата
+        /// Перевіряє наявність оновлень у чаті для гравця.
         /// </summary>
-        /// <returns></returns>
         private bool ServiceCheck()
         {
             if (ServiceCheckTime == DateTime.MinValue)
@@ -337,7 +352,6 @@ namespace ServerOnlineCity
                 return true;
             }
 
-            //На данный момен только проверка чата
             var res = Worker.CheckChat(ServiceCheckTime);
             ServiceCheckTime = DateTime.UtcNow;
             return res;

@@ -17,13 +17,16 @@ namespace Transfer
         public readonly Encoding MessageEncoding = Encoding.UTF8;
         protected const int DefaultTimeout = 180000; // 3 хвилини таймауту
 
+        // Максимальний розмір одного пакета для захисту від OOM при пошкодженому потоці (128 МБ)
+        private const int MaxPacketSizeBytes = 128 * 1024 * 1024;
+
         public DateTime LastSend;
         private long CurrentSendRequestLength = 0;
         private long CurrentReceiveRequestLength = 0;
         public long CurrentRequestLength => CurrentSendRequestLength + CurrentReceiveRequestLength;
         public DateTime CurrentRequestStart = DateTime.MinValue;
 
-        // Постійні екземплярні буфери для усунення виділень пам'яті (0 байт GC на кожному пакеті)
+        // Постійні екземплярні буфери для усунення виділень пам'яті
         private readonly byte[] _headerSendBuffer = new byte[4];
         private readonly byte[] _headerReceiveBuffer = new byte[4];
 
@@ -33,14 +36,21 @@ namespace Transfer
 
         public ConnectClient(TcpClient client)
         {
-            Client = client;
+            Client = client ?? throw new ArgumentNullException(nameof(client));
 
-            // Налаштування таймаутів та вимкнення затримки алгоритму Нейгла (RTT стає мінімальним)
+            // Налаштування таймаутів та вимкнення затримки алгоритму Нейгла
             Client.SendTimeout = DefaultTimeout;
             Client.ReceiveTimeout = DefaultTimeout;
             Client.NoDelay = true;
 
-            // Збільшення системних буферів сокета до 256 КБ для стабільної передачі великих збережень
+            // Увімкнення KeepAlive для своєчасного виявлення розірваних з'єднань
+            try
+            {
+                Client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch { }
+
+            // Збільшення системних буферів сокета до 256 КБ для швидкої передачі карт і збережень
             Client.ReceiveBufferSize = 256 * 1024;
             Client.SendBufferSize = 256 * 1024;
 
@@ -69,8 +79,8 @@ namespace Transfer
 
         /// <summary>
         /// Відправка повідомлення із 4-байтовим префіксом загальної довжини.
-        /// ОПТИМІЗАЦІЯ: усунено BitConverter.GetBytes(msgLen) без створення зайвих масивів у купі.
-        /// Дані записуються безпосередньо в мережевий потік.
+        /// ОПТИМІЗАЦІЯ: для малих пакетів заголовок і корисне навантаження надсилаються разом,
+        /// запобігаючи дробленню на окремі TCP-сегменти.
         /// </summary>
         public void SendMessage(byte[] message)
         {
@@ -81,15 +91,30 @@ namespace Transfer
 
             try
             {
-                _headerSendBuffer[0] = (byte)msgLen;
-                _headerSendBuffer[1] = (byte)(msgLen >> 8);
-                _headerSendBuffer[2] = (byte)(msgLen >> 16);
-                _headerSendBuffer[3] = (byte)(msgLen >> 24);
-
-                ClientStream.Write(_headerSendBuffer, 0, 4);
-                if (msgLen > 0)
+                // Якщо пакет невеликий (до 4 КБ), об'єднуємо в один запис для економії мережевих кадрів
+                if (msgLen > 0 && msgLen <= 4096)
                 {
-                    ClientStream.Write(message, 0, msgLen);
+                    byte[] combined = new byte[msgLen + 4];
+                    combined[0] = (byte)msgLen;
+                    combined[1] = (byte)(msgLen >> 8);
+                    combined[2] = (byte)(msgLen >> 16);
+                    combined[3] = (byte)(msgLen >> 24);
+                    Buffer.BlockCopy(message, 0, combined, 4, msgLen);
+
+                    ClientStream.Write(combined, 0, combined.Length);
+                }
+                else
+                {
+                    _headerSendBuffer[0] = (byte)msgLen;
+                    _headerSendBuffer[1] = (byte)(msgLen >> 8);
+                    _headerSendBuffer[2] = (byte)(msgLen >> 16);
+                    _headerSendBuffer[3] = (byte)(msgLen >> 24);
+
+                    ClientStream.Write(_headerSendBuffer, 0, 4);
+                    if (msgLen > 0)
+                    {
+                        ClientStream.Write(message, 0, msgLen);
+                    }
                 }
             }
             finally
@@ -102,8 +127,6 @@ namespace Transfer
 
         /// <summary>
         /// Отримання повного повідомлення із сокета.
-        /// ОПТИМІЗАЦІЯ: читання заголовка виконується безпосередньо у внутрішній буфер
-        /// без виділення проміжного масиву new byte[4].
         /// </summary>
         public byte[] ReceiveBytes(byte[] prefix = null)
         {
@@ -131,9 +154,9 @@ namespace Transfer
                     lengthAllMessageByte = _headerReceiveBuffer[0] | (_headerReceiveBuffer[1] << 8) | (_headerReceiveBuffer[2] << 16) | (_headerReceiveBuffer[3] << 24);
                 }
 
-                if (lengthAllMessageByte < 0)
+                if (lengthAllMessageByte < 0 || lengthAllMessageByte > MaxPacketSizeBytes)
                 {
-                    throw new IOException($"Некоректний розмір пакета від сервера: {lengthAllMessageByte}");
+                    throw new IOException($"Некоректний або занадто великий розмір пакета: {lengthAllMessageByte} байт");
                 }
 
                 if (lengthAllMessageByte == 0)
@@ -156,7 +179,7 @@ namespace Transfer
         }
 
         /// <summary>
-        /// Зчитує рівно count байт із сокета безпосередньо у вказаний буфер без проміжних копіювань.
+        /// Зчитує рівно count байт із сокета безпосередньо у вказаний буфер.
         /// </summary>
         private void ReadExactBytes(byte[] buffer, int offset, int count)
         {
@@ -198,7 +221,7 @@ namespace Transfer
         }
 
         /// <summary>
-        /// Використовується для обробки вхідних HTTP/JSON API запитів.
+        /// Використовується для асинхронної обробки вхідних HTTP/JSON API запитів.
         /// </summary>
         public void ReceiveAllByte(Action<ConnectClient, byte[]> action, int maxSize = 1024 * 64)
         {

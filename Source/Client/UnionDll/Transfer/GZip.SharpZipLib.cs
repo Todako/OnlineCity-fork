@@ -15,7 +15,7 @@ namespace Util
 
         /// <summary>
         /// Фіксована дата для службових заголовків ZipEntry.
-        /// Усуває постійні дорогі запити DateTime.Now з конвертацією часового поясу ОС.
+        /// Усуває постійні запити DateTime.Now з конвертацією часового поясу ОС.
         /// </summary>
         private static readonly DateTime StaticPacketDateTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -37,7 +37,7 @@ namespace Util
 
         /// <summary>
         /// Стискає вхідний потік у ZIP-потік.
-        /// ОПТИМІЗАЦІЯ: буфер виділяється одразу потрібного розміру без подвоєння ємності MemoryStream.
+        /// ОПТИМІЗАЦІЯ: точний розрахунок ємності MemoryStream та блоковий запис.
         /// </summary>
         private static MemoryStream CreateToStream(Stream memStreamIn, string zipEntryName)
         {
@@ -46,41 +46,10 @@ namespace Util
                 : 4096;
 
             var outputMemStream = new MemoryStream(initialCapacity);
-            var zipStream = new ZipOutputStream(outputMemStream);
-
-            zipStream.SetLevel(3); // Рівень компресії 3 — оптимальний баланс CPU / розмір
-
-            var newEntry = new ZipEntry(zipEntryName)
+            using (var zipStream = new ZipOutputStream(outputMemStream))
             {
-                DateTime = StaticPacketDateTime
-            };
-
-            zipStream.PutNextEntry(newEntry);
-
-            StreamUtils.Copy(memStreamIn, zipStream, GetCopyBuffer());
-            zipStream.CloseEntry();
-
-            zipStream.IsStreamOwner = false;
-            zipStream.Close();
-
-            outputMemStream.Position = 0;
-            return outputMemStream;
-        }
-
-        private static MemoryStream CreateToStream(Func<Stream> getMemStreamIn, Func<string> getZipEntryName)
-        {
-            var outputMemStream = new MemoryStream(65536);
-            var zipStream = new ZipOutputStream(outputMemStream);
-
-            zipStream.SetLevel(3);
-
-            var buffer = GetCopyBuffer();
-
-            while (true)
-            {
-                var zipEntryName = getZipEntryName();
-                if (zipEntryName == null) break;
-                var memStreamIn = getMemStreamIn();
+                zipStream.IsStreamOwner = false;
+                zipStream.SetLevel(3); // Рівень 3 — оптимальний баланс CPU / розмір
 
                 var newEntry = new ZipEntry(zipEntryName)
                 {
@@ -89,12 +58,52 @@ namespace Util
 
                 zipStream.PutNextEntry(newEntry);
 
-                StreamUtils.Copy(memStreamIn, zipStream, buffer);
+                if (memStreamIn != null && memStreamIn.Length > 0)
+                {
+                    StreamUtils.Copy(memStreamIn, zipStream, GetCopyBuffer());
+                }
+
                 zipStream.CloseEntry();
+                zipStream.Close();
             }
 
-            zipStream.IsStreamOwner = false;
-            zipStream.Close();
+            outputMemStream.Position = 0;
+            return outputMemStream;
+        }
+
+        private static MemoryStream CreateToStream(Func<Stream> getMemStreamIn, Func<string> getZipEntryName)
+        {
+            var outputMemStream = new MemoryStream(65536);
+            using (var zipStream = new ZipOutputStream(outputMemStream))
+            {
+                zipStream.IsStreamOwner = false;
+                zipStream.SetLevel(3);
+
+                var buffer = GetCopyBuffer();
+
+                while (true)
+                {
+                    var zipEntryName = getZipEntryName();
+                    if (zipEntryName == null) break;
+                    var memStreamIn = getMemStreamIn();
+
+                    var newEntry = new ZipEntry(zipEntryName)
+                    {
+                        DateTime = StaticPacketDateTime
+                    };
+
+                    zipStream.PutNextEntry(newEntry);
+
+                    if (memStreamIn != null)
+                    {
+                        StreamUtils.Copy(memStreamIn, zipStream, buffer);
+                    }
+
+                    zipStream.CloseEntry();
+                }
+
+                zipStream.Close();
+            }
 
             outputMemStream.Position = 0;
             return outputMemStream;
@@ -102,17 +111,24 @@ namespace Util
 
         /// <summary>
         /// Розпаковує ZIP-потік у вихідний MemoryStream.
-        /// ОПТИМІЗАЦІЯ: ємність MemoryStream пре-алокується через GetInitialCapacity(),
-        /// а розпакування використовує постійний буфер без алокацій у купі.
+        /// ОПТИМІЗАЦІЯ: використання using гарантовано очищає внутрішні буфери розпакування.
         /// </summary>
         private static MemoryStream UnpackFromStream(Stream zipStream)
         {
             var outputMemStream = new MemoryStream(GetInitialCapacity());
 
-            var zipInputStream = new ZipInputStream(zipStream);
-            zipInputStream.GetNextEntry();
-
-            StreamUtils.Copy(zipInputStream, outputMemStream, GetCopyBuffer());
+            if (zipStream != null && zipStream.Length > 0)
+            {
+                using (var zipInputStream = new ZipInputStream(zipStream))
+                {
+                    zipInputStream.IsStreamOwner = false;
+                    var entry = zipInputStream.GetNextEntry();
+                    if (entry != null)
+                    {
+                        StreamUtils.Copy(zipInputStream, outputMemStream, GetCopyBuffer());
+                    }
+                }
+            }
 
             outputMemStream.Position = 0;
             return outputMemStream;
