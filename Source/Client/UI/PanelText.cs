@@ -25,42 +25,32 @@ namespace RimWorldOnlineCity.UI
 
         public static ConcurrentDictionary<string, string> LanguageInjections { get; set; } = new ConcurrentDictionary<string, string>();
 
-        // Швидкий кеш вимірювання слів шрифту GameFont.Small для усунення зайвих нативних викликів Unity
-        private static readonly Dictionary<string, Vector2> WordSizeCache = new Dictionary<string, Vector2>(512, StringComparer.Ordinal);
-        private static readonly object WordSizeCacheLock = new object();
+        // Швидкий безблокувальний кеш вимірювання слів для усунення нативних викликів Unity Text.CalcSize
+        private static readonly ConcurrentDictionary<string, Vector2> WordSizeCache =
+            new ConcurrentDictionary<string, Vector2>(StringComparer.Ordinal);
 
-        /// <summary>
-        /// Отримує розмір слова з кешу або розраховує його через рушій Unity.
-        /// </summary>
         private static Vector2 GetWordSizeCached(string word)
         {
             if (string.IsNullOrEmpty(word)) return Vector2.zero;
 
-            lock (WordSizeCacheLock)
+            if (WordSizeCache.TryGetValue(word, out var size))
             {
-                if (WordSizeCache.TryGetValue(word, out var size))
-                {
-                    return size;
-                }
+                return size;
             }
 
             var calculated = Text.CalcSize(word);
 
-            lock (WordSizeCacheLock)
+            if (WordSizeCache.Count > 2000)
             {
-                if (WordSizeCache.Count > 1000)
-                {
-                    WordSizeCache.Clear();
-                }
-                WordSizeCache[word] = calculated;
+                WordSizeCache.Clear();
             }
 
+            WordSizeCache[word] = calculated;
             return calculated;
         }
 
         /// <summary>
         /// Структура ключа кешу без виділення пам'яті в купі (Zero GC Allocation Key).
-        /// Забезпечує надійне порівняння з захистом від колізій хешів.
         /// </summary>
         private readonly struct PanelCacheKey : IEquatable<PanelCacheKey>
         {
@@ -120,7 +110,6 @@ namespace RimWorldOnlineCity.UI
 
         private static readonly ConcurrentDictionary<PanelCacheKey, PanelCacheValue> Optimization =
             new ConcurrentDictionary<PanelCacheKey, PanelCacheValue>();
-        private static DateTime OptimizationTime;
 
         private DateTime FirstCalcDrow = DateTime.MinValue;
 
@@ -136,17 +125,15 @@ namespace RimWorldOnlineCity.UI
 
         /// <summary>
         /// Головна функція відмальовки компонента.
-        /// ОПТИМІЗАЦІЯ: миттєве виконання попередньо скомпільованого дерева команд ActionTree.
         /// </summary>
         public float Drow(Rect inRect, float dynamicHeight = 0)
         {
             if (string.IsNullOrEmpty(PrintText) || inRect.width < 1f || inRect.height < 1f)
                 return 0f;
 
-            // Періодичне очищення кешу раз на 60 секунд або при переповненні
-            if ((DateTime.UtcNow - OptimizationTime).TotalSeconds > 60 || Optimization.Count > 150)
+            // Очищення кешу лише за умови суттєвого переповнення (запобігає щохвилинним просіданням FPS)
+            if (Optimization.Count > 300)
             {
-                OptimizationTime = DateTime.UtcNow;
                 Optimization.Clear();
             }
 
@@ -157,7 +144,7 @@ namespace RimWorldOnlineCity.UI
                 Optimization[key] = res;
             }
 
-            // Швидке послідовне виконання команд рендерингу
+            // Швидке послідовне виконання скомпільованого дерева команд
             var act = res.Tree;
             while (act != null)
             {
@@ -168,9 +155,6 @@ namespace RimWorldOnlineCity.UI
             return res.Height;
         }
 
-        /// <summary>
-        /// Швидкий пошук перекладу в defInjections гри без важкого LINQ.
-        /// </summary>
         private static string ResolveLanguageInjection(string k)
         {
             var activeLang = LanguageDatabase.activeLanguage;
@@ -186,7 +170,6 @@ namespace RimWorldOnlineCity.UI
                 }
             }
 
-            // Резервний нечутливий до регістру пошук
             for (int i = 0; i < packages.Count; i++)
             {
                 var pkg = packages[i];
@@ -203,9 +186,6 @@ namespace RimWorldOnlineCity.UI
             return k;
         }
 
-        /// <summary>
-        /// Обчислення розташування слів, картинок та формування дерева команд малювання.
-        /// </summary>
         private PanelCacheValue CalcDrow(Rect inRect, float dynamicHeight = 0)
         {
             if (FirstCalcDrow == DateTime.MinValue) FirstCalcDrow = DateTime.UtcNow;
@@ -273,7 +253,7 @@ namespace RimWorldOnlineCity.UI
                     }
                 };
 
-                // ОПТИМІЗАЦІЯ: швидкий пошук та локалізація тегів <l>
+                // Локалізація тегів <l>
                 if (text.IndexOf("<l>", StringComparison.Ordinal) >= 0)
                 {
                     var sb = new StringBuilder(text.Length + 32);
@@ -312,7 +292,6 @@ namespace RimWorldOnlineCity.UI
                         totalChars += word.Length;
                         bool lastLoop = totalChars == text.Length;
 
-                        // Обробка спеціальних тегів розмітки
                         if (word.Length > 1 && word[0] == '<')
                         {
                             if (word.StartsWith("<btn ", StringComparison.OrdinalIgnoreCase))
@@ -435,7 +414,6 @@ namespace RimWorldOnlineCity.UI
                                 float iconHeight = h > 0 ? h : iconHeightDefault;
                                 float iconWidth = w > 0 ? w : icon.width * iconHeight / icon.height;
 
-                                // Перенос на новий рядок, якщо іконка не вміщується за шириною
                                 if (curX > 0 && curX + iconWidth > width)
                                 {
                                     printBtnAct();
@@ -474,7 +452,6 @@ namespace RimWorldOnlineCity.UI
                             }
                         }
 
-                        // Розрахунок розміру слова та перенесення рядків через швидкий кеш
                         string testWord = currentWord.Length > 0 ? (currentWord + word) : word;
                         if (testWord.IndexOf('\n') >= 0)
                         {
@@ -482,14 +459,13 @@ namespace RimWorldOnlineCity.UI
                         }
                         var size = GetWordSizeCached(testWord);
 
-                        bool concat = curX + size.x <= width || (currentWord == "" && curX == 0);
+                        bool concat = curX + size.x <= width || (currentWord.Length == 0 && curX == 0);
                         if (concat)
                         {
                             currentWord += word;
                             currentWordSize = size;
                         }
 
-                        // ВИПРАВЛЕНО: захист від звернення до індексу -1 при порожньому currentWord
                         bool hasTrailingNewLine = currentWord.Length > 0 && currentWord[currentWord.Length - 1] == '\n';
                         bool newLine = curX + size.x > width || hasTrailingNewLine || lastLoop;
                         if (newLine)
@@ -594,6 +570,8 @@ namespace RimWorldOnlineCity.UI
 
             public override void Act()
             {
+                if (tagBtnAct == null) return;
+
                 bool isOver = Mouse.IsOver(tagRect);
                 if (isOver)
                 {
@@ -638,9 +616,6 @@ namespace RimWorldOnlineCity.UI
 
         #endregion
 
-        /// <summary>
-        /// Швидкий парсер атрибутів тегу без створення зайвих проміжних об'єктів у купі.
-        /// </summary>
         private static List<Pair<string, string>> ParseAttributes(string fullTag)
         {
             var result = GetAttrBuffer();
@@ -689,9 +664,6 @@ namespace RimWorldOnlineCity.UI
             return result;
         }
 
-        /// <summary>
-        /// Розбиває вхідний рядок на окремі токени та слова.
-        /// </summary>
         private IEnumerable<string> ParceText(string text)
         {
             int index = 0;

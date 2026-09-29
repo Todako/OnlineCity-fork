@@ -101,40 +101,75 @@ namespace RimWorldOnlineCity
                 {
                     if (_Texture != null) return _Texture;
                     if (Data == null || Data.Length == 0) return _Texture = Null;
-                    return _Texture = GameUtils.GetTextureFromSaveData(Data);
+                    try
+                    {
+                        return _Texture = GameUtils.GetTextureFromSaveData(Data);
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("GeneralTexture GetTextureFromSaveData error: " + ex.Message, Loger.LogLevel.DEBUG);
+                        return _Texture = Null;
+                    }
                 }
             }
 
             public TextureContainer() { }
+
             public TextureContainer(Texture2D texture)
             {
                 _Texture = texture;
+            }
+
+            /// <summary>
+            /// Безпечне знищення текстури в пам'яті GPU через головний потік Unity для запобігання витокам VRAM.
+            /// </summary>
+            public void DestroyTexture()
+            {
+                var tex = _Texture;
+                _Texture = null;
+                if (tex != null && tex != Null)
+                {
+                    ModBaseData.RunMainThread(() =>
+                    {
+                        try
+                        {
+                            if (tex != null && tex != Null)
+                            {
+                                UnityEngine.Object.Destroy(tex);
+                            }
+                        }
+                        catch { }
+                    });
+                }
             }
         }
 
         public static GeneralTexture Get { get; private set; }
 
-        private readonly ConcurrentDictionary<string, TextureContainer> LoadedTextures = new ConcurrentDictionary<string, TextureContainer>();
-        private readonly Dictionary<string, DateTime> LoadedAgings = new Dictionary<string, DateTime>();
-        private readonly ConcurrentDictionary<string, TextureContainer> LoadedOldTextures = new ConcurrentDictionary<string, TextureContainer>();
+        private readonly ConcurrentDictionary<string, TextureContainer> LoadedTextures = new ConcurrentDictionary<string, TextureContainer>(StringComparer.Ordinal);
+        private readonly Dictionary<string, DateTime> LoadedAgings = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, TextureContainer> LoadedOldTextures = new ConcurrentDictionary<string, TextureContainer>(StringComparer.Ordinal);
 
-        // ОПТИМІЗАЦІЯ: O(1) структури для черг завантаження замість масивів List<string>
         private readonly object _syncLock = new object();
-        private readonly HashSet<string> _queuedItems = new HashSet<string>();
-        private readonly HashSet<string> _loadingNow = new HashSet<string>();
+        private readonly HashSet<string> _queuedItems = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> _loadingNow = new HashSet<string>(StringComparer.Ordinal);
         private readonly Queue<string> _checkQueue = new Queue<string>();
         private readonly Queue<string> _downloadQueue = new Queue<string>();
 
-        // Багаторазові буфери списків для ліквідації навантаження на Garbage Collector
         private readonly List<string> _checkNamesBuffer = new List<string>(100);
         private readonly List<ModelFileSharing> _checkMfsBuffer = new List<ModelFileSharing>(100);
         private readonly List<string> _expiredAgingsBuffer = new List<string>(32);
 
-        private readonly ConcurrentDictionary<string, Def> GetDefs = new ConcurrentDictionary<string, Def>();
+        private readonly ConcurrentDictionary<string, Def> GetDefs = new ConcurrentDictionary<string, Def>(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<Def, Texture2D> GetDefTextures = new ConcurrentDictionary<Def, Texture2D>();
+        private readonly ConcurrentDictionary<string, Texture2D> _emojiCache = new ConcurrentDictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
 
         public static void Clear()
         {
+            if (Get != null)
+            {
+                Get.DisposeTextures();
+            }
             Get = new GeneralTexture();
         }
 
@@ -146,14 +181,49 @@ namespace RimWorldOnlineCity
             Inited = true;
         }
 
+        /// <summary>
+        /// Звільняє всі завантажені текстури з пам'яті графічного адаптера при скиданні сесії.
+        /// </summary>
+        public void DisposeTextures()
+        {
+            foreach (var container in LoadedTextures.Values)
+            {
+                container?.DestroyTexture();
+            }
+            LoadedTextures.Clear();
+
+            foreach (var container in LoadedOldTextures.Values)
+            {
+                container?.DestroyTexture();
+            }
+            LoadedOldTextures.Clear();
+
+            lock (_syncLock)
+            {
+                LoadedAgings.Clear();
+                _queuedItems.Clear();
+                _loadingNow.Clear();
+                _checkQueue.Clear();
+                _downloadQueue.Clear();
+            }
+
+            _emojiCache.Clear();
+        }
+
         public Texture2D GetEmoji(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
 
+            if (_emojiCache.TryGetValue(name, out var cached))
+            {
+                return cached;
+            }
+
             var cleanName = name.Trim().Trim(':');
             var path = "Emoji/Emoji_" + cleanName;
 
-            if (!PanelText.GlobalImgs.TryGetValue(path, out var icon))
+            Texture2D icon = null;
+            if (!PanelText.GlobalImgs.TryGetValue(path, out icon))
             {
                 try
                 {
@@ -165,6 +235,12 @@ namespace RimWorldOnlineCity
                 }
                 if (icon != null) PanelText.GlobalImgs[path] = icon;
             }
+
+            if (icon != null)
+            {
+                _emojiCache[name] = icon;
+            }
+
             return icon;
         }
 
@@ -195,26 +271,30 @@ namespace RimWorldOnlineCity
         public Texture2D GetDefTexture(string defName) => GetDefTexture(GetDef(defName));
 
         /// <summary>
-        /// Повертає текстуру за її кодовим ім'ям (іконка гравця або скріншот бази).
-        /// ОПТИМІЗАЦІЯ: швидка перевірка та додавання до черги за O(1) без алокацій пам'яті.
+        /// Повертає текстуру за її кодовим ім'ям.
+        /// ОПТИМІЗАЦІЯ: швидкий шлях через TryGetValue виключає алокації делегатів у кожному кадрі OnGUI.
         /// </summary>
         public Texture2D ByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return Null;
 
-            return LoadedTextures.GetOrAdd(name, n =>
+            if (LoadedTextures.TryGetValue(name, out var container))
             {
-                lock (_syncLock)
-                {
-                    if (!_queuedItems.Contains(n) && !_loadingNow.Contains(n))
-                    {
-                        _queuedItems.Add(n);
-                        _checkQueue.Enqueue(n);
-                    }
-                }
+                return container.Texture;
+            }
 
-                return LoadedOldTextures.TryGetValue(n, out var res) ? res : new TextureContainer(Null);
-            }).Texture;
+            lock (_syncLock)
+            {
+                if (!_queuedItems.Contains(name) && !_loadingNow.Contains(name))
+                {
+                    _queuedItems.Add(name);
+                    _checkQueue.Enqueue(name);
+                }
+            }
+
+            var placeholder = LoadedOldTextures.TryGetValue(name, out var res) ? res : new TextureContainer(Null);
+            LoadedTextures[name] = placeholder;
+            return placeholder.Texture;
         }
 
         public TimeSpan GetLoadTimeByName(string name)
@@ -236,9 +316,6 @@ namespace RimWorldOnlineCity
 
         public bool IsNotCheckByLoadTime(TimeSpan time) => time == TimeSpan.MaxValue;
 
-        /// <summary>
-        /// Перевіряє, чи завантажується текстура зараз. ОПТИМІЗАЦІЯ: пошук у хеш-таблиці за O(1).
-        /// </summary>
         public bool IsLoadingByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
@@ -251,14 +328,13 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Періодичне фонове оновлення черг текстур.
-        /// ОПТИМІЗАЦІЯ: мережеві операції виконуються поза блокуванням lock, усуваючи затримки кадру в GUI.
         /// </summary>
         public void Update(SessionClient connect)
         {
             const int CountUpdateInRun = 1;
             const int CountCheckInRun = 100;
 
-            // 1. Очищення застарілих скріншотів без створення нових списків ключів
+            // 1. Очищення застарілих скріншотів з вивільненням пам'яті
             var now = DateTime.UtcNow;
             _expiredAgingsBuffer.Clear();
 
@@ -278,18 +354,21 @@ namespace RimWorldOnlineCity
                     LoadedAgings.Remove(aging);
                     if (LoadedTextures.TryRemove(aging, out var old))
                     {
+                        if (LoadedOldTextures.TryRemove(aging, out var older))
+                        {
+                            older.DestroyTexture();
+                        }
                         LoadedOldTextures.TryAdd(aging, old);
                     }
                 }
             }
 
-            // 2. Підготовка пакета пакетної перевірки хешів
+            // 2. Підготовка пакета перевірки хешів
             _checkNamesBuffer.Clear();
             _checkMfsBuffer.Clear();
 
             lock (_syncLock)
             {
-                // Якщо елементів мало (1-3) і черга завантаження порожня — одразу переводимо на скачування без попереднього запиту
                 if (_checkQueue.Count > 0 && _checkQueue.Count <= 3 && _downloadQueue.Count == 0)
                 {
                     while (_checkQueue.Count > 0)
@@ -319,7 +398,7 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            // 3. Виконання мережевого запиту перевірки хешів БЕЗ утримання блокування
+            // 3. Перевірка хешів на сервері
             if (_checkMfsBuffer.Count > 0)
             {
                 List<ModelFileSharing> checkResult = null;
@@ -340,7 +419,6 @@ namespace RimWorldOnlineCity
                         var itemMfs = _checkMfsBuffer[i];
                         var res = (i < checkResult.Count) ? checkResult[i] : null;
 
-                        // Якщо файлу на сервері немає або хеш ідентичний локальному кешу
                         if (res?.Hash == null || itemMfs.Hash == res.Hash)
                         {
                             if (!LoadedOldTextures.TryGetValue(name, out var texture))
@@ -368,7 +446,6 @@ namespace RimWorldOnlineCity
                         }
                         else
                         {
-                            // Хеш відрізняється — переводимо в чергу безпосереднього завантаження
                             lock (_syncLock)
                             {
                                 _downloadQueue.Enqueue(name);
@@ -378,7 +455,6 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    // У разі збою мережі повертаємо елементи назад у чергу перевірки
                     lock (_syncLock)
                     {
                         for (int i = 0; i < _checkNamesBuffer.Count; i++)
@@ -389,12 +465,11 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            // 4. Безпосереднє завантаження файлу (по CountUpdateInRun за тік)
+            // 4. Завантаження нових файлів
             for (int i = 0; i < CountUpdateInRun; i++)
             {
                 string downloadName = null;
                 TextureContainer oldTexture = null;
-                ModelFileSharing mfs = null;
 
                 lock (_syncLock)
                 {
@@ -419,10 +494,9 @@ namespace RimWorldOnlineCity
                         oldTexture = new TextureContainer(Null);
                     }
 
-                    mfs = GetModelFileSharing(downloadName, oldTexture.Hash);
+                    var mfs = GetModelFileSharing(downloadName, oldTexture.Hash);
                     if (mfs == null) continue;
 
-                    // Скачування даних через мережу БЕЗ утримання блокування
                     ModelFileSharing packet = null;
                     try
                     {
@@ -436,6 +510,9 @@ namespace RimWorldOnlineCity
                     TextureContainer texture;
                     if (packet?.Data != null && packet.Data.Length > 0)
                     {
+                        // Звільняємо стару текстуру з GPU перед встановленням нової
+                        oldTexture.DestroyTexture();
+
                         texture = new TextureContainer
                         {
                             Hash = packet.Hash,
@@ -473,6 +550,11 @@ namespace RimWorldOnlineCity
                 {
                     LoadedAgings[name] = DateTime.UtcNow.AddSeconds(UpdateSecondColonyScreen);
                 }
+            }
+
+            if (LoadedTextures.TryGetValue(name, out var previous) && previous != texture && previous != null)
+            {
+                previous.DestroyTexture();
             }
 
             LoadedTextures[name] = texture;

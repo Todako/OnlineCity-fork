@@ -1,6 +1,7 @@
 ﻿using Model;
 using OCUnion;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -35,6 +36,10 @@ namespace RimWorldOnlineCity.UI
         private static string CachedChannelOwnTip;
         private static string CachedChannelUserTip;
         private static string CachedGamersTitle;
+
+        // Кеш тегів авторів для усунення щокадрового парсингу <@User> при надходженні повідомлень
+        private static readonly ConcurrentDictionary<string, string> CachedOwnerShortTags =
+            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public class ListBoxPlayerItem
         {
@@ -90,19 +95,17 @@ namespace RimWorldOnlineCity.UI
 
             lock (chats)
             {
-                // Очищення каналів, де гравець більше не є учасником або творцем (окрім загального чату Id == 0)
-                var myLogin = SessionClientController.My?.Login;
-                if (!string.IsNullOrEmpty(myLogin))
-                {
-                    int removedCount = chats.RemoveAll(c => c.Id != 0 &&
-                                         !string.Equals(c.OwnerLogin, myLogin, StringComparison.OrdinalIgnoreCase) &&
-                                         (c.PartyLogin == null || !c.PartyLogin.Exists(p => string.Equals(p, myLogin, StringComparison.OrdinalIgnoreCase))));
+                bool nowUpdateChat = DataLastChatsTime != SessionClientController.Data.ChatsTime.Time;
 
-                    // Якщо канал було відфільтровано — викликаємо негайне перемальовування списку в поточному кадрі
-                    if (removedCount > 0)
+                // ОПТИМІЗАЦІЯ: фільтрація чужих каналів виконується ЛИШЕ при оновленні чату, а не кожні 8 мілісекунд у кадрі
+                if (nowUpdateChat || NeedUpdateChat)
+                {
+                    var myLogin = SessionClientController.My?.Login;
+                    if (!string.IsNullOrEmpty(myLogin))
                     {
-                        DataLastChatsTime = DateTime.MinValue;
-                        DataLastChatsTimeUpdateTime = DateTime.MinValue;
+                        chats.RemoveAll(c => c.Id != 0 &&
+                            !string.Equals(c.OwnerLogin, myLogin, StringComparison.OrdinalIgnoreCase) &&
+                            (c.PartyLogin == null || !c.PartyLogin.Exists(p => string.Equals(p, myLogin, StringComparison.OrdinalIgnoreCase))));
                     }
                 }
 
@@ -139,7 +142,6 @@ namespace RimWorldOnlineCity.UI
                     lbCannals.SelectedIndex = 0;
                 }
 
-                // Гарантована ініціалізація Area при створенні списку гравців
                 if (lbPlayers == null)
                 {
                     lbPlayers = new ListBox<ListBoxPlayerItem>
@@ -161,7 +163,6 @@ namespace RimWorldOnlineCity.UI
                     NeedUpdateChat = false;
                 }
 
-                bool nowUpdateChat = DataLastChatsTime != SessionClientController.Data.ChatsTime.Time;
                 if (nowUpdateChat)
                 {
                     DataLastChatsTime = SessionClientController.Data.ChatsTime.Time;
@@ -400,14 +401,17 @@ namespace RimWorldOnlineCity.UI
                     var ev = Event.current;
                     if ((ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return) || rrcklick)
                     {
-                        var textToSend = ChatInputText;
-                        ChatInputText = string.Empty;
-                        ev.Use();
-
-                        SessionClientController.Command((connect) =>
+                        var textToSend = ChatInputText.Trim();
+                        if (!string.IsNullOrEmpty(textToSend))
                         {
-                            connect.PostingChat(selectCannalId, textToSend);
-                        });
+                            ChatInputText = string.Empty;
+                            ev.Use();
+
+                            SessionClientController.Command((connect) =>
+                            {
+                                connect.PostingChat(selectCannalId, textToSend);
+                            });
+                        }
                     }
                 }
 
@@ -456,7 +460,11 @@ namespace RimWorldOnlineCity.UI
                 if (sb.Length > 0) sb.AppendLine();
                 sb.Append('[');
                 sb.Append(cp.Time.ToGoodUtcString("HH:mm "));
-                sb.Append(ChatController.PrepareShortTag("<@" + cp.OwnerLogin + ">"));
+
+                // ОПТИМІЗАЦІЯ: кешування тегу автора для усунення важкого парсингу під час додавання нових реплік
+                string ownerTag = CachedOwnerShortTags.GetOrAdd(cp.OwnerLogin ?? "", l => ChatController.PrepareShortTag("<@" + l + ">"));
+                sb.Append(ownerTag);
+
                 sb.Append("]: ");
                 sb.Append(cp.Message);
             }
@@ -505,9 +513,10 @@ namespace RimWorldOnlineCity.UI
 
         private void CannalsMenuShow()
         {
-            var listMenu = new List<FloatMenuOption>(3);
-
-            listMenu.Add(new FloatMenuOption("OCity_Dialog_ChennelCreate2".Translate(), CannalAdd));
+            var listMenu = new List<FloatMenuOption>(3)
+            {
+                new FloatMenuOption("OCity_Dialog_ChennelCreate2".Translate(), CannalAdd)
+            };
 
             if (lbCannals != null && lbCannals.SelectedIndex > 0)
                 listMenu.Add(new FloatMenuOption("OCity_Dialog_ChennelLeave".Translate(), CannalDelete));
@@ -553,13 +562,11 @@ namespace RimWorldOnlineCity.UI
             {
                 if (form.ResultOK)
                 {
-                    // 1. Надсилаємо запит серверу
                     SessionClientController.Command((connect) =>
                     {
                         connect.PostingChat(currentSelect.Id, "/exitChat");
                     });
 
-                    // 2. Негайно видаляємо канал із локального списку клієнта
                     lock (currentChats)
                     {
                         if (deletedIndex < currentChats.Count && currentChats[deletedIndex].Id == currentSelect.Id)
@@ -572,7 +579,6 @@ namespace RimWorldOnlineCity.UI
                         }
                     }
 
-                    // 3. Скидаємо вибір на головний канал (Index 0) та очищаємо стрічку
                     if (lbCannals != null) lbCannals.SelectedIndex = 0;
                     lbCannalsLastSelectedIndex = -1;
                     ChatBox.Text = string.Empty;
@@ -636,7 +642,6 @@ namespace RimWorldOnlineCity.UI
                         if (index >= 0)
                         {
                             lbCannals.SelectedIndex = index;
-                            // Скидаємо позначку часу для миттєвого оновлення списку учасників чату під вибраний приватний діалог
                             DataLastChatsTime = DateTime.MinValue;
                             return;
                         }
