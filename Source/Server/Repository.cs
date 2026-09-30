@@ -104,7 +104,7 @@ namespace ServerOnlineCity
             string isIntruder = "";
             var keys = key.Split(new[] { "@@@" }, StringSplitOptions.None);
             var keysCleaned = new List<string>(keys.Length);
-            var intruderKeysSb = new StringBuilder();
+            var intruderKeysSb = new StringBuilder(key.Length);
 
             for (int i = 1; i < keys.Length; i++)
             {
@@ -202,12 +202,21 @@ namespace ServerOnlineCity
 
                                 Blockkey = keySet;
 
-                                foreach (var pl in addPl)
+                                for (int i = 0; i < addPl.Count; i++)
                                 {
+                                    var pl = addPl[i];
                                     if (string.IsNullOrEmpty(pl.IntruderKeys)) continue;
-                                    var add = pl.IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.None)
-                                        .Where(k => k.Length > 3 && !Blockkey.Contains(k))
-                                        .ToList();
+
+                                    var rawKeys = pl.IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.None);
+                                    var add = new List<string>(rawKeys.Length);
+                                    for (int kIdx = 0; kIdx < rawKeys.Length; kIdx++)
+                                    {
+                                        var itemKey = rawKeys[kIdx];
+                                        if (itemKey.Length > 3 && !Blockkey.Contains(itemKey))
+                                        {
+                                            add.Add(itemKey);
+                                        }
+                                    }
                                     if (add.Count > 0) AddIntruder(add, $" auto add by login {pl.Public.Login}");
                                 }
                             }
@@ -234,9 +243,9 @@ namespace ServerOnlineCity
                 if (Blockkey == null) CheckIsIntruder("");
 
                 var sb = new StringBuilder();
-                foreach (var key in keys)
+                for (int i = 0; i < keys.Count; i++)
                 {
-                    var k = key.Replace("@@@", "").Trim();
+                    var k = keys[i].Replace("@@@", "").Trim();
                     if (k.Length > 0 && (Blockkey == null || !Blockkey.Contains(k)))
                     {
                         sb.AppendLine(k + " //" + comment.Replace("\r", "").Replace("\n", " "));
@@ -248,7 +257,6 @@ namespace ServerOnlineCity
                     var fileName = Loger.PathLog + "blockkey.txt";
                     File.AppendAllText(fileName, sb.ToString(), Encoding.UTF8);
 
-                    // Негайно скидаємо таймер для оновлення кешу
                     BlockkeyUpdate = DateTime.MinValue;
                     CheckIsIntruder("");
                 }
@@ -302,8 +310,9 @@ namespace ServerOnlineCity
                                 if (hasSubnet)
                                 {
                                     var expanded = new List<string>(lines.Length);
-                                    foreach (var b in lines)
+                                    for (int idx = 0; idx < lines.Length; idx++)
                                     {
+                                        var b = lines[idx];
                                         var bb = b.Trim();
                                         var comment = "";
                                         var ic = bb.IndexOf(" ");
@@ -336,7 +345,7 @@ namespace ServerOnlineCity
                                             expanded.Add(s + i.ToString() + comment);
                                     }
                                     lines = expanded.ToArray();
-                                    File.WriteAllLines(fileName, lines, Encoding.Default);
+                                    File.WriteAllLines(fileName, lines, Encoding.UTF8);
                                     BlockipLastWriteTime = File.GetLastWriteTimeUtc(fileName);
                                 }
 
@@ -348,6 +357,8 @@ namespace ServerOnlineCity
 
                                     int spaceIdx = line.IndexOf(' ');
                                     if (spaceIdx > 0) line = line.Substring(0, spaceIdx);
+                                    if (line.Length == 0) continue;
+
                                     ipSet.Add(line);
                                 }
                                 Blockip = ipSet;
@@ -372,7 +383,7 @@ namespace ServerOnlineCity
         public static void DropUserFromMap(string login)
         {
             var data = Repository.GetData;
-            if (data == null) return;
+            if (data == null || string.IsNullOrEmpty(login)) return;
 
             lock (data)
             {
@@ -441,7 +452,14 @@ namespace ServerOnlineCity
                 if (!Directory.Exists(SaveFolderDataPlayers))
                     Directory.CreateDirectory(SaveFolderDataPlayers);
 
-                if (!File.Exists(SaveFileName))
+                string fileToLoad = SaveFileName;
+                if (!File.Exists(fileToLoad) && File.Exists(SaveFileName + ".bak"))
+                {
+                    Loger.Log("Server Main Save not found, fallback to .bak: " + SaveFileName + ".bak", Loger.LogLevel.WARNING);
+                    fileToLoad = SaveFileName + ".bak";
+                }
+
+                if (!File.Exists(fileToLoad))
                 {
                     Data = new BaseContainer();
                     Save();
@@ -450,10 +468,10 @@ namespace ServerOnlineCity
                 }
                 else
                 {
-                    using (var fs = new FileStream(SaveFileName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
+                    using (var fs = new FileStream(fileToLoad, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
                     {
                         var bf = new BinaryFormatter { Binder = new ServerCoreSerializationBinder() };
-                        Loger.Log("Server Load... " + (new FileInfo(SaveFileName).FullName));
+                        Loger.Log("Server Load... " + (new FileInfo(fileToLoad).FullName));
                         Data = (BaseContainer)bf.Deserialize(fs);
 
                         Loger.Log("Server Version data: " + Data.Version + " Current version: " + MainHelper.VersionInfo);
@@ -482,7 +500,7 @@ namespace ServerOnlineCity
         }
 
         /// <summary>
-        /// Збереження глобального стану сервера з підтримкою резервної копії .bak.
+        /// Атомарне збереження глобального стану сервера через тимчасовий файл з резервною копією .bak.
         /// </summary>
         public void Save(bool onlyChangeData = false)
         {
@@ -491,28 +509,36 @@ namespace ServerOnlineCity
                 if (onlyChangeData && !ChangeData) return;
                 Loger.Log("Server Saving");
 
+                var tempFileName = SaveFileName + ".tmp";
+                var backupFileName = SaveFileName + ".bak";
+
                 try
                 {
-                    if (File.Exists(SaveFileName))
-                    {
-                        if (File.Exists(SaveFileName + ".bak")) File.Delete(SaveFileName + ".bak");
-                        File.Move(SaveFileName, SaveFileName + ".bak");
-                    }
-
                     Data.MaxIdChat = ChatManager.Instance.MaxChatId;
 
-                    using (var fs = new FileStream(SaveFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                    using (var fs = new FileStream(tempFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
                     {
                         var bf = new BinaryFormatter();
                         bf.Serialize(fs, Data);
+                        fs.Flush();
                     }
+
+                    if (File.Exists(SaveFileName))
+                    {
+                        if (File.Exists(backupFileName)) File.Delete(backupFileName);
+                        File.Move(SaveFileName, backupFileName);
+                    }
+                    File.Move(tempFileName, SaveFileName);
 
                     ChangeData = false;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    if (File.Exists(SaveFileName + ".bak"))
-                        File.Copy(SaveFileName + ".bak", SaveFileName, true);
+                    Loger.Log("Server Save Error: " + ex.Message, Loger.LogLevel.ERROR);
+                    if (File.Exists(tempFileName))
+                    {
+                        try { File.Delete(tempFileName); } catch { }
+                    }
                     throw;
                 }
 
@@ -520,9 +546,6 @@ namespace ServerOnlineCity
             }
         }
 
-        /// <summary>
-        /// Очищає логін від неприпустимих символів для файлової системи.
-        /// </summary>
         public static string NormalizeLogin(string login)
         {
             if (string.IsNullOrEmpty(login)) return string.Empty;

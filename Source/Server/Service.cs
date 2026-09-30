@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Transfer;
-//using System.Text.Json;
 
 namespace ServerOnlineCity
 {
@@ -31,7 +30,6 @@ namespace ServerOnlineCity
 
         private static void DependencyInjection()
         {
-            //may better way use a native .Net Core DI
             var d = new Dictionary<int, IGenerateResponseContainer>();
             foreach (var type in Assembly.GetAssembly(typeof(Service)).GetTypes())
             {
@@ -50,44 +48,73 @@ namespace ServerOnlineCity
             ServiceDictionary = d;
         }
 
+        /// <summary>
+        /// Перевіряє наявність нових повідомлень у чаті для користувача.
+        /// </summary>
         public bool CheckChat(DateTime time)
         {
-            if (Context.Player == null)
+            var player = Context?.Player;
+            if (player?.Chats == null)
             {
                 return false;
             }
 
-            // Для ускорения работы, в момент отправки сообщения пользователю, сохраняем последний отправленный индекс
-            // или Если пользователя кикнули с канала, тогда по дате изменения канала
-            return Context.Player.Chats.Any(ct => ct.Value.Value + 1 < ct.Key.Posts.Count || ct.Key.LastChanged > ct.Value.Time);
+            foreach (var ct in player.Chats)
+            {
+                var chat = ct.Key;
+                var pos = ct.Value;
+                if (chat == null || pos == null) continue;
+
+                if (pos.Value + 1 < chat.Posts.Count || chat.LastChanged > pos.Time)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal ModelContainer GetPackage(ModelContainer inputPackage)
         {
             if (ServiceDictionary.TryGetValue(inputPackage.TypePacket, out IGenerateResponseContainer generateResponseContainer))
             {
-                var name = generateResponseContainer.GetType().Name;
-                Loger.Log("Server " + (Context.Player == null ? "     " : Context.Player.Public.Login.PadRight(5))
-                    + " " + name);
+                if (Loger.Enable)
+                {
+                    var login = Context.Player?.Public?.Login;
+                    var formattedLogin = string.IsNullOrEmpty(login) ? "     " : (login.Length >= 5 ? login : login.PadRight(5));
+                    Loger.Log("Server " + formattedLogin + " " + generateResponseContainer.GetType().Name);
+                }
                 return generateResponseContainer.GenerateModelContainer(inputPackage, Context);
             }
 
-            Loger.Log("Server " + (Context.Player == null ? "     " : Context.Player.Public.Login.PadRight(5)) + $" Response for type {inputPackage.TypePacket} not found");
+            if (Loger.Enable)
+            {
+                var login = Context.Player?.Public?.Login;
+                var formattedLogin = string.IsNullOrEmpty(login) ? "     " : (login.Length >= 5 ? login : login.PadRight(5));
+                Loger.Log("Server " + formattedLogin + $" Response for type {inputPackage.TypePacket} not found");
+            }
 
-            return new ModelContainer() { TypePacket = 0 };
+            return new ModelContainer { TypePacket = 0 };
         }
 
         public static object GetPackageJson(string inputPackage, Dictionary<string, byte[]> data)
         {
             var package = JsonConvert.DeserializeObject<APIRequest>(inputPackage);
-            if (data != null && data.Count > 0) package.Data = data.Values.First();
-            var ret = API.GetPackage(package);
-            if (ret is APIResponseRawData) return (ret as APIResponseRawData).Data;
-            return JsonConvert.SerializeObject(ret);
+            if (data != null && data.Count > 0)
+            {
+                foreach (var val in data.Values)
+                {
+                    package.Data = val;
+                    break;
+                }
+            }
 
-            //var package = JsonSerializer.Deserialize<APIRequest>(inputPackage);
-            //var ret = API.GetPackage(package);
-            //return JsonSerializer.Serialize(ret);
+            var ret = API.GetPackage(package);
+            if (ret is APIResponseRawData rawData)
+            {
+                return rawData.Data;
+            }
+            return JsonConvert.SerializeObject(ret);
         }
     }
 }
