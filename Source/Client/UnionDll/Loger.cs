@@ -11,7 +11,7 @@ namespace OCUnion
 {
     /// <summary>
     /// Високопродуктивний асинхронний логер.
-    /// Переносить усі операції дискового I/O у фоновий потік, усуваючи затримки тіків RimWorld.
+    /// Переносить усі операції дискового I/O у фоновий потік із пакетним скиданням на накопичувач.
     /// </summary>
     public static class Loger
     {
@@ -48,9 +48,9 @@ namespace OCUnion
         public static bool IsServer;
         public static bool Enable = false;
 
-        // Черга та сигналізатор фонового запису на диск
         private static readonly ConcurrentQueue<LogQueueEntry> LogQueue = new ConcurrentQueue<LogQueueEntry>();
         private static readonly AutoResetEvent QueueTrigger = new AutoResetEvent(false);
+        private static readonly object DiskWriteLock = new object();
         private static Thread DiskWriterThread;
         private static volatile bool WriterActive = true;
 
@@ -68,7 +68,16 @@ namespace OCUnion
         public static string PathLog
         {
             get => _PathLog;
-            set => _PathLog = Path.GetDirectoryName(value + Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            set
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    _PathLog = string.Empty;
+                    return;
+                }
+                var dir = Path.GetDirectoryName(value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
+                _PathLog = string.IsNullOrEmpty(dir) ? string.Empty : dir + Path.DirectorySeparatorChar;
+            }
         }
 
         public static string Bytes(byte[] bs)
@@ -83,7 +92,6 @@ namespace OCUnion
         private static int lastMsg;
         private static int spam;
 
-        // Кеш поточної дати для назви файлу (перераховується раз на хвилину)
         private static string CachedDateString;
         private static DateTime LastDateCacheUpdate = DateTime.MinValue;
 
@@ -98,55 +106,63 @@ namespace OCUnion
             return CachedDateString;
         }
 
-        /// <summary>
-        /// Форматує запис та ставить його в чергу для фонового запису без затримки основного потоку.
-        /// </summary>
         private static void LogWrite(string msg, bool withCatch, int threadId = 0, string suffix = null, DateTime time = default)
         {
-            // Фільтрація дублікатів і спаму
             var h = msg.GetHashCode();
             var utcNow = DateTime.UtcNow;
 
-            if (h == lastMsg && (utcNow - lastTime).TotalMilliseconds < 2000)
-            {
-                spam++;
-                return;
-            }
-
-            var lastLastTime = lastTime;
-            lastTime = utcNow;
-            lastMsg = h;
-
-            if (spam > 0)
-            {
-                var lastSpamCount = spam;
-                spam = 0;
-                LogWrite("Was removed as spam " + lastSpamCount, withCatch, time: lastLastTime);
-                lastMsg = h;
-            }
-
-            var thn = threadId != 0 ? threadId : Thread.CurrentThread.ManagedThreadId;
+            int thn = threadId != 0 ? threadId : Thread.CurrentThread.ManagedThreadId;
             var dn = time == default ? utcNow : time;
-
             long dd = 0;
-            lock (LastMsg)
+
+            lock (ObjLock)
             {
+                if (h == lastMsg && (utcNow - lastTime).TotalMilliseconds < 2000)
+                {
+                    spam++;
+                    return;
+                }
+
+                var lastLastTime = lastTime;
+                lastTime = utcNow;
+                lastMsg = h;
+
+                if (spam > 0)
+                {
+                    var lastSpamCount = spam;
+                    spam = 0;
+                    EnqueueLogEntry("Was removed as spam " + lastSpamCount, withCatch, thn, suffix, lastLastTime, 0);
+                    lastMsg = h;
+                }
+
                 if (LastMsg.TryGetValue(thn, out var lastThreadMsgTime))
                 {
                     dd = (long)(dn - lastThreadMsgTime).TotalMilliseconds;
                     if (dd >= 1000000) dd = 0;
                 }
                 LastMsg[thn] = dn;
+
+                if (LastMsg.Count > 256)
+                {
+                    LastMsg.Clear();
+                }
             }
 
-            // ОПТИМІЗАЦІЯ: інтерполяція з вирівнюванням без зайвих викликів PadLeft і проміжних рядків
-            var logMsg = $"{dn:HH:mm:ss.ffff} |{dd,6} |{thn,4} | {msg}";
+            EnqueueLogEntry(msg, withCatch, thn, suffix, dn, dd);
+        }
 
+        private static void EnqueueLogEntry(string msg, bool withCatch, int thn, string suffix, DateTime dn, long dd)
+        {
+            if (LogQueue.Count > 10000)
+            {
+                while (LogQueue.Count > 5000 && LogQueue.TryDequeue(out _)) { }
+            }
+
+            var logMsg = $"{dn:HH:mm:ss.ffff} |{dd,6} |{thn,4} | {msg}";
             var fileName = $"Log_{GetCurrentDateString()}_{MainHelper.LockCode}{(suffix == null ? "" : "_" + suffix)}.txt";
             var fullPath = (PathLog ?? "") + fileName;
             bool printConsole = !MainHelper.InGame && withCatch && suffix == null;
 
-            // Додаємо запис у неблокуючу чергу на запис
             LogQueue.Enqueue(new LogQueueEntry
             {
                 FullPath = fullPath,
@@ -157,18 +173,28 @@ namespace OCUnion
             QueueTrigger.Set();
         }
 
-        /// <summary>
-        /// Фоновий цикл запису порцій логів на накопичувач.
-        /// </summary>
         private static void BackgroundDiskWriterLoop()
         {
             while (WriterActive)
             {
                 QueueTrigger.WaitOne(500);
+                DrainQueueToDisk();
+            }
+        }
 
-                if (LogQueue.IsEmpty) continue;
+        /// <summary>
+        /// Пакетне скидання черги на диск за один I/O прохід для кожного файлу логу.
+        /// </summary>
+        private static void DrainQueueToDisk()
+        {
+            if (LogQueue.IsEmpty) return;
 
-                // Пакетний запис накопичених повідомлень
+            lock (DiskWriteLock)
+            {
+                if (LogQueue.IsEmpty) return;
+
+                var batch = new Dictionary<string, StringBuilder>(StringComparer.Ordinal);
+
                 while (LogQueue.TryDequeue(out var entry))
                 {
                     if (entry.PrintToConsole)
@@ -178,16 +204,39 @@ namespace OCUnion
 
                     if (string.IsNullOrEmpty(entry.FullPath)) continue;
 
+                    if (!batch.TryGetValue(entry.FullPath, out var sb))
+                    {
+                        sb = new StringBuilder(entry.FormattedMessage.Length + 64);
+                        batch[entry.FullPath] = sb;
+                    }
+                    sb.AppendLine(entry.FormattedMessage);
+                }
+
+                foreach (var kvp in batch)
+                {
                     try
                     {
-                        File.AppendAllText(entry.FullPath, entry.FormattedMessage + Environment.NewLine, Encoding.UTF8);
+                        var dir = Path.GetDirectoryName(kvp.Key);
+                        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                        {
+                            Directory.CreateDirectory(dir);
+                        }
+                        File.AppendAllText(kvp.Key, kvp.Value.ToString(), Encoding.UTF8);
                     }
                     catch (Exception exp)
                     {
-                        LogErr = "Log exception: " + exp.Message + Environment.NewLine + entry.FormattedMessage;
+                        LogErr = "Log exception: " + exp.Message;
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Примусове скидання всіх накопичених повідомлень на диск перед закриттям програми.
+        /// </summary>
+        public static void Flush()
+        {
+            DrainQueueToDisk();
         }
 
         public static void Log(string msg, LogLevel logType = LogLevel.INFO, string suffix = null)
@@ -205,9 +254,6 @@ namespace OCUnion
             LogWrite(msg, true, default, suffix);
         }
 
-        /// <summary>
-        /// Миттєве отримання коду рівня логування без рефлексії.
-        /// </summary>
         private static string GetEnumDescriptionFast(LogLevel logType)
         {
             switch (logType)
