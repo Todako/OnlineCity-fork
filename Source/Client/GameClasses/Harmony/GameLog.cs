@@ -11,18 +11,19 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     /// </summary>
     public class CatchGameError : IDisposable
     {
+        private static readonly Func<string, bool> DefaultOnError = _ => true;
         private readonly Func<string, bool> OnError;
         public string GameError = null;
 
         public CatchGameError(Func<string, bool> onError = null)
         {
-            OnError = onError ?? ((msg) => true);
+            OnError = onError ?? DefaultOnError;
             GameLog.OnError += GameLog_OnError;
         }
 
         private bool GameLog_OnError(string msg)
         {
-            GameError = msg ?? "";
+            GameError = msg ?? string.Empty;
             return OnError(msg);
         }
 
@@ -38,10 +39,20 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
         internal static bool Error(string text)
         {
-            var res = OnError == null || OnError(text);
+            bool res = true;
+            var handler = OnError;
+            if (handler != null)
+            {
+                var delegates = handler.GetInvocationList();
+                for (int i = 0; i < delegates.Length; i++)
+                {
+                    if (!((Func<string, bool>)delegates[i])(text))
+                    {
+                        res = false;
+                    }
+                }
+            }
 
-            // ОПТИМІЗАЦІЯ: важкий StackTraceUtility.ExtractStackTrace викликається
-            // ЛИШЕ якщо помилка не приглушена і логування реально увімкнене в налаштуваннях
             if (res && Loger.Enable && !MainHelper.OffAllLog)
             {
                 Loger.Log("Error game log. " + text + Environment.NewLine + GetStackTrace(), Loger.LogLevel.GAMEERROR);
@@ -72,7 +83,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     [HarmonyPatch(typeof(Log))]
     [HarmonyPatch("Error")]
     [HarmonyPatch(new Type[] { typeof(string) })]
-    internal class Log_Error_Patch
+    internal static class Log_Error_Patch
     {
         [HarmonyPrefix]
         public static bool Prefix(string text)

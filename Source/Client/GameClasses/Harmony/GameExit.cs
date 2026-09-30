@@ -1,71 +1,87 @@
 ﻿using HarmonyLib;
+using OCUnion;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Verse;
 using Verse.Profile;
 
 namespace RimWorldOnlineCity
 {
-    public class GameExit
+    public static class GameExit
     {
         public static Action BeforeExit = null;
+
+        /// <summary>
+        /// Безпечний одноразовий виклик делегата виходу з ізоляцією винятків.
+        /// </summary>
+        public static void TriggerBeforeExit()
+        {
+            var action = BeforeExit;
+            if (action == null) return;
+
+            BeforeExit = null; // Захист від повторних каскадних викликів під час одного виходу
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("GameExit.TriggerBeforeExit error: " + ex.Message, Loger.LogLevel.ERROR);
+            }
+        }
     }
-    
+
     [HarmonyPatch(typeof(MemoryUtility))]
     [HarmonyPatch("ClearAllMapsAndWorld")]
-    internal class MemoryUtility_ClearAllMapsAndWorld_Patch
+    internal static class MemoryUtility_ClearAllMapsAndWorld_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            if (GameExit.BeforeExit != null) GameExit.BeforeExit();
+            GameExit.TriggerBeforeExit();
         }
     }
 
     [HarmonyPatch(typeof(GenScene))]
     [HarmonyPatch("GoToMainMenu")]
-    internal class GenScene_GoToMainMenu_Patch
+    internal static class GenScene_GoToMainMenu_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            if (GameExit.BeforeExit != null) GameExit.BeforeExit();
+            GameExit.TriggerBeforeExit();
         }
     }
 
     [HarmonyPatch(typeof(PlayDataLoader))]
     [HarmonyPatch("ClearAllPlayData")]
-    internal class PlayDataLoader_ClearAllPlayData_Patch
+    internal static class PlayDataLoader_ClearAllPlayData_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            if (GameExit.BeforeExit != null) GameExit.BeforeExit();
+            GameExit.TriggerBeforeExit();
         }
     }
 
     [HarmonyPatch(typeof(Root_Entry))]
     [HarmonyPatch("Start")]
-    internal class Root_Entry_Start_Patch
+    internal static class Root_Entry_Start_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            if (GameExit.BeforeExit != null) GameExit.BeforeExit();
+            GameExit.TriggerBeforeExit();
         }
     }
 
     [HarmonyPatch(typeof(UIRoot_Entry))]
     [HarmonyPatch("DoMainMenu")]
-    internal class UIRoot_Entry_DoMainMenu_Patch
+    internal static class UIRoot_Entry_DoMainMenu_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            if (GameExit.BeforeExit != null) GameExit.BeforeExit();
+            GameExit.TriggerBeforeExit();
         }
     }
-    
 }

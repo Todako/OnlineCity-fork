@@ -7,6 +7,7 @@ using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using UnityEngine;
@@ -20,15 +21,15 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(PrefsData))]
     [HarmonyPatch("Apply")]
-    internal class PrefsData_Apply_Patch
+    internal static class PrefsData_Apply_Patch
     {
         [HarmonyPostfix]
         public static void Postfix()
         {
             if (Current.Game == null) return;
-            if (!SessionClient.Get.IsLogined) return;
+            if (SessionClient.Get?.IsLogined != true) return;
 
-            if (SessionClientController.Data.DisableDevMode)
+            if (SessionClientController.Data?.DisableDevMode == true)
             {
                 if (Prefs.DevMode) Prefs.DevMode = false;
                 if (IdeoUIUtility.devEditMode) IdeoUIUtility.devEditMode = false;
@@ -38,7 +39,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(Dialog_Options))]
     [HarmonyPatch("DoModOptions")]
-    internal class Dialog_Options_DoModOptions_Patch
+    internal static class Dialog_Options_DoModOptions_Patch
     {
         [HarmonyPrefix]
         public static bool Prefix(Listing_Standard listing)
@@ -52,19 +53,15 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             }
 
             if (Current.Game == null) return true;
-            if (!SessionClient.Get.IsLogined) return true;
+            if (SessionClient.Get?.IsLogined != true) return true;
 
-            if (SessionClientController.Data.DisableDevMode)
-            {
-                return false;
-            }
-            return true;
+            return SessionClientController.Data?.DisableDevMode != true;
         }
     }
 
     [HarmonyPatch(typeof(Dialog_CreateXenotype))]
     [HarmonyPatch("PostXenotypeOnGUI")]
-    internal class Dialog_CreateXenotype_PostXenotypeOnGUI_Patch
+    internal static class Dialog_CreateXenotype_PostXenotypeOnGUI_Patch
     {
         private static readonly AccessTools.FieldRef<Dialog_CreateXenotype, bool> IgnoreRestrictionsRef =
             AccessTools.FieldRefAccess<Dialog_CreateXenotype, bool>("ignoreRestrictions");
@@ -73,9 +70,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         public static void Postfix(Dialog_CreateXenotype __instance)
         {
             if (Current.Game == null) return;
-            if (!SessionClient.Get.IsLogined) return;
-
-            if (!SessionClientController.Data.DisableDevMode) return;
+            if (SessionClient.Get?.IsLogined != true) return;
+            if (SessionClientController.Data?.DisableDevMode != true) return;
 
             IgnoreRestrictionsRef(__instance) = false;
         }
@@ -83,7 +79,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(DebugTool))]
     [HarmonyPatch("DebugToolOnGUI")]
-    internal class DebugTool_DebugToolOnGUI_Patch
+    internal static class DebugTool_DebugToolOnGUI_Patch
     {
         private static DateTime LastCheck = DateTime.MinValue;
 
@@ -94,9 +90,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             LastCheck = DateTime.UtcNow;
 
             if (Current.Game == null) return true;
-            if (!SessionClient.Get.IsLogined) return true;
-
-            if (!SessionClientController.Data.DisableDevMode) return true;
+            if (SessionClient.Get?.IsLogined != true) return true;
+            if (SessionClientController.Data?.DisableDevMode != true) return true;
 
             Loger.TransLog("ShowDevMode");
             return true;
@@ -109,16 +104,17 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(Page_SelectStorytellerInGame))]
     [HarmonyPatch("DoWindowContents")]
-    internal class Page_SelectStorytellerInGame_DoWindowContents_Patch
+    internal static class Page_SelectStorytellerInGame_DoWindowContents_Patch
     {
         [HarmonyPrefix]
         public static bool Prefix(Page_SelectStorytellerInGame __instance)
         {
             if (Current.Game == null) return true;
-            if (!SessionClient.Get.IsLogined) return true;
+            if (SessionClient.Get?.IsLogined != true) return true;
             if (Prefs.DevMode) return true;
 
-            if (SessionClientController.Data.GeneralSettings.DisableGameSettings)
+            // ВИПРАВЛЕНО CS0023: прямий доступ до поля структури GeneralSettings
+            if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.DisableGameSettings)
             {
                 Loger.Log("Page_SelectStorytellerInGame_DoWindowContents_Patch DisableGameSettings");
                 __instance.Close();
@@ -131,16 +127,17 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(HugsLib.Utils.HugsLibUtility))]
     [HarmonyPatch("OpenModSettingsDialog")]
-    internal class HugsLibUtility_OpenModSettingsDialog_Patch
+    internal static class HugsLibUtility_OpenModSettingsDialog_Patch
     {
         [HarmonyPrefix]
         public static bool Prefix()
         {
             if (Current.Game == null) return true;
-            if (!SessionClient.Get.IsLogined) return true;
+            if (SessionClient.Get?.IsLogined != true) return true;
             if (Prefs.DevMode) return true;
 
-            if (SessionClientController.Data.GeneralSettings.DisableGameSettings)
+            // ВИПРАВЛЕНО CS0023: прямий доступ до поля структури GeneralSettings
+            if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.DisableGameSettings)
             {
                 Loger.Log("HugsLibUtility_OpenModSettingsDialog_Patch DisableGameSettings");
                 return false;
@@ -155,11 +152,11 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     // ====================================================================================
 
     [HarmonyPatch(typeof(GenDate), "Year")]
-    internal class GenDatePatch
+    internal static class GenDatePatch
     {
         public static void Postfix(long absTicks, float longitude, ref int __result)
         {
-            if (!SessionClient.Get.IsLogined) return;
+            if (SessionClient.Get?.IsLogined != true) return;
             if (SessionClientController.Data == null) return;
 
             int needYear = SessionClientController.Data.GeneralSettings.StartGameYear;
@@ -172,8 +169,10 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(CrossRefHandler))]
     [HarmonyPatch("ResolveAllCrossReferences")]
-    public class CrossRefHandler_ResolveAllCrossReferences_Patch
+    public static class CrossRefHandler_ResolveAllCrossReferences_Patch
     {
+        private static readonly HashSet<IExposable> s_ExistingCrossRefsBuffer = new HashSet<IExposable>();
+
         [HarmonyPrefix]
         public static bool Prefix()
         {
@@ -186,16 +185,22 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             var toAdd = ThingEntry.crossReferencingExposables;
             if (toAdd != null && toAdd.Count > 0)
             {
-                var existing = new HashSet<IExposable>(crossRefs);
+                s_ExistingCrossRefsBuffer.Clear();
+                for (int i = 0; i < crossRefs.Count; i++)
+                {
+                    s_ExistingCrossRefsBuffer.Add(crossRefs[i]);
+                }
+
                 for (int i = 0; i < toAdd.Count; i++)
                 {
                     var item = toAdd[i];
-                    if (existing.Add(item))
+                    if (s_ExistingCrossRefsBuffer.Add(item))
                     {
                         crossRefs.Add(item);
                     }
                 }
 
+                s_ExistingCrossRefsBuffer.Clear();
                 toAdd.Clear();
             }
 
@@ -210,7 +215,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     [HarmonyPatch(typeof(GlobalControlsUtility))]
     [HarmonyPatch("DoDate")]
     [StaticConstructorOnStartup]
-    public class GlobalControlsUtility_DoDate_Patch
+    public static class GlobalControlsUtility_DoDate_Patch
     {
         public static List<string> OutText = null;
         public static string TooltipText = null;
@@ -224,7 +229,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         [HarmonyPostfix]
         public static void Postfix(float leftX, float width, ref float curBaseY)
         {
-            if (!SessionClient.Get.IsLogined) return;
+            if (SessionClient.Get?.IsLogined != true) return;
             if (OutText == null || OutText.Count == 0) return;
 
             if ((DateTime.UtcNow - Update).TotalSeconds > 5)
@@ -311,14 +316,15 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(GlobalTextureAtlasManager))]
     [HarmonyPatch("GlobalTextureAtlasManagerUpdate")]
-    internal class GlobalTextureAtlasManager_GlobalTextureAtlasManagerUpdate_Patch
+    internal static class GlobalTextureAtlasManager_GlobalTextureAtlasManagerUpdate_Patch
     {
         private static List<PawnTextureAtlas> pawnTextureAtlases;
+        private static readonly FieldInfo FrameAssignmentsField =
+            AccessTools.Field(typeof(PawnTextureAtlas), "frameAssignments");
 
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            // ОПТИМІЗАЦІЯ: швидкий пошук поля виконується лише 1 раз при першому виклику
             if (pawnTextureAtlases == null)
             {
                 pawnTextureAtlases = AccessTools.Field(typeof(GlobalTextureAtlasManager), "pawnTextureAtlases")
@@ -334,7 +340,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             if (pawnTextureAtlases == null) return false;
 
-            // ОПТИМІЗАЦІЯ: цикл for замість foreach для усунення щокадрових алокацій
             for (int i = 0; i < pawnTextureAtlases.Count; i++)
             {
                 var pawnTextureAtlase = pawnTextureAtlases[i];
@@ -344,15 +349,14 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
                 catch (Exception exp)
                 {
-                    var that = Traverse.Create(pawnTextureAtlase);
-                    var _frameAssignments = that.Field("frameAssignments").GetValue<Dictionary<Pawn, PawnTextureAtlasFrameSet>>();
-                    if (_frameAssignments != null)
+                    var assignments = FrameAssignmentsField?.GetValue(pawnTextureAtlase) as Dictionary<Pawn, PawnTextureAtlasFrameSet>;
+                    if (assignments != null)
                     {
-                        var test = new Dictionary<Pawn, PawnTextureAtlasFrameSet>(_frameAssignments);
-                        that.Field("frameAssignments").SetValue(test);
+                        var replacement = new Dictionary<Pawn, PawnTextureAtlasFrameSet>(assignments);
+                        FrameAssignmentsField.SetValue(pawnTextureAtlase, replacement);
 
                         Log.Message("Exception " + exp.Message + " Replace frameAssignments: "
-                            + _frameAssignments.Keys.Aggregate("", (r, k) => r + Environment.NewLine + $"{k.LabelCap} hc{k.GetHashCode()} id{k.thingIDNumber}"));
+                            + assignments.Keys.Aggregate("", (r, k) => r + Environment.NewLine + $"{k.LabelCap} hc{k.GetHashCode()} id{k.thingIDNumber}"));
                     }
                 }
             }
@@ -366,7 +370,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(Settlement))]
     [HarmonyPatch("GetGizmos")]
-    internal class Settlement_GetGizmos_Patch
+    internal static class Settlement_GetGizmos_Patch
     {
         private static string CachedLabel;
         private static string Label => CachedLabel ?? (CachedLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate());
@@ -376,11 +380,13 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             foreach (var value in values) yield return value;
 
-            if (!SessionClient.Get.IsLogined) yield break;
+            if (SessionClient.Get?.IsLogined != true) yield break;
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
-            if (SessionClientController.Data?.GeneralSettings != null && !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
-            var command_Action = new Command_Action
+            // ВИПРАВЛЕНО CS0023: перевірка Data на null і прямий доступ до структури GeneralSettings
+            if (SessionClientController.Data == null || !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
+
+            yield return new Command_Action
             {
                 defaultLabel = Label,
                 defaultDesc = Label,
@@ -390,13 +396,12 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     Find.WindowStack.Add(new Dialog_Exchenge(__instance));
                 }
             };
-            yield return command_Action;
         }
     }
 
     [HarmonyPatch(typeof(Caravan))]
     [HarmonyPatch("GetGizmos")]
-    internal class Caravan_GetGizmos_Patch
+    internal static class Caravan_GetGizmos_Patch
     {
         private static string CachedLabel;
         private static string Label => CachedLabel ?? (CachedLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate());
@@ -406,11 +411,13 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             foreach (var value in values) yield return value;
 
-            if (!SessionClient.Get.IsLogined) yield break;
+            if (SessionClient.Get?.IsLogined != true) yield break;
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
-            if (SessionClientController.Data?.GeneralSettings != null && !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
-            var command_Action = new Command_Action
+            // ВИПРАВЛЕНО CS0023: перевірка Data на null і прямий доступ до структури GeneralSettings
+            if (SessionClientController.Data == null || !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
+
+            yield return new Command_Action
             {
                 defaultLabel = Label,
                 defaultDesc = Label,
@@ -420,7 +427,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     Find.WindowStack.Add(new Dialog_Exchenge(__instance));
                 }
             };
-            yield return command_Action;
         }
     }
 
@@ -430,24 +436,25 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(Map))]
     [HarmonyPatch("PlayerWealthForStoryteller", MethodType.Getter)]
-    internal class Map_PlayerWealthForStoryteller_Patch
+    internal static class Map_PlayerWealthForStoryteller_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(Map __instance, ref float __result)
         {
-            if (Current.Game == null) return;
-            if (!SessionClient.Get.IsLogined) return;
+            if (Current.Game == null || __instance == null) return;
+            if (SessionClient.Get?.IsLogined != true) return;
 
-            if (__instance == null) return;
-            if (MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth == null) return;
-            if (!MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth.TryGetValue(__instance, out var wealth)) return;
-            __result += wealth;
+            if (MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth != null
+                && MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth.TryGetValue(__instance, out var wealth))
+            {
+                __result += wealth;
+            }
         }
     }
 
     [HarmonyPatch(typeof(WealthWatcher))]
     [HarmonyPatch("WealthTotal", MethodType.Getter)]
-    internal class WealthWatcher_WealthTotal_Patch
+    internal static class WealthWatcher_WealthTotal_Patch
     {
         private static readonly AccessTools.FieldRef<WealthWatcher, Map> WealthWatcherMapRef =
             AccessTools.FieldRefAccess<WealthWatcher, Map>("map");
@@ -455,32 +462,33 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         [HarmonyPostfix]
         public static void Postfix(WealthWatcher __instance, ref float __result)
         {
-            if (Current.Game == null) return;
-            if (!SessionClient.Get.IsLogined) return;
+            if (Current.Game == null || __instance == null) return;
+            if (SessionClient.Get?.IsLogined != true) return;
 
             var map = WealthWatcherMapRef(__instance);
-            if (map == null) return;
-
-            if (MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth == null) return;
-            if (!MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth.TryGetValue(map, out var wealth)) return;
-            __result += wealth;
+            if (map != null && MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth != null
+                && MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth.TryGetValue(map, out var wealth))
+            {
+                __result += wealth;
+            }
         }
     }
 
     [HarmonyPatch(typeof(MainTabWindow_History))]
     [HarmonyPatch("DoStatisticsPage")]
-    internal class MainTabWindow_DoStatisticsPage_Patch
+    internal static class MainTabWindow_DoStatisticsPage_Patch
     {
         public static Dictionary<Map, float> PatchColonyWealth;
 
         public static string PatchInject1()
         {
-            if (Current.Game == null) return "";
-            if (!SessionClient.Get.IsLogined) return "";
+            if (Current.Game == null) return string.Empty;
+            if (SessionClient.Get?.IsLogined != true) return string.Empty;
 
-            if (Find.CurrentMap == null) return "";
-            if (PatchColonyWealth == null) return "";
-            if (!PatchColonyWealth.TryGetValue(Find.CurrentMap, out var wealth)) return "";
+            var currentMap = Find.CurrentMap;
+            if (currentMap == null || PatchColonyWealth == null) return string.Empty;
+            if (!PatchColonyWealth.TryGetValue(currentMap, out var wealth)) return string.Empty;
+
             return "Online City: " + wealth.ToString("F0");
         }
 
@@ -514,7 +522,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(TravelingTransportPods))]
     [HarmonyPatch("DoArrivalAction")]
-    internal class TravelingTransportPods_DoArrivalAction_Patch
+    internal static class TravelingTransportPods_DoArrivalAction_Patch
     {
         private static readonly AccessTools.FieldRef<TravelingTransportPods, List<ActiveDropPodInfo>> PodsRef =
             AccessTools.FieldRefAccess<TravelingTransportPods, List<ActiveDropPodInfo>>("pods");
@@ -523,23 +531,30 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         public static bool Prefix(TravelingTransportPods __instance)
         {
             if (Current.Game == null) return true;
-            if (!SessionClient.Get.IsLogined) return true;
+            if (SessionClient.Get?.IsLogined != true) return true;
 
             if (__instance.arrivalAction != null) return true;
             if (__instance.destinationTile < 0) return true;
 
-            Loger.Log("Client TravelingTransportPods SaveGame and ExchengeStorage 1", Loger.LogLevel.EXCHANGE);
-
             var pods = PodsRef(__instance);
             if (pods == null || pods.Count == 0) return true;
 
-            var toTargetThing = new List<Thing>();
+            int estimatedCount = 0;
+            for (int j = 0; j < pods.Count; j++)
+            {
+                estimatedCount += pods[j].innerContainer?.Count ?? 0;
+            }
+
+            var toTargetThing = new List<Thing>(estimatedCount);
             for (int j = 0; j < pods.Count; j++)
             {
                 var container = pods[j].innerContainer;
-                for (int k = 0; k < container.Count; k++)
+                if (container != null)
                 {
-                    toTargetThing.Add(container[k]);
+                    for (int k = 0; k < container.Count; k++)
+                    {
+                        toTargetThing.Add(container[k]);
+                    }
                 }
             }
 
@@ -551,12 +566,9 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 toTargetEntry.Add(ThingTrade.CreateTrade(t, t.stackCount));
             }
 
-            Loger.Log("Client TravelingTransportPods SaveGame and ExchengeStorage 2", Loger.LogLevel.EXCHANGE);
-
             SessionClientController.SaveGameNowSingleAndCommandSafely(
                 (connect) =>
                 {
-                    Loger.Log("Client TravelingTransportPods SaveGame and ExchengeStorage 3", Loger.LogLevel.EXCHANGE);
                     return connect.ExchengeStorage(toTargetEntry, null, __instance.destinationTile);
                 },
                 () =>

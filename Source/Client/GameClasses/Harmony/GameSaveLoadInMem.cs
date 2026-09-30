@@ -3,7 +3,6 @@ using OCUnion;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Xml;
 using Verse;
 
@@ -11,7 +10,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 {
     [HarmonyPatch(typeof(ScribeLoader))]
     [HarmonyPatch("InitLoading")]
-    internal class ScribeLoader_InitLoading_Patch
+    internal static class ScribeLoader_InitLoading_Patch
     {
         public static byte[] LoadData = null;
         public static bool Enable = false;
@@ -67,7 +66,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(ScribeLoader))]
     [HarmonyPatch("InitLoadingMetaHeaderOnly")]
-    internal class ScribeLoader_InitLoadingMetaHeaderOnly_Patch
+    internal static class ScribeLoader_InitLoadingMetaHeaderOnly_Patch
     {
         [HarmonyPrefix]
         public static bool Prefix(ScribeLoader __instance, string filePath)
@@ -120,24 +119,28 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
     [HarmonyPatch(typeof(ScribeSaver))]
     [HarmonyPatch("InitSaving")]
-    internal class ScribeSaver_InitSaving_Patch
+    internal static class ScribeSaver_InitSaving_Patch
     {
         public static MemoryStream SaveData;
         public static bool Enable = false;
 
-        // Кешований розмір останнього збереження для запобігання фрагментації Large Object Heap (LOH)
-        public static int LastSaveSize = 1024 * 1024 * 4; // 4 МБ за замовчуванням
+        public static int LastSaveSize = 1024 * 1024 * 4;
 
-        private static readonly FieldInfo CurPathField = AccessTools.Field(typeof(ScribeSaver), "curPath");
-        private static readonly FieldInfo SavedNodesField = AccessTools.Field(typeof(ScribeSaver), "savedNodes");
-        private static readonly FieldInfo NextListElementTemporaryIdField = AccessTools.Field(typeof(ScribeSaver), "nextListElementTemporaryId");
-        private static readonly FieldInfo SaveStreamField = AccessTools.Field(typeof(ScribeSaver), "saveStream");
-        private static readonly FieldInfo WriterField = AccessTools.Field(typeof(ScribeSaver), "writer");
+        // ОПТИМІЗАЦІЯ: швидкі делегати прямого доступу до приватних полів ScribeSaver замість рефлексії
+        private static readonly AccessTools.FieldRef<ScribeSaver, string> CurPathRef =
+            AccessTools.FieldRefAccess<ScribeSaver, string>("curPath");
+        private static readonly AccessTools.FieldRef<ScribeSaver, HashSet<string>> SavedNodesRef =
+            AccessTools.FieldRefAccess<ScribeSaver, HashSet<string>>("savedNodes");
+        private static readonly AccessTools.FieldRef<ScribeSaver, int> NextListElementTemporaryIdRef =
+            AccessTools.FieldRefAccess<ScribeSaver, int>("nextListElementTemporaryId");
+        private static readonly AccessTools.FieldRef<ScribeSaver, Stream> SaveStreamRef =
+            AccessTools.FieldRefAccess<ScribeSaver, Stream>("saveStream");
+        private static readonly AccessTools.FieldRef<ScribeSaver, XmlWriter> WriterRef =
+            AccessTools.FieldRefAccess<ScribeSaver, XmlWriter>("writer");
 
         private static int GetInitialSaveCapacity()
         {
             if (LastSaveSize <= 0) return 1024 * 1024 * 4;
-            // Виділяємо з запасом +15% для уникнення будь-яких повторних алокацій масиву в LOH
             int capacity = (int)Math.Min((long)(LastSaveSize * 1.15), 64 * 1024 * 1024);
             return Math.Max(capacity, 1024 * 1024 * 2);
         }
@@ -155,21 +158,19 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 Scribe.ForceStop();
             }
 
-            var curPath = (string)CurPathField?.GetValue(__instance);
+            var curPath = CurPathRef(__instance);
             if (curPath != null)
             {
                 Log.Error("Current path is not null in InitSaving");
-                CurPathField?.SetValue(__instance, null);
-                var savedNodes = (HashSet<string>)SavedNodesField?.GetValue(__instance);
-                savedNodes?.Clear();
-                NextListElementTemporaryIdField?.SetValue(__instance, 0);
+                CurPathRef(__instance) = null;
+                SavedNodesRef(__instance)?.Clear();
+                NextListElementTemporaryIdRef(__instance) = 0;
             }
 
             try
             {
                 Scribe.mode = LoadSaveMode.Saving;
 
-                // ОПТИМІЗАЦІЯ: початкова ємність задається заздалегідь, запобігаючи множинним алокаціям у LOH
                 var saveStream = SaveData = new MemoryStream(GetInitialSaveCapacity());
 
                 try
@@ -183,7 +184,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
                 catch { }
 
-                SaveStreamField?.SetValue(__instance, saveStream);
+                SaveStreamRef(__instance) = saveStream;
 
                 XmlWriterSettings xmlWriterSettings = new XmlWriterSettings
                 {
@@ -193,7 +194,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 };
 
                 var writer = XmlWriter.Create(saveStream, xmlWriterSettings);
-                WriterField?.SetValue(__instance, writer);
+                WriterRef(__instance) = writer;
 
                 writer.WriteStartDocument();
                 __instance.EnterNode(documentElementName);
