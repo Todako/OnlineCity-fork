@@ -1,9 +1,5 @@
 ﻿using Model;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Transfer.ModelMails
 {
@@ -16,7 +12,7 @@ namespace Transfer.ModelMails
         /// <summary>
         /// Время когда было добавлено на сервер в первый раз, пока служит только для уникальности письма
         /// </summary>
-        public DateTime Created { get; set; } 
+        public DateTime Created { get; set; }
         public Player From { get; set; }
         public Player To { get; set; }
 

@@ -5,8 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using Verse;
 
 namespace OCUnion
 {
@@ -25,7 +23,7 @@ namespace OCUnion
 
         private static Assembly AssemblyAssembly = Assembly.GetAssembly(typeof(MainHelper));
         private static Version AssemblyVersion = AssemblyAssembly.GetName().Version;
-        private static DateTime? AssemblyDate = string.IsNullOrEmpty(AssemblyAssembly.Location) ? (DateTime?)null 
+        private static DateTime? AssemblyDate = string.IsNullOrEmpty(AssemblyAssembly.Location) ? (DateTime?)null
             : new FileInfo(AssemblyAssembly.Location).LastWriteTime;
 
         public static string VersionInfo = $"Version {(AssemblyVersion.ToString() + "$$").Replace(".0$$", "").Replace("$$", "")}a" +
@@ -44,7 +42,7 @@ namespace OCUnion
 
         public static string DefaultIP = DebugMode ? "localhost" : " ";
 
-        public static Dictionary<string, string> ServerList = new Dictionary<string, string> 
+        public static Dictionary<string, string> ServerList = new Dictionary<string, string>
         {
             { "Vanilla", "62.3.58.251:19042" },
             { "Fantasy", "62.3.58.251:19022" },
@@ -63,7 +61,7 @@ namespace OCUnion
         private static ThingDef _CashlessThingDef;
         public static ThingDef CashlessThingDef
         {
-            get 
+            get
             {
                 if (_CashlessThingDef == null)
                 {

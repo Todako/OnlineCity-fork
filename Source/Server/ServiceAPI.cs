@@ -1,5 +1,4 @@
-﻿using Model;
-using OCUnion;
+﻿using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
 using System;
@@ -7,7 +6,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace ServerOnlineCity
 {
@@ -119,8 +117,8 @@ namespace ServerOnlineCity
             return res;
         }
 
-        public APIResponse CheckSecretKey(string key) => 
-            string.IsNullOrEmpty(key) 
+        public APIResponse CheckSecretKey(string key) =>
+            string.IsNullOrEmpty(key)
             || string.IsNullOrEmpty(ServerManager.ServerSettings.SecretKey)
             || ServerManager.ServerSettings.SecretKey != key
             ? new APIResponseError()
@@ -245,8 +243,8 @@ namespace ServerOnlineCity
         public APIResponse GetSaveImage(string name, byte[] data)
         {
             if (data == null) return new APIResponseError()
-            { 
-                Error = "No Data" 
+            {
+                Error = "No Data"
             };
 
             APIResponse response = new APIResponseError()
@@ -300,7 +298,7 @@ namespace ServerOnlineCity
         private HashSet<PlayerServer> OnlineCache = null;
         private DateTime OnlineCacheDate;
         private HashSet<PlayerServer> GetOnline()
-        { 
+        {
             if (DateTime.UtcNow > OnlineCacheDate)
             {
                 var data = Repository.GetData;

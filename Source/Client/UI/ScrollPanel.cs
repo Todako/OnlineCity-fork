@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using UnityEngine;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -14,7 +10,7 @@ namespace RimWorldOnlineCity.UI
         private Rect AreaInner;
 
         private Vector2 ScrollPosition;
-        
+
         public void Draw()
         {
             if (DrawInner == null) return;

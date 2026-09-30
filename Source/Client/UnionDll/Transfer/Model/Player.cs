@@ -9,12 +9,12 @@ namespace Model
     public class Player
     {
         public string Login { get; set; }
-        
+
         /// <summary>
         /// int faster then string ;-)
         /// </summary>
         public int Id { get; set; }
-        
+
         public long Version { get; set; }
 
         public string ServerName { get; set; }

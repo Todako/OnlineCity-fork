@@ -1,10 +1,7 @@
 ﻿using Model;
-using OCUnion;
 using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Transfer.ModelMails;
 
 namespace Transfer

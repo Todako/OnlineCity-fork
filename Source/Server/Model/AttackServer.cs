@@ -1,11 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Model;
+﻿using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
-using Transfer;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Model
@@ -114,14 +112,14 @@ namespace ServerOnlineCity.Model
             Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} New");
             return null;
         }
-        
+
         public AttackHostFromSrv RequestHost(AttackHostToSrv fromClient)
         {
             //Loger.Log($"Server AttackOnlineHost RequestHost State: {State} -> {fromClient.State}");
             lock (SyncObj)
             {
                 //первые 5 минут не проверяем на отключения, т.к. загрузка может быть долгой (а дисконектит уже после 10 сек)
-                if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8*60)
+                if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
                     && CheckConnect(false))
                 {
                     return new AttackHostFromSrv()
@@ -309,7 +307,7 @@ namespace ServerOnlineCity.Model
                 //первые 5 минут не проверяем на отключения, т.к. загрузка может быть долгой (а дисконектит уже после 10 сек)
                 if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
                     && CheckConnect(true))
-                { 
+                {
                     return new AttackInitiatorFromSrv()
                     {
                         State = State
@@ -643,7 +641,7 @@ namespace ServerOnlineCity.Model
 
         public void Finish()
         {
-            Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} Finish StartTime sec = " 
+            Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} Finish StartTime sec = "
                 + (StartTime == DateTime.MinValue ? "-" : (DateTime.UtcNow - StartTime).TotalSeconds.ToString())
                 + (VictoryAttacker == null ? "" : VictoryAttacker.Value ? " VictoryAttacker" : " VictoryHost")
                 + (TestMode ? " TestMode" : "")

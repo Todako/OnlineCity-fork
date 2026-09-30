@@ -1,8 +1,5 @@
 ﻿using Discord.Commands;
 using OC.DiscordBotServer.Commands;
-using OC.DiscordBotServer.Helpers;
-using OCUnion;
-using System;
 using System.ComponentModel;
 using System.Threading.Tasks;
 

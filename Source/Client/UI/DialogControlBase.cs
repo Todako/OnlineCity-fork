@@ -1,6 +1,4 @@
-﻿using Verse;
-
-namespace RimWorldOnlineCity.UI
+﻿namespace RimWorldOnlineCity.UI
 {
     /// <summary>
     /// Базовий клас для елементів керування діалогових вікон OnlineCity.

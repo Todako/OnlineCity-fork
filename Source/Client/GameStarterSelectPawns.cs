@@ -1,12 +1,6 @@
-﻿using OCUnion;
-using RimWorld;
-using RimWorld.Planet;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using Verse;
 
 namespace RimWorldOnlineCity
 {
@@ -43,7 +37,7 @@ namespace RimWorldOnlineCity
             {
                 StartingPawnUtility.RandomizeInPlace(Current.Game.InitData.startingAndOptionalPawns[i]);
             }
-            
+
             //запускаем форму редактирования
             var form = new Page_ConfigureStartingPawns();
             form.nextAct = () =>

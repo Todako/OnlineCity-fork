@@ -1,12 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using OCUnion;
-using RimWorld;
-using UnityEngine;
-using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -176,7 +169,7 @@ namespace RimWorldOnlineCity.UI
         {
             if (BeforeDrow != null) BeforeDrow();
 
-            if (ImageShow != null && 
+            if (ImageShow != null &&
                 (Size.x != ImageShow.width || Size.z != ImageShow.height))
             {
                 Size = new IntVec2(ImageShow.width, ImageShow.height);

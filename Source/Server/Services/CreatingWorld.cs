@@ -1,7 +1,7 @@
-﻿using System.Collections.Generic;
-using Model;
+﻿using Model;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
+using System.Collections.Generic;
 using Transfer;
 
 namespace ServerOnlineCity.Services

@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Xml;
-using Verse;
 
 namespace RimWorldOnlineCity.GameClasses.Harmony
 {

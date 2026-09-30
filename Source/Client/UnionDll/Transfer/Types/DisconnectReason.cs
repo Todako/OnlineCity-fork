@@ -5,7 +5,7 @@ namespace OCUnion.Transfer
     /// <summary>
     /// Correctly disconnect reason
     /// </summary>
-   [Serializable]
+    [Serializable]
     public enum DisconnectReason : byte
     {
         ///

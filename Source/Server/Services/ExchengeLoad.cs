@@ -1,9 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using OCUnion.Transfer.Model;
+﻿using OCUnion.Transfer.Model;
 using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -59,7 +59,7 @@ namespace ServerOnlineCity.Services
             {
                 var fb = filters.FilterBuy.ToLower();
                 var fs = filters.FilterSell.ToLower();
-                orders = orders.Where(o => 
+                orders = orders.Where(o =>
                     o.BuyThings.Any(t => t.DefName.ToLower() == fb)
                     || o.SellThings.Any(t => t.DefName.ToLower() == fs));
             }

@@ -1,10 +1,5 @@
-﻿using RimWorld;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using UnityEngine;
-using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -19,7 +14,7 @@ namespace RimWorldOnlineCity.UI
         public event Action<int, T> OnClick;
 
         //public event Action<int, string> OnClickRight;
-        
+
         public Func<T, string> Tooltip = (item) => item.ToString();
 
         public bool OddLineHighlight = false;

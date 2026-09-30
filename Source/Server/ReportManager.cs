@@ -1,7 +1,5 @@
-﻿using Model;
-using ServerOnlineCity.Model;
+﻿using ServerOnlineCity.Model;
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -15,7 +13,7 @@ namespace ServerOnlineCity
         public Func<DateTime, string> DateTimeToStr = dt => dt == DateTime.MinValue ? "" : dt.ToString("yyyy-MM-dd hh:mm:ss", CultureInfo.InvariantCulture);
 
         public string GetPlayerStatistic(PlayerServer player)
-        { 
+        {
             var costAll = player.CostWorldObjects();
 
             var newLine = $"{player.Public.Login};" +
@@ -169,7 +167,7 @@ namespace ServerOnlineCity
 
                 return serTxt;
             }
-            
+
         }
     }
 }

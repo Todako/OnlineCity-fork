@@ -1,13 +1,9 @@
 ﻿using OCUnion;
-using RimWorld;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Text;
 using System.Xml.Serialization;
-using Verse;
 
 namespace Model
 {
@@ -82,7 +78,7 @@ namespace Model
         public bool IsCorpse { get; set; }
 
         public string LabelTextShort => Name + (Count > 1 ? " x" + Count.ToString() : "")
-            + (IsCorpse ? " (corpse)": "")
+            + (IsCorpse ? " (corpse)" : "")
             + (Affiliation == PawnAffiliation.Prisoner ? " (prisoner)" /* ⚯ ↀ "TabPrisoner"*/ //нельзя локализовать из-за использования на сервере
                 : Affiliation == PawnAffiliation.Slave ? " (slave)" /* ☹ ꃢ  "Slave"*/: "");
 
@@ -164,7 +160,7 @@ namespace Model
 
             //Loger.Log($"CreateThing 3");
             thing.stackCount = stackCount == 0 ? Count : stackCount;
-            
+
             //if (MainHelper.DebugMode && thing.LabelCap == "Lighter, Служанка") Log.Message($" ==0 {thing.LabelCap} hc{thing.GetHashCode()} id{thing.ThingID}");
             //if (OriginalID <= 0 || !useOriginalID)
             //{

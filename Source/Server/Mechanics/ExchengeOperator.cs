@@ -8,7 +8,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Text;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -258,7 +257,7 @@ namespace ServerOnlineCity.Mechanics
 
             var storage = GetStorage(tile, player.Public, true);
             var storageRead = storage.Things.OrderByCost(); // сначала предлагаем на соответствие более плохие вещи
-            
+
             //находим вещи, которые уже есть в хранилище и объединяем их, остальные просто добавляем
             for (int bi = 0; bi < things.Count; bi++)
             {
@@ -392,7 +391,7 @@ namespace ServerOnlineCity.Mechanics
                     //это одна и та же вешь, теперь вопрос в количестве
 
                     //если предложение меньше спроса, то может быть можно установить разные пропорции повтора сделки
-                    if (sell.Count * sellRepeat < buy.Count * buyRepeat) 
+                    if (sell.Count * sellRepeat < buy.Count * buyRepeat)
                     {
                         //если тербуется разные повторы у sell и buy при том, что они уже заданы, то сделка невозможна
                         if (sellRepeat != 1 || buyRepeat != 1) continue;

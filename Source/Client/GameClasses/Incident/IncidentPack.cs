@@ -1,7 +1,4 @@
-﻿using RimWorld;
-using Verse;
-
-namespace RimWorldOnlineCity
+﻿namespace RimWorldOnlineCity
 {
     class IncidentPack : OCIncident
     {

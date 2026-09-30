@@ -1,12 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
-using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
+using System.Linq;
 using Transfer;
-using Model;
 
 namespace ServerOnlineCity.Services
 {
@@ -74,7 +71,7 @@ namespace ServerOnlineCity.Services
                         Repository.Get.ChangeData = true;
                     }
                 }
-                
+
                 return new ModelStatus()
                 {
                     Status = 0,

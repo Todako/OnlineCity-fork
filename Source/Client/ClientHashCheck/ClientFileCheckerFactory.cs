@@ -1,7 +1,6 @@
 ﻿using OCUnion.Transfer.Model;
 using RimWorldOnlineCity.UI;
 using System.IO;
-using Verse;
 
 namespace RimWorldOnlineCity.ClientHashCheck
 {

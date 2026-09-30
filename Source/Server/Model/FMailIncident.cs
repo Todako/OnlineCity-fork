@@ -1,9 +1,7 @@
 ﻿using OCUnion;
 using ServerOnlineCity.Mechanics;
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Model
@@ -83,7 +81,7 @@ namespace ServerOnlineCity.Model
                 if (delay > 0)
                 {
                     Loger.Log($"IncidentLod FMailIncident.Run 1 NO={NumberOrder} SendTick={SendTick} MailSended={MailSended} EndTick={EndTick}");
-                    context.Player.Mails.Add(GetWarningMail(context)); 
+                    context.Player.Mails.Add(GetWarningMail(context));
                     return false;
                 }
             }
@@ -94,7 +92,7 @@ namespace ServerOnlineCity.Model
             if (!MailSended)
             {
                 Loger.Log($"IncidentLod FMailIncident.Run 2 NO={NumberOrder} SendTick={SendTick} MailSended={MailSended} EndTick={EndTick}");
-                
+
                 var countInOrder_ = context.Player.FunctionMails.Count(m => m != this && ((m as FMailIncident)?.NumberOrder ?? 0) == NumberOrder).ToString();
 
                 context.Player.Mails.Add(Mail);
@@ -110,7 +108,7 @@ namespace ServerOnlineCity.Model
             ///Уже отправили письмо. Проверяем прошла ли минимальная задержка.
             if (context.Player.Public.LastTick - SendTick < ServerManager.ServerSettings.GeneralSettings.IncidentTickDelayBetween
                 && NumberOrder > 0) return false;
-            
+
 
             ///После суток оцениваем задержку и устанавливаем поле EndTick.
             if (EndTick == 0)
@@ -139,7 +137,7 @@ namespace ServerOnlineCity.Model
                     });
                 }
 
-                CallIncident.IncidentLogAppend("DayAfterMail", Mail, 
+                CallIncident.IncidentLogAppend("DayAfterMail", Mail,
                     $"{(int)WorthBefore}->{(int)WorthAfter}({(int)(WorthAfter - WorthBefore)});" +
                     $"{(delayAfterMail / 60000f).ToString("N2")};{NumberOrder};{countInOrder_}");
             }
@@ -220,7 +218,7 @@ namespace ServerOnlineCity.Model
                 return ((long)ServerManager.ServerSettings.GeneralSettings.IncidentTickDelayBetween);
             }
             return (long)(ServerManager.ServerSettings.GeneralSettings.IncidentTickDelayBetween
-                * (1f + Mail.IncidentMult * 0.16666f + 0.03333f * (WorthBefore / 100000f)) * (ServerManager.ServerSettings.GeneralSettings.IncidentCoolDownPercent/100));
+                * (1f + Mail.IncidentMult * 0.16666f + 0.03333f * (WorthBefore / 100000f)) * (ServerManager.ServerSettings.GeneralSettings.IncidentCoolDownPercent / 100));
         }
 
     }

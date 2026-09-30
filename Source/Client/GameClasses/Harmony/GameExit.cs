@@ -1,8 +1,6 @@
 ﻿using HarmonyLib;
 using OCUnion;
 using System;
-using Verse;
-using Verse.Profile;
 
 namespace RimWorldOnlineCity
 {

@@ -1,11 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using Model;
+﻿using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -89,7 +89,7 @@ namespace ServerOnlineCity.Services
                                     Repository.GetData.PlayerSystem
                                     , context.Player
                                     , "OC_ExchangeEdit_OrderPlaced"
-                                    , "OC_ExchangeEdit_OrderPlaced" + "."+ Environment.NewLine
+                                    , "OC_ExchangeEdit_OrderPlaced" + "." + Environment.NewLine
                                         + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ".\n" + Environment.NewLine
                                         + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
                                         + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine
@@ -163,11 +163,11 @@ namespace ServerOnlineCity.Services
                                         Repository.GetData.PlayerSystem
                                         , context.Player
                                         , "OC_ExchangeEdit_OrderRedacted"
-                                        , "OC_ExchangeEdit_OrderRedacted" + ". "+ Environment.NewLine 
+                                        , "OC_ExchangeEdit_OrderRedacted" + ". " + Environment.NewLine
                                             + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ".\n " + Environment.NewLine
                                             + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
                                             + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine
-                                            + (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0 
+                                            + (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0
                                                 ? "OC_ExchangeEdit_ForAll"
                                                 : "OC_ExchangeEdit_PrivateOrder" + order.PrivatPlayers.Aggregate("", (r, i) => r + ", " + i.Login))
                                         , ModelMailMessadge.MessadgeTypes.GreyGoldenLetter
@@ -186,7 +186,7 @@ namespace ServerOnlineCity.Services
                                     Repository.GetData.PlayerSystem
                                     , context.Player
                                     , "OC_ExchangeEdit_OrderDeleted"
-                                    , "OC_ExchangeEdit_OrderDeleted" + ". " + Environment.NewLine 
+                                    , "OC_ExchangeEdit_OrderDeleted" + ". " + Environment.NewLine
                                         + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ". " + Environment.NewLine
                                         + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
                                         + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine

@@ -2,9 +2,6 @@
 using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Transfer.ModelMails
 {
@@ -25,7 +22,7 @@ namespace Transfer.ModelMails
 
         public override string GetHash()
         {
-            return $"T{Tile}P{PlaceServerId} {(int)IncidentType} {IncidentMult} " 
+            return $"T{Tile}P{PlaceServerId} {(int)IncidentType} {IncidentMult} "
                 + IncidentParams == null ? "" : string.Join(" ", IncidentParams);
         }
     }

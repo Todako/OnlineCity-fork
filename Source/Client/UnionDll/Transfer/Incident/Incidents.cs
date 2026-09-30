@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Transfer.ModelMails;
 
 namespace OCUnion
@@ -11,7 +9,7 @@ namespace OCUnion
     {
         public static List<IncidentMetadata> AllIncidents
         {
-            get 
+            get
             {
                 if (_Incidents == null) Init();
                 return _Incidents;
@@ -48,7 +46,7 @@ namespace OCUnion
                     DelayBeforeStart = (mail) => mail.IncidentMult >= 5,
                     DelayMessageType = (mail) => ModelMailMessadge.MessadgeTypes.ThreatBig,
                     DelayMessageLabel = (mail) => "OC_Incidents_Raid_Warning_label",
-                    DelayMessageText = (mail) => mail.IncidentParams[1].ToLower().Trim() == "mech" ? "OC_Incidents_Raid_Warning_Text_mech" : "OC_Incidents_Raid_Warning_Text_human", 
+                    DelayMessageText = (mail) => mail.IncidentParams[1].ToLower().Trim() == "mech" ? "OC_Incidents_Raid_Warning_Text_mech" : "OC_Incidents_Raid_Warning_Text_human",
                     CalcCostMult = (incidentParams) =>
                     {
                         var arrivalModes = incidentParams[0].ToLower().Trim();
@@ -243,9 +241,9 @@ namespace OCUnion
         /// Множитель стоимости, передаются параметры mail.IncidentParams
         /// </summary>
         public Func<List<string>, float> CalcCostMult { get; set; }
-        
+
     }
-    
+
     public enum IncidentTypes
     {
         Raid,
@@ -262,5 +260,5 @@ namespace OCUnion
         Plague,
         Def,
     }
-    
+
 }

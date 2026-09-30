@@ -1,14 +1,4 @@
-﻿using RimWorld;
-using System;
-using System.IO;
-using UnityEngine;
-using Verse;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using RimWorld.Planet;
-using Transfer;
-using OCUnion;
+﻿using OCUnion;
 
 namespace RimWorldOnlineCity
 {
@@ -50,7 +40,7 @@ namespace RimWorldOnlineCity
             {
             }
         }
-        
+
         public override void Activate()
         {
             Dialog_MainOnlineCity.ShowHide();

@@ -1,14 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using Transfer;
+﻿using HugsLib;
 using OCUnion;
-using HugsLib;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace RimWorldOnlineCity
 {
@@ -64,7 +58,7 @@ namespace RimWorldOnlineCity
             const float subListingRowHeight = 30f;
             const float checkboxListingWidth = 280f;
             const float listingColumnSpacing = 17f;
-            
+
             var btnSize = new Vector2(140f, 40f);
             var buttonYStart = inRect.height - btnSize.y;
 
@@ -88,8 +82,8 @@ namespace RimWorldOnlineCity
                 else
                 {
                     var msgError = SessionClientController.Registration(InputAddr, InputLogin, InputPassword, InputEmail, InputDiscord
-                        , () => 
-                        { 
+                        , () =>
+                        {
                             SessionClientController.LoginInNewServerIP = ModBaseData.GlobalData?.LastIP?.Value != InputAddr;
                             if (ModBaseData.GlobalData?.LastIP != null)
                             {
@@ -111,7 +105,7 @@ namespace RimWorldOnlineCity
             mainListing.Begin(inRect);
             Text.Font = GameFont.Medium;
             mainListing.Label("OCity_Dialog_Registration_LabelReg".Translate());
-            
+
             Text.Font = GameFont.Small;
             mainListing.GapLine();
             mainListing.Gap();
@@ -194,9 +188,10 @@ namespace RimWorldOnlineCity
             const float subListingRowHeight = 25;// 30f;
             const float checkboxListingWidth = 280f;
             const float listingColumnSpacing = 17f;
-            
+
             var expectedHeight = categoryPadding * 2 + (subListingRowHeight + subListingSpacing) * 1;
-            MakeSubListing(mainListing, 0, expectedHeight, categoryPadding, categoryInset, subListingSpacing, (sub, width) => {
+            MakeSubListing(mainListing, 0, expectedHeight, categoryPadding, categoryInset, subListingSpacing, (sub, width) =>
+            {
                 sub.ColumnWidth = subListingLabelWidth;
                 Text.Anchor = TextAnchor.MiddleLeft;
                 var rect = sub.GetRect(subListingRowHeight);

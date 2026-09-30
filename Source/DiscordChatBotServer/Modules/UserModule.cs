@@ -1,7 +1,5 @@
 ﻿using Discord.Commands;
 using OC.DiscordBotServer.Commands;
-using OC.DiscordBotServer.Helpers;
-using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;

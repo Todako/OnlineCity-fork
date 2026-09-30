@@ -1,15 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using Transfer;
+﻿using OCUnion;
 using RimWorldOnlineCity.UI;
-using OCUnion;
-using Model;
+using System;
+using System.Collections.Generic;
 
 namespace RimWorldOnlineCity
 {
@@ -234,7 +226,7 @@ namespace RimWorldOnlineCity
             Widgets.Label(inRect, "Вкладка 3");
             */
         }
-        
+
 
     }
 }

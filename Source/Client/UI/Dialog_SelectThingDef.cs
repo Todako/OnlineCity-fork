@@ -1,12 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using static Verse.ThingFilterUI;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -88,7 +81,7 @@ namespace RimWorldOnlineCity.UI
             }
 
             ThingFilterUI.DoThingFilterConfigWindow(workRect, subWindowState, thingFilter, null, 8);
-            
+
         }
 
     }

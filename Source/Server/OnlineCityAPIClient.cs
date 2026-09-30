@@ -1,10 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace ServerOnlineCity
 {
@@ -50,13 +47,13 @@ namespace ServerOnlineCity
                             if (LastError == null) LastError = "Empty response";
                         }
                         else
-                        if (res.Contains("\"Error\":"))
-                        {
-                            var err = JsonSerializer.Deserialize<APIResponseError>(res);
-                            if (LastError == null) LastError = err.Error;
-                        }
-                        else
-                            tres = JsonSerializer.Deserialize<TResponse>(res);
+                            if (res.Contains("\"Error\":"))
+                            {
+                                var err = JsonSerializer.Deserialize<APIResponseError>(res);
+                                if (LastError == null) LastError = err.Error;
+                            }
+                            else
+                                tres = JsonSerializer.Deserialize<TResponse>(res);
                     }
                     catch (Exception ex)
                     {

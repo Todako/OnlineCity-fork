@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace OCUnion.Transfer.Model
 {
@@ -19,7 +15,7 @@ namespace OCUnion.Transfer.Model
 
         public bool RightEdit { get; set; }
 
-        public bool RightAddPlayer  { get; set; }
+        public bool RightAddPlayer { get; set; }
 
         public bool RightExcludePlayer { get; set; }
     }

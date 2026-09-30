@@ -4,12 +4,10 @@ using OCUnion.Transfer.Model;
 using OCUnion.Transfer.Types;
 using ServerOnlineCity.Model;
 using ServerOnlineCity.Services;
-using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.ChatService

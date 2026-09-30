@@ -1,12 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using RimWorldOnlineCity.UI;
+﻿using RimWorldOnlineCity.UI;
+using System;
 
 namespace RimWorldOnlineCity
 {
@@ -46,11 +39,11 @@ namespace RimWorldOnlineCity
 
         public override void DoWindowContents(Rect inRect)
         {
-            Text.Font = GameFont.Medium; 
-            
+            Text.Font = GameFont.Medium;
+
             var chatAreaOuter = new Rect(inRect.x + 20f, inRect.y, inRect.width - 20f, inRect.height - 20f);
             PrintBox.Drow(chatAreaOuter);
         }
-        
+
     }
 }

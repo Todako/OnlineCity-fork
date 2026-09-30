@@ -1,8 +1,6 @@
 ﻿using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace Model
 {
@@ -12,7 +10,7 @@ namespace Model
         public string ErrorText { get; set; }
 
         public int State { get; set; }
-        
+
         public string StartInitiatorPlayer { get; set; }
 
         public long HostPlaceServerId { get; set; }

@@ -1,12 +1,4 @@
-﻿using RimWorld;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
+﻿using System;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -70,7 +62,7 @@ namespace RimWorldOnlineCity.UI
             GUI.color = Color.white;
             string editBuffer = Buffer ?? Min.ToString();
             int valBuffer = val;
-            var rect = ShowButton 
+            var rect = ShowButton
                 ? new Rect(inRect.x + inRect.height, inRect.y, inRect.width - inRect.height * 2, inRect.height).ContractedBy(2f)
                 : new Rect(inRect.x, inRect.y, inRect.width, inRect.height).ContractedBy(2f);
             //поле ввода

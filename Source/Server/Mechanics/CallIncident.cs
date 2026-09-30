@@ -82,7 +82,7 @@ namespace ServerOnlineCity.Mechanics
                     .Where(m => m is FMailIncident)
                     .Cast<FMailIncident>()
                     .Where(m => m.NumberOrder == fPacket.NumberOrder);
-                
+
                 if (list.Count() > ServerManager.ServerSettings.GeneralSettings.IncidentCountInOffline)
                     return "OC_Incidents_CallIncidents_MaxIncidentsCnt";
 
@@ -119,22 +119,22 @@ namespace ServerOnlineCity.Mechanics
             var fileName = Path.Combine(Path.GetDirectoryName(Repository.Get.SaveFileName)
                 , $"Incidents_{DateTime.Now.ToString("yyyy-MM")}.csv");
             if (!File.Exists(fileName))
-            { 
+            {
                 File.WriteAllText(fileName, $"time;record" +
                     $";fromLogin;toLogin;fromDay;toDay;fromWorth;toWorth;paramIncident;serverId" +
                     //структура data:
-                    $";worthTarget;delayAfterMail;numberOrder;countInOrder" + 
+                    $";worthTarget;delayAfterMail;numberOrder;countInOrder" +
                     Environment.NewLine, Encoding.UTF8);
             }
 
             if (fromWorth == 0) fromWorth = (int)Repository.GetPlayerByLogin(mail.From.Login).AllCostWorldObjects();
             if (toWorth == 0) toWorth = (int)Repository.GetPlayerByLogin(mail.To.Login).AllCostWorldObjects();
 
-            var param = $"{mail.IncidentType} lvl:{mail.IncidentMult}" 
+            var param = $"{mail.IncidentType} lvl:{mail.IncidentMult}"
                 + $" mode:" + (mail.IncidentParams != null && mail.IncidentParams.Count > 0 ? mail.IncidentParams[0] : null)  //arrivalMode / anyParam
                 + $" who:" + (mail.IncidentParams != null && mail.IncidentParams.Count > 1 ? mail.IncidentParams[1] : null) //faction
                 + (mail.IncidentParams != null && mail.IncidentParams.Count > 2 ? $" alt:" + mail.IncidentParams[2] : null); //not use
-            
+
             var contentLog = dateTimeToStr(DateTime.Now) + ";" + record
                 + $";{mail.From.Login};{mail.To.Login};{mail.From.LastTick / 60000};{mail.To.LastTick / 60000};{fromWorth};{toWorth};{param};{mail.PlaceServerId}"
                 + ";" + data + Environment.NewLine;

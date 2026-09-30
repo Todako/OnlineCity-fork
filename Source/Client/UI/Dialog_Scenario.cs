@@ -1,13 +1,5 @@
-﻿using OCUnion;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Transfer.ModelMails;
-using UnityEngine;
-using Verse;
-using RimWorld;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -119,8 +111,9 @@ namespace RimWorldOnlineCity.UI
         private string checkInvalidValue(bool isScenarioErr)
         {
             List<string> text = new List<string>();
-            if (isScenarioErr){ 
-                text.Add("Scenario"); 
+            if (isScenarioErr)
+            {
+                text.Add("Scenario");
             }
             return string.Join(", ", text);
         }

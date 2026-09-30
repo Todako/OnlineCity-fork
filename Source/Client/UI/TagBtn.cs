@@ -2,13 +2,6 @@
 using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Verse;
-using OCUnion;
-using UnityEngine;
-using RimWorld.Planet;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -74,8 +67,8 @@ namespace RimWorldOnlineCity.UI
 
             return $"<btn name=thing{new System.Random().Next(10000000, 99999999)}" +
                 $" class=thing d={pack.Replace(" ", "*")}>" +
-                (!string.IsNullOrEmpty(thingTrade.PawnParam) && thingTrade.PawnParam.Contains("Human") 
-                    ? $"<img IconHuman>" 
+                (!string.IsNullOrEmpty(thingTrade.PawnParam) && thingTrade.PawnParam.Contains("Human")
+                    ? $"<img IconHuman>"
                     : $"<img defName={thingTrade.DefName}>") +
                 (withText ? thingTrade.LabelTextShort : "") +
                 $"</btn>";

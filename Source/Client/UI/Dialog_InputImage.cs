@@ -1,17 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using RimWorldOnlineCity.UI;
-using System.Runtime.InteropServices;
-using System.Threading;
-using System.Windows;
 using Rect = UnityEngine.Rect;
-using TextBox = RimWorldOnlineCity.UI.TextBox;
 
 namespace RimWorldOnlineCity
 {
@@ -91,7 +79,7 @@ namespace RimWorldOnlineCity
             }
 
             var ev = Event.current;
-            if (LastImage != null 
+            if (LastImage != null
                 && (Widgets.ButtonText(new Rect(inRect.width - btnSize.x - 20f, inRect.height - btnSize.y - 20f, btnSize.x, btnSize.y), "OK")
                 || ev.isKey && ev.type == EventType.KeyDown && ev.keyCode == KeyCode.Return))
             {

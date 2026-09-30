@@ -2,3 +2,5 @@
 /Source/Chat/obj
 /Source/DiscordChatBotServer/obj
 /Source/UnitTest/obj
+/Source/Client/obj
+/Source/BuildOutput

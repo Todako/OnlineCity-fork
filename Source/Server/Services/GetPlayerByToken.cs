@@ -1,7 +1,7 @@
-﻿using System;
-using System.Linq;
-using OCUnion.Transfer.Model;
+﻿using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
+using System;
+using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services

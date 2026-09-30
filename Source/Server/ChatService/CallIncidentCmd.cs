@@ -8,7 +8,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Transfer;
-using Transfer.ModelMails;
 
 namespace ServerOnlineCity.ChatService
 {
@@ -38,7 +37,7 @@ namespace ServerOnlineCity.ChatService
             var ownLogin = player.Public.Login;
 
             int cost = 0;
-            for(int i = 0; i < argsM.Count; i++)
+            for (int i = 0; i < argsM.Count; i++)
             {
                 if (argsM[i]?.Contains("cost=") == true)
                 {
@@ -48,14 +47,14 @@ namespace ServerOnlineCity.ChatService
                     break;
                 }
             }
-            
+
             //базовая проверка аргументов
             if (argsM.Count < 2)
                 return chatManager?.PostCommandPrivatPostActivChat(ChatCmdResult.IncorrectSubCmd, ownLogin, chat,
                     "OC_Incidents_CallIncidents_Err1");
 
             //собираем данные
-            var incident = Incidents.ParseIncidentName(argsM[0]); 
+            var incident = Incidents.ParseIncidentName(argsM[0]);
             if (incident == null)
             {
                 return chatManager?.PostCommandPrivatPostActivChat(ChatCmdResult.CommandNotFound, ownLogin, chat, "Command " + argsM[0] + " not found");
@@ -217,7 +216,7 @@ namespace ServerOnlineCity.ChatService
                 }
             }
 
-            
+
             error = null;
             if (targetPlayer != null)
             {

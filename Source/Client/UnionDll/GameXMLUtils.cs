@@ -1,11 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Xml;
-using Verse;
 
 namespace OCUnion
 {
@@ -171,7 +168,7 @@ namespace OCUnion
             int pos = xml.IndexOf(tagNameB, after);
             if (pos < 0) return xml;
             pos += tagNameB.Length;
-            
+
             var tagNameE = "</" + tagName + ">";
             int posE = xml.IndexOf(tagNameE, pos);
             if (posE < 0) return xml;
@@ -179,7 +176,7 @@ namespace OCUnion
             return xml.Substring(0, pos) + newValue + xml.Substring(posE);
         }
 
-        public static string ReplaceByTag(string xml, string tagName 
+        public static string ReplaceByTag(string xml, string tagName
             , Func<string, string> getNewValue)
         {
             var tagNameB = "<" + tagName + ">";

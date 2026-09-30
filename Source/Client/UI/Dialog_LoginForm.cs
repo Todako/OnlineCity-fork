@@ -1,14 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
+﻿using HugsLib;
 using OCUnion;
-using HugsLib;
-using RimWorldOnlineCity.UI;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 
 namespace RimWorldOnlineCity
@@ -171,7 +165,7 @@ OOOOOOOOOO
             }
             mainListing.Gap();
             mainListing.End();
-            
+
             var irect = new Rect(inRect);
             irect.y += mainListing.CurHeight;
             irect.width -= 135;
@@ -182,7 +176,7 @@ OOOOOOOOOO
             var iresct = mainListing.GetRect(30f);
 
             //что к чему
-            ListableOption item = new ListableOption_WebLink("OCity_Dialog_Exchenge_What_Point".Translate(), () => 
+            ListableOption item = new ListableOption_WebLink("OCity_Dialog_Exchenge_What_Point".Translate(), () =>
             {
                 var textForm = new Dialog_TextOut(Dialog_MainOnlineCity.AboutGeneralText);
                 Find.WindowStack.Add(textForm);
@@ -293,7 +287,8 @@ OOOOOOOOOO
             const float listingColumnSpacing = 17f;
 
             var expectedHeight = categoryPadding * 2 + (subListingRowHeight + subListingSpacing) * 1;
-            MakeSubListing(mainListing, 0, expectedHeight, categoryPadding, categoryInset, subListingSpacing, (sub, width) => {
+            MakeSubListing(mainListing, 0, expectedHeight, categoryPadding, categoryInset, subListingSpacing, (sub, width) =>
+            {
                 sub.ColumnWidth = subListingLabelWidth;
                 Text.Anchor = TextAnchor.MiddleLeft;
                 var rect = sub.GetRect(subListingRowHeight);

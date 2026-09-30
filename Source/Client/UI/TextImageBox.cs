@@ -1,7 +1,4 @@
-﻿using UnityEngine;
-using Verse;
-
-namespace RimWorldOnlineCity.UI
+﻿namespace RimWorldOnlineCity.UI
 {
     /// <summary>
     /// Контейнер відображення форматованого тексту з зображеннями та підтримкою прокручування.

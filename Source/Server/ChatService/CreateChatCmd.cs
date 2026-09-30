@@ -1,11 +1,11 @@
-﻿using OCUnion;
+﻿using Model;
+using OCUnion;
+using OCUnion.Transfer.Types;
 using ServerOnlineCity.Model;
 using ServerOnlineCity.Services;
 using System;
-using Model;
 using System.Collections.Generic;
 using Transfer;
-using OCUnion.Transfer.Types;
 
 namespace ServerOnlineCity.ChatService
 {

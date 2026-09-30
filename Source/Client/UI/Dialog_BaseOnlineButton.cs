@@ -1,12 +1,6 @@
 ﻿using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Transfer.ModelMails;
-using UnityEngine;
-using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -141,7 +135,7 @@ namespace RimWorldOnlineCity.UI
                     SelectTab0Mult = newVal;
                 }
                 rect.y += rect.height;
-                
+
             }
             else
             {
@@ -327,7 +321,7 @@ namespace RimWorldOnlineCity.UI
 
             if (StatusCheck
                 && Widgets.ButtonText(new Rect(rect.x, rect.y, 140f, 40f)
-                , TabIndex == 0 && SelectTab0Mult == SelectTab0MultMax && (SelectTab0Faction != "tribe" || SelectTab0Type != "raid") 
+                , TabIndex == 0 && SelectTab0Mult == SelectTab0MultMax && (SelectTab0Faction != "tribe" || SelectTab0Type != "raid")
                     ? "EXTERMINATUS" : "OC_Incidents_Execute".Translate().ToString()))
             {
                 var command = GetCommand();
@@ -354,7 +348,7 @@ namespace RimWorldOnlineCity.UI
                 + (TabIndex == 0 ? SelectTab0Type : SelectTab1Type)
                 + $" '{Base.OnlineWObject.LoginOwner}'"
                 + $" {Base.OnlineWObject.PlaceServerId}"
-                + (TabIndex != 0 ? $" {SelectTab0Mult}" : $" {SelectTab0Mult}" + (SelectTab0Type != "raid" ? "": $" {SelectTab0ArrivalModes} {SelectTab0Faction}")
+                + (TabIndex != 0 ? $" {SelectTab0Mult}" : $" {SelectTab0Mult}" + (SelectTab0Type != "raid" ? "" : $" {SelectTab0ArrivalModes} {SelectTab0Faction}")
                     );
         }
 

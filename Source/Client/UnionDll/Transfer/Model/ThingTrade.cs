@@ -1,12 +1,8 @@
-﻿using RimWorld;
+﻿using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using Verse;
-using OCUnion;
-using OCUnion.Transfer.Model;
 using System.Xml.Serialization;
 
 namespace Model
@@ -499,7 +495,7 @@ namespace Model
         /// <returns></returns>
         public virtual string PackToString()
         {
-            return $"{DefName},{Count},{(int)(GameCost*1000)},{Quality},{PawnParam.Replace(",", "@")},{(int)Affiliation},{Name}";
+            return $"{DefName},{Count},{(int)(GameCost * 1000)},{Quality},{PawnParam.Replace(",", "@")},{(int)Affiliation},{Name}";
         }
 
         public virtual ThingTradeInfoParam UnpackFromString(string str)

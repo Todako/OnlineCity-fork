@@ -12,7 +12,7 @@ namespace OC.DiscordBotServer
         }
 
         public BotDataContext(DbContextOptions<BotDataContext> options)
-            : base (options)
+            : base(options)
         {
             // Database.EnsureCreated();
             this.Database.Migrate();

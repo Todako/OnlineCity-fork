@@ -1,11 +1,5 @@
-﻿using OCUnion;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
-using Verse;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -26,7 +20,7 @@ namespace RimWorldOnlineCity.UI
         public Action OnCloseed { get; set; }
 
         public override Vector2 InitialSize
-        {           
+        {
             get { return new Vector2(500f, 500f); } //новое поле ввода с описанием +50
         }
 

@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace OCUnion.Transfer.Types
+﻿namespace OCUnion.Transfer.Types
 {
     /*
     /// <summary>

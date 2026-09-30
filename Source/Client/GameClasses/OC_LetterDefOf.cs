@@ -1,25 +1,17 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using RimWorld;
-using Verse;
-
-namespace RimWorldOnlineCity
+﻿namespace RimWorldOnlineCity
 {
-	[DefOf]
-	public static class OC_LetterDefOf
-	{
-		public static LetterDef GoldenLetter;
-		public static LetterDef GreyGoldenLetter;
-		public static LetterDef PurpleLetter;
-		public static LetterDef ToxicLetter;
-		public static LetterDef BlueLetter;
-		public static LetterDef OrangeLetter;
-		public static LetterDef BrownLetter;
-		public static LetterDef PinkLetter;
-	}
+    [DefOf]
+    public static class OC_LetterDefOf
+    {
+        public static LetterDef GoldenLetter;
+        public static LetterDef GreyGoldenLetter;
+        public static LetterDef PurpleLetter;
+        public static LetterDef ToxicLetter;
+        public static LetterDef BlueLetter;
+        public static LetterDef OrangeLetter;
+        public static LetterDef BrownLetter;
+        public static LetterDef PinkLetter;
+    }
 }
 
 //ниже пример дефа письма

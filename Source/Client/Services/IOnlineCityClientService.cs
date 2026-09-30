@@ -2,7 +2,7 @@
 
 namespace RimWorldOnlineCity.Services
 {
-    interface IOnlineCityClientService <T>        
+    interface IOnlineCityClientService<T>
     {
         PackageType RequestTypePackage { get; }
         PackageType ResponseTypePackage { get; }

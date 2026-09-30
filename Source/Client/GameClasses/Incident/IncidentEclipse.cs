@@ -1,9 +1,4 @@
-﻿using RimWorld;
-using RimWorld.Planet;
-using UnityEngine;
-using Verse;
-
-namespace RimWorldOnlineCity
+﻿namespace RimWorldOnlineCity
 {
     class IncidentEclipse : OCIncident
     {

@@ -1,9 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using OCUnion;
+﻿using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
+using System;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -28,11 +26,11 @@ namespace ServerOnlineCity.Services
             Loger.Log($"Player {packet.Login} start login on server.", Loger.LogLevel.LOGIN);
             Loger.Log($"Player {packet.Login} client version {packet.Version.ToString()}.", Loger.LogLevel.LOGIN);
             packet.Email = Repository.CheckIsIntruder(context, packet.Email, packet.Login);
-            
+
             if (packet.Login == "system") return null;
 
             var player = Repository.GetPlayerByLogin(packet.Login, true);
-            
+
             if (player != null)
             {
                 if (!string.IsNullOrEmpty(packet.KeyReconnect))
@@ -71,14 +69,14 @@ namespace ServerOnlineCity.Services
             context.AllSessionAction(session =>
             {
                 var sc = session.GetContext();
-                if (sc == null 
+                if (sc == null
                     || sc.Player?.Public?.Login != player.Public.Login
                     || sc == context) return;
 
                 Loger.Log("Disconnect old session at relogin " + player.Public.Login, Loger.LogLevel.LOGIN);
                 session.Dispose();
             });
-            
+
             //действия перед входом
             player.ExitReason = OCUnion.Transfer.DisconnectReason.AllGood;
             player.ApproveLoadWorldReason = true;

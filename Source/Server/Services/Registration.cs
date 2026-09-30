@@ -1,5 +1,4 @@
-﻿using System.Linq;
-using OCUnion;
+﻿using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
 using Transfer;
@@ -27,7 +26,7 @@ namespace ServerOnlineCity.Services
 
             var errorValid = Repository.GetData.NameValidator.TextValidator(packet.Login);
             if (errorValid != null)
-            { 
+            {
                 return new ModelStatus()
                 {
                     Status = 1,

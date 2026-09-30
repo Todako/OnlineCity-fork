@@ -1,11 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using OCUnion.Transfer;
+using OCUnion.Transfer.Model;
+using ServerOnlineCity.Model;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using OCUnion;
-using OCUnion.Transfer;
-using OCUnion.Transfer.Model;
-using OCUnion.Transfer.Types;
-using ServerOnlineCity.Model;
 using Transfer;
 
 namespace ServerOnlineCity.Services

@@ -1,17 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using RimWorld;
-using UnityEngine;
-using Verse;
-using Verse.Sound;
-using Transfer;
-using RimWorldOnlineCity.UI;
-using OCUnion;
-using Model;
-
-namespace RimWorldOnlineCity
+﻿namespace RimWorldOnlineCity
 {
     public class Dialog_InfoPlayer : Window
     {
@@ -32,7 +19,7 @@ namespace RimWorldOnlineCity
             doCloseButton = false;
             doCloseX = true;
             resizeable = true;
-            draggable = true; 
+            draggable = true;
 
             info = new PanelInfoPlayer(player);
         }

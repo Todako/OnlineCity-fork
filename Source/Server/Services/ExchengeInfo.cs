@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using Model;
-using OCUnion;
+﻿using OCUnion;
 using OCUnion.Transfer.Model;
-using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
+using System;
 using Transfer;
-using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Services
 {

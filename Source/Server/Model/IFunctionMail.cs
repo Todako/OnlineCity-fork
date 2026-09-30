@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace ServerOnlineCity.Model
+﻿namespace ServerOnlineCity.Model
 {
     public interface IFunctionMail
     {

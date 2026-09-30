@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace OC.DiscordBotServer.Repositories
 {
-    public class Chanel2ServerRepository : IRepository <Chanel2Server>
+    public class Chanel2ServerRepository : IRepository<Chanel2Server>
     {
         private readonly BotDataContext _dataContext;
 
@@ -32,7 +32,7 @@ namespace OC.DiscordBotServer.Repositories
 
         public void Delete(IEnumerable<Chanel2Server> servers)
         {
-            _dataContext.Chanel2Servers.RemoveRange(servers);            
+            _dataContext.Chanel2Servers.RemoveRange(servers);
         }
     }
 }

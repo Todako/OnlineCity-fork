@@ -1,13 +1,13 @@
-﻿using System;
-using System.Net;
-using OC.DiscordBotServer.Models;
-using Discord.Commands;
-using Transfer;
-using System.Net.Sockets;
-using OCUnion;
-using Util;
+﻿using Discord.Commands;
 using OC.DiscordBotServer.Common;
 using OC.DiscordBotServer.Helpers;
+using OC.DiscordBotServer.Models;
+using OCUnion;
+using System;
+using System.Net;
+using System.Net.Sockets;
+using Transfer;
+using Util;
 
 namespace OC.DiscordBotServer.Commands
 {
@@ -36,7 +36,7 @@ namespace OC.DiscordBotServer.Commands
                 {
                     return Languages.Translator.ErrTryAddToExistChannel + $"{server2Chanel.Chanel2Server.IP}, Register on new discrord channel pls ";
                 }
-                else 
+                else
                 {
                     // TO DO: if ip is eqauls, 
                     return Languages.Translator.ErrTryAddToExistChannel + $"{server2Chanel.Chanel2Server.IP}, Register on new discrord channel pls ";
@@ -54,7 +54,7 @@ namespace OC.DiscordBotServer.Commands
             }
 
             return string.Empty;
-        }     
+        }
 
         public string Execute(SocketCommandContext context, string ip, string token)
         {

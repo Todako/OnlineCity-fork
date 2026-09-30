@@ -3,9 +3,7 @@ using OCUnion;
 using OCUnion.Transfer.Types;
 using ServerOnlineCity.Model;
 using ServerOnlineCity.Services;
-using System;
 using System.Collections.Generic;
-using System.Linq;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -25,12 +23,12 @@ namespace ServerOnlineCity.ChatService
         //*не обязательный параметр цвет определяется по началу с / Может быть таким:
 
         // treatbig - красное письмо со звуком
-	    //treatsmall - красное письмо
-	    //death - серое письмо со звуком
-	    //negative - желтое письмо
-	    //positive - синее письмо со звуком
-	    //visitor - синее письмо
-	    //neutral - серое письмо (по умолчанию)
+        //treatsmall - красное письмо
+        //death - серое письмо со звуком
+        //negative - желтое письмо
+        //positive - синее письмо со звуком
+        //visitor - синее письмо
+        //neutral - серое письмо (по умолчанию)
 
         private readonly ChatManager _chatManager;
 
@@ -60,7 +58,7 @@ namespace ServerOnlineCity.ChatService
             {
                 all = true;
             }
-            else 
+            else
             {
                 targetPlayer = Repository.GetPlayerByLogin(argsM[argNum]);
                 if (targetPlayer == null)
@@ -78,8 +76,8 @@ namespace ServerOnlineCity.ChatService
             ModelMailMessadge.MessadgeTypes type = ModelMailMessadge.MessadgeTypes.Neutral;
             string label;
             string text = "";
-            
-            if(argsM[argNum][0] == '/')
+
+            if (argsM[argNum][0] == '/')
             {
                 var str = argsM[argNum].ToLower();
                 switch (str)
@@ -114,7 +112,7 @@ namespace ServerOnlineCity.ChatService
 
             label = argsM[argNum++];
 
-            while(argNum < argsM.Count)
+            while (argNum < argsM.Count)
             {
                 text += argsM[argNum++] + " ";
             }
@@ -125,7 +123,7 @@ namespace ServerOnlineCity.ChatService
             if (online)
             {
                 reciever = "online";
-                foreach(PlayerServer pl in Repository.GetData.GetPlayersAll)
+                foreach (PlayerServer pl in Repository.GetData.GetPlayersAll)
                 {
                     if (pl.Online)
                     {

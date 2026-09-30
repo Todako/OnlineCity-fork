@@ -1,15 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using Model;
+﻿using Model;
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
 using ServerCore.Model;
 using ServerOnlineCity.Model;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Reflection;
+using System.Text;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -57,7 +57,7 @@ namespace ServerOnlineCity.Services
                                 if (!context.Player.ApproveLoadWorldReason)
                                 {
                                     context.Player.ExitReason = DisconnectReason.FilesMods;
-                                    Loger.Log($"Login : {context.Player.Public.Login} not all files checked,{context.Player.ApproveLoadWorldReason.ToString() } Disconnect", Loger.LogLevel.WARNING);
+                                    Loger.Log($"Login : {context.Player.Public.Login} not all files checked,{context.Player.ApproveLoadWorldReason.ToString()} Disconnect", Loger.LogLevel.WARNING);
                                     result.SaveFileData = null;
                                     return result;
                                 }
@@ -69,7 +69,7 @@ namespace ServerOnlineCity.Services
                             {
                                 if (context.Player.MailsConfirmationSave.Count > 0)
                                 {
-                                    for (int i = 0; i < context.Player.MailsConfirmationSave.Count; i++) 
+                                    for (int i = 0; i < context.Player.MailsConfirmationSave.Count; i++)
                                         context.Player.MailsConfirmationSave[i].NeedSaveGame = false;
 
                                     Loger.Log($"MailsConfirmationSave add {context.Player.MailsConfirmationSave.Count} (mails={context.Player.Mails.Count})");

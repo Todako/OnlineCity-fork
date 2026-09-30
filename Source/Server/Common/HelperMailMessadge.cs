@@ -1,7 +1,4 @@
 ﻿using ServerOnlineCity.Model;
-using System;
-using System.Collections.Generic;
-using System.Text;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Common

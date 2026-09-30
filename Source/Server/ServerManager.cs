@@ -1,25 +1,22 @@
 ﻿using OCUnion;
+using OCUnion.Transfer.Model;
 using ServerCore.Model;
 using ServerOnlineCity.Model;
+using ServerOnlineCity.Services;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using Transfer;
 using Util;
-using System.Text;
-using OCUnion.Transfer.Model;
-using OCUnion.Common;
-using OCUnion.Transfer;
-using ServerOnlineCity.Services;
-using System.Net;
-using System.Diagnostics;
-using System.Globalization;
-using System.Text.Json;
-using System.ComponentModel.DataAnnotations;
 
 namespace ServerOnlineCity
 {
@@ -44,7 +41,7 @@ namespace ServerOnlineCity
         private Assembly Missing_AssemblyResolver(object sender, ResolveEventArgs args)
         {
             // var asm = args.Name.Split(",")[0];
-            var asm = args.RequestingAssembly == null 
+            var asm = args.RequestingAssembly == null
                 ? "Server"
                 : args.RequestingAssembly.FullName.Split(',')[0]; //кто это делал? магия перестала работать т_т
             var a = Assembly.Load(asm);
@@ -197,7 +194,7 @@ namespace ServerOnlineCity
             Loger.Log($"Server starting on port: {ServerSettings.Port}");
             Connect.Start(null, ServerSettings.Port);
         }
-       
+
         /// <summary>
         /// check and create if it is necessary DiscrordUser
         /// </summary>
@@ -331,7 +328,7 @@ namespace ServerOnlineCity
 
             //обнавляем в первые секунды каждого часа
             if (Repository.GetData.RankingUpdate == DateTime.MinValue) Repository.GetData.RankingUpdate = DateTime.UtcNow.AddHours(-1);
-            
+
             if (Repository.GetData.RankingUpdate.Hour != DateTime.UtcNow.Hour || Repository.GetData.RankingUpdate.Date != DateTime.UtcNow.Date)
             {
                 Repository.GetData.RankingUpdate = DateTime.UtcNow;
@@ -594,7 +591,7 @@ namespace ServerOnlineCity
         {
             lock (Sessions)
             {
-                for(int i = 0; i < Sessions.Count; i++)
+                for (int i = 0; i < Sessions.Count; i++)
                 {
                     if (Sessions[i].IsActive) act(Sessions[i]);
                     if (!Sessions[i].IsActive) Sessions.RemoveAt(i--);

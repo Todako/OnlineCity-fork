@@ -1,12 +1,11 @@
-﻿using OCUnion;
+﻿using Model;
+using OCUnion;
+using OCUnion.Transfer.Model;
+using OCUnion.Transfer.Types;
 using ServerOnlineCity.Model;
 using ServerOnlineCity.Services;
-using System;
-using Model;
 using System.Collections.Generic;
 using Transfer;
-using OCUnion.Transfer.Types;
-using OCUnion.Transfer.Model;
 
 namespace ServerOnlineCity.ChatService
 {
@@ -35,7 +34,7 @@ namespace ServerOnlineCity.ChatService
                 return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.CommandNotFound, myLogin, chat, "The player is already in the state");
 
             var name = (argsM[0] ?? "").Trim();
-            
+
             var errorValid = Repository.GetData.NameValidator.TextValidator(name);
             if (errorValid != null)
             {

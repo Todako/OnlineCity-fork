@@ -1,8 +1,4 @@
-﻿using RimWorld;
-using UnityEngine;
-using Verse;
-
-namespace RimWorldOnlineCity
+﻿namespace RimWorldOnlineCity
 {
     class IncidentEMP : OCIncident
     {

@@ -1,5 +1,4 @@
-﻿using OCUnion;
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -61,7 +60,7 @@ namespace ServerOnlineCity
             Console.WriteLine("https://discordapp.com/oauth2/authorize?&client_id=638000465740824614&scope=bot&permissions=397284551680");
             Console.WriteLine("Then type this in a discord channel to synchronize messages in the discord");
             Console.WriteLine("Working rule: one discord channel for one Onlyne city server");
-            var discordServerToken = Repository.GetPlayerByLogin("discord").DiscordToken;            
+            var discordServerToken = Repository.GetPlayerByLogin("discord").DiscordToken;
             Console.WriteLine("OC! Reg IP_Server:Port Bot_Token");
             // Получение имени компьютера.
             String host = System.Net.Dns.GetHostName();

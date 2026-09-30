@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Xml.Serialization;
 
 namespace Transfer
@@ -29,7 +28,7 @@ namespace Transfer
         /// <summary>
         /// Время размещения на сервере
         /// </summary>
-        public DateTime Created  { get; set; }
+        public DateTime Created { get; set; }
 
         /// <summary>
         /// Вещи (тип и кол-во) которые отдаст Owner. Все должны быть Concrete = true
@@ -103,7 +102,7 @@ namespace Transfer
 
         private string GetThingsHashString(List<ThingTrade> things)
         {
-            return things.Count == 0 ? "empty" 
+            return things.Count == 0 ? "empty"
                 : things.Select(t => t.DefName + "(" + t.PawnParam + ")" + (t.Count == 1 ? "" : "*" + t.Count) + "#")
                 .OrderBy(t => t)
                 .Distinct()
@@ -119,7 +118,7 @@ namespace Transfer
 
         public TradeOrder Clone()
         {
-            var clone =  (TradeOrder)this.MemberwiseClone();
+            var clone = (TradeOrder)this.MemberwiseClone();
             clone.SellThings = this.SellThings.Select(t => (ThingTrade)t.Clone()).ToList();
             clone.BuyThings = this.BuyThings.Select(t => (ThingTrade)t.Clone()).ToList();
             clone.PrivatPlayers = new List<Player>(this.PrivatPlayers);

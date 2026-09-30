@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace OCUnion
 {
@@ -196,7 +194,7 @@ namespace OCUnion
             StartGameYear = -1;
 
             ColonyScreenEnable = true;
-            
+
             ColonyScreenHighQuality = true;
 
             ColonyScreenDelayDays = 1;

@@ -2,7 +2,6 @@ using Model;
 using OCUnion;
 using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
-using OCUnion.Transfer.Types;
 using ServerOnlineCity.Services;
 using System;
 using System.Collections.Generic;

@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Collections.Generic;
 
 namespace OC.DiscordBotServer.Repositories
 {
@@ -11,6 +7,6 @@ namespace OC.DiscordBotServer.Repositories
     {
         bool AddNewItem(TEntity entity);
         IReadOnlyList<TEntity> GetAll();
-        void Delete( IEnumerable<TEntity> entityes);
+        void Delete(IEnumerable<TEntity> entityes);
     }
 }

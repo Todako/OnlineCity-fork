@@ -2,9 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Verse;
 
 namespace OCUnion.Transfer.Model
 {
@@ -23,7 +20,7 @@ namespace OCUnion.Transfer.Model
         }
 
         public static List<int> GetSkills(Pawn pawn)
-        { 
+        {
             var skills = new List<int>();
             for (int i = 0; i < pawn.skills.skills.Count; i++)
             {

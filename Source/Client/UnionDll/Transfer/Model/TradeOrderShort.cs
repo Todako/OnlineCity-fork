@@ -1,10 +1,6 @@
 ﻿using Model;
 using OCUnion;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Transfer
 {
@@ -13,7 +9,7 @@ namespace Transfer
     {
 
         public TradeOrderShort()
-        { 
+        {
         }
         public TradeOrderShort(TradeWorldObjectEntry trade)
         {
@@ -28,7 +24,7 @@ namespace Transfer
 
         public override string ToString()
         {
-            return "OCity_Dialog_Exchenge_Trade_Orders".TranslateCache() + " " 
+            return "OCity_Dialog_Exchenge_Trade_Orders".TranslateCache() + " "
                 + "OCity_Caravan_Player".TranslateCache(Name, LoginOwner);
         }
     }

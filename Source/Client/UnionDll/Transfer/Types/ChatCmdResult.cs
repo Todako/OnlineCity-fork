@@ -1,6 +1,4 @@
-﻿using System.ComponentModel;
-
-namespace OCUnion.Transfer.Types
+﻿namespace OCUnion.Transfer.Types
 {
     public enum ChatCmdResult : byte
     {

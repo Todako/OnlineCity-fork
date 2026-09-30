@@ -1,8 +1,8 @@
-﻿using System;
-using Model;
+﻿using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
+using System;
 using Transfer;
 
 namespace ServerOnlineCity.Services
