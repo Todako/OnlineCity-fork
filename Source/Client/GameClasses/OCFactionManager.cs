@@ -3,6 +3,8 @@ using Model;
 using OCUnion;
 using System;
 using System.Collections.Generic;
+using RimWorld;
+using Verse;
 
 namespace GameClasses
 {

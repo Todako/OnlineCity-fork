@@ -1,4 +1,7 @@
-﻿namespace RimWorldOnlineCity
+﻿using RimWorld;
+using Verse;
+
+namespace RimWorldOnlineCity
 {
     public class IncidentInfistation : OCIncident
     {

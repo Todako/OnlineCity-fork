@@ -4,6 +4,9 @@ using OCUnion.Transfer.Model;
 using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
+using RimWorld;
+using Verse;
+using Verse.AI;
 
 namespace RimWorldOnlineCity
 {

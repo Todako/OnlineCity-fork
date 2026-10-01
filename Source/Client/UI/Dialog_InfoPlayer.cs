@@ -1,4 +1,7 @@
-﻿namespace RimWorldOnlineCity
+﻿using UnityEngine;
+using Verse;
+
+namespace RimWorldOnlineCity
 {
     public class Dialog_InfoPlayer : Window
     {

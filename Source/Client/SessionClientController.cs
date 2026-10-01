@@ -17,6 +17,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Transfer;
 using Util;
+using RimWorld;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

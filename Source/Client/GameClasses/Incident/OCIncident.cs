@@ -3,6 +3,9 @@ using OCUnion;
 using OCUnion.Common;
 using System;
 using System.Collections.Generic;
+using RimWorld;
+using Verse;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

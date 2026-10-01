@@ -1,4 +1,6 @@
-﻿namespace RimWorldOnlineCity.UI
+﻿using UnityEngine;
+
+namespace RimWorldOnlineCity.UI
 {
     public class TextBox : DialogControlBase
     {

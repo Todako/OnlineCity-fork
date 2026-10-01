@@ -1,4 +1,6 @@
-﻿namespace RimWorldOnlineCity.UI
+﻿using UnityEngine;
+
+namespace RimWorldOnlineCity.UI
 {
     /// <summary>
     /// Контейнер відображення форматованого тексту з зображеннями та підтримкою прокручування.

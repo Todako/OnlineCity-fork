@@ -4,6 +4,8 @@ using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
 using Transfer.ModelMails;
+using RimWorld;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

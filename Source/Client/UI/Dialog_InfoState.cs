@@ -1,4 +1,6 @@
 ﻿using OCUnion.Transfer.Model;
+using UnityEngine;
+using Verse;
 
 namespace RimWorldOnlineCity
 {

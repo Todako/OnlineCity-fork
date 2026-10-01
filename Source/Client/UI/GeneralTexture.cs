@@ -4,6 +4,8 @@ using RimWorldOnlineCity.UI;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using UnityEngine;
+using Verse;
 
 namespace RimWorldOnlineCity
 {

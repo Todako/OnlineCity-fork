@@ -6,6 +6,9 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using Transfer;
+using UnityEngine;
+using Verse;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity.UI
 {

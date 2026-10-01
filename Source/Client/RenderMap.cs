@@ -4,6 +4,8 @@ using RimWorldOnlineCity;
 using System;
 using System.Collections;
 using System.Reflection;
+using UnityEngine;
+using Verse;
 
 namespace MapRenderer
 {

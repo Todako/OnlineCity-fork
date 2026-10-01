@@ -3,6 +3,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
+using UnityEngine;
+using Verse;
 
 namespace RimWorldOnlineCity.UI
 {

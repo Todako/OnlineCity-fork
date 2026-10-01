@@ -4,6 +4,8 @@ using OCUnion;
 using OCUnion.Common;
 using System;
 using System.IO;
+using RimWorld;
+using Verse;
 
 namespace RimWorldOnlineCity.GameClasses.Harmony
 {

@@ -5,6 +5,9 @@ using RimWorldOnlineCity.GameClasses.Harmony;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using RimWorld;
+using Verse;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Transfer;
+using UnityEngine;
+using Verse;
 
 namespace RimWorldOnlineCity
 {

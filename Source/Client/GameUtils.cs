@@ -11,6 +11,10 @@ using System.IO;
 using System.Linq;
 using System.Xml;
 using Util;
+using RimWorld;
+using UnityEngine;
+using Verse;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

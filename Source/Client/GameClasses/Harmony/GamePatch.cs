@@ -8,6 +8,10 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
+using RimWorld;
+using UnityEngine;
+using Verse;
+using RimWorld.Planet;
 
 namespace RimWorldOnlineCity.GameClasses.Harmony
 {
