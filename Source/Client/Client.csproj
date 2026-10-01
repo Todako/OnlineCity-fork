@@ -222,6 +222,18 @@
     <WCFMetadata Include="Connected Services\" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>$(NuGetPackageRoot)lib.harmony\2.0.4\lib\net472\0Harmony.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="HugsLib">
+      <HintPath>$(NuGetPackageRoot)unlimitedhugs.rimworld.hugslib\8.0.0\lib\net472\HugsLib.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="$HugsLibChecker">
+      <HintPath>$(NuGetPackageRoot)unlimitedhugs.rimworld.hugslibchecker\5.0.0\lib\net35\$HugsLibChecker.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <PackageReference Include="Lib.Harmony">
       <Version>2.0.4</Version>
     </PackageReference>

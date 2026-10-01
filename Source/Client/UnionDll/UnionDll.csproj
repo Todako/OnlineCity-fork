@@ -165,6 +165,10 @@
     <Compile Include="WorkTimer.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="ICSharpCode.SharpZipLib">
+      <HintPath>$(NuGetPackageRoot)sharpziplib\0.86.0\lib\20\ICSharpCode.SharpZipLib.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <PackageReference Include="SharpZipLib">
       <Version>0.86.0</Version>
     </PackageReference>
