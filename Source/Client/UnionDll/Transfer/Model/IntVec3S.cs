@@ -1,4 +1,5 @@
 ﻿using System;
+using Verse;
 
 namespace OCUnion.Transfer.Model
 {

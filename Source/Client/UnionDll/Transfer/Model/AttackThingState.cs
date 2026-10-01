@@ -1,4 +1,6 @@
 ﻿using System;
+using RimWorld;
+using Verse;
 
 namespace OCUnion.Transfer.Model
 {

@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Xml;
+using Verse;
 
 namespace OCUnion
 {
