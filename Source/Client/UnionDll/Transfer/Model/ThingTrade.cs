@@ -10,74 +10,74 @@ using Verse;
 namespace Model
 {
     /// <summary>
-    /// Модель хранящая расширенную информацию полученную с игрового объека (при Concrete == true),
-    /// либо только некоторую информацию о том, какой объект должен быть (при Concrete == false)
+    /// Модель, що зберігає розширену інформацію, отриману з ігрового об'єкта (якщо Concrete == true),
+    /// або лише деякі відомості про те, яким має бути об'єкт (якщо Concrete == false).
     /// </summary>
     [Serializable]
     public class ThingTrade : ThingEntry
     {
         /// <summary>
-        /// Содержиться информация о конкретном объекте
+        /// Містить інформацію про конкретний об'єкт.
         /// </summary>
         public bool Concrete { get; set; }
 
         /// <summary>
-        /// Тип вещи
+        /// Тип предмета.
         /// </summary>
         public string DefName { get; set; }
         /// <summary>
-        /// Материал из чего изготовлено
+        /// Матеріал, з якого виготовлено предмет.
         /// </summary>
         public string StuffName { get; set; }
         /// <summary>
-        /// Текущая прочность, если 0 считается масксимальной
-        /// Либо минимально требуемая прочность (при Concrete == false)
+        /// Поточна міцність; якщо дорівнює 0, вважається максимальною.
+        /// Або мінімально необхідна міцність (якщо Concrete == false).
         /// </summary>
         public int HitPoints { get; set; }
         /// <summary>
-        /// Максимальная прочность
-        /// Либо всегда 100 (при Concrete == false)
+        /// Максимальна міцність.
+        /// Або завжди 100 (якщо Concrete == false).
         /// </summary>
         public int MaxHitPoints { get; set; }
         public int HitPointsPrecent => Concrete ? HitPoints * 100 / MaxHitPoints : HitPoints;
         /// <summary>
-        /// Качество изготовления
+        /// Якість виготовлення.
         /// </summary>
         public int Quality { get; set; }
         /// <summary>
-        /// Снято с трупа, применимо только к одежде
+        /// Знято з трупа; застосовується лише до одягу.
         /// </summary>
         public bool WornByCorpse { get; set; }
         /// <summary>
-        /// Не замороженное портится. Информационное (не учавствует в фильтрах и сравнениях)
+        /// Псується, якщо не заморожене. Інформаційне поле (не бере участі у фільтрах і порівняннях).
         /// </summary>
         public bool Rottable { get; set; }
         /// <summary>
-        /// Ориентацияю. Используется только при переносе объектов (CreateThing CreateTrade)
+        /// Орієнтація. Використовується лише під час перенесення об'єктів (CreateThing, CreateTrade).
         /// </summary>
         public int Rotation { get; set; }
         /// <summary>
-        /// Прогресс роста. Используется только при переносе объектов (CreateThing CreateTrade)
+        /// Прогрес росту. Використовується лише під час перенесення об'єктів (CreateThing, CreateTrade).
         /// </summary>
         public float Growth { get; set; }
 
         [XmlIgnore]
         public IntVec3S Position { get; set; }
         /// <summary>
-        /// Несколько параметров пешки текстом, для сравнения в MatchesThing(ThingTrade)
+        /// Кілька параметрів пішака у вигляді тексту для порівняння в MatchesThing(ThingTrade).
         /// </summary>
         public string PawnParam { get; set; }
         /// <summary>
-        /// Цена за 1 единицу в серебре по стандартной расценки игры. Заполняется только при Concrete (при создании из игрово вещи)
+        /// Ціна за одну одиницю в сріблі за стандартними цінами гри. Заповнюється лише за Concrete (під час створення з ігрового предмета).
         /// </summary>
         public float GameCost { get; set; }
         /// <summary>
-        /// У нас этого нет, невозможно продать. Вычисляется функцией ExchengeUtils.ChechToSell
+        /// Цього немає в наявності, продати неможливо. Визначається функцією ExchengeUtils.ChechToSell.
         /// </summary>
         [NonSerialized]
         public bool NotTrade;
         /// <summary>
-        /// Аналогично NotTrade,. указывает доступное кол-во
+        /// Аналогічно NotTrade, указує доступну кількість.
         /// </summary>
         [NonSerialized]
         public int TradeCount;
@@ -93,7 +93,7 @@ namespace Model
         public bool IsPawnHuman => !string.IsNullOrEmpty(PawnParam) && (PawnParam.StartsWith("Human") || PawnParam.StartsWith("Colonist"));
 
         /// <summary>
-        /// Объект соответствующий Data, для показа информации
+        /// Об'єкт, що відповідає Data, для відображення інформації.
         /// </summary>
         [XmlIgnore]
         public Thing DataThing
@@ -188,12 +188,12 @@ namespace Model
         }
 
         /// <summary>
-        /// Проверяет, что вещь thing, не хуже, чем текущая (если пешка, то должна быть равна)
-        /// При equal вещь должна быть точно такой же
+        /// Перевіряє, що предмет thing не гірший за поточний (для пішака має бути рівним).
+        /// Якщо equal дорівнює true, предмет має бути ідентичним.
         /// </summary>
         public bool MatchesThingTrade(ThingTrade thing, bool equal = false)
         {
-            //быстрая проверка
+            // Швидка перевірка.
             if (thing == null)
             {
                 //Log.Message(" ? thing == null");
@@ -205,7 +205,7 @@ namespace Model
                 return false;
             }
 
-            //общая проверка
+            // Загальна перевірка.
             if (thing.StuffName != StuffName)
             {
                 //Log.Message(" ? testThing.StuffName != StuffName " + (StuffName ?? "null") + " " + (testThing.StuffName ?? "null"));
@@ -231,7 +231,7 @@ namespace Model
                 return false;
             }
 
-            if (PawnParam != thing.PawnParam) //если это пешка, то должно быть заполнено у обоих, если нет, то у обоих null
+            if (PawnParam != thing.PawnParam) // Якщо це пішак, значення має бути заповнене в обох; інакше в обох має бути null.
             {
                 return false;
             }
@@ -240,19 +240,19 @@ namespace Model
         }
 
         /// <summary>
-        /// Проверяет, что вещь thing, не хуже, чем текущая (если пешка, то должна быть равна)
+        /// Перевіряє, що предмет thing не гірший за поточний (для пішака має бути рівним).
         /// </summary>
         /// <returns></returns>
         public bool MatchesThing(Thing thing)
         {
             if (thing == null) return false;
-            //быстрая проверка
+            // Швидка перевірка.
             if (DefName != thing.def.defName) return false;
 
             var testThing = CreateTrade(thing, 1, false);
             return MatchesThingTrade(testThing);
             /*
-            //быстрая проверка
+            // Швидка перевірка.
             if (thing == null)
             {
                 //Log.Message(" ? thing == null");
@@ -266,7 +266,7 @@ namespace Model
 
             var testThing = CreateTrade(thing, 1);
 
-            //общая проверка
+            // Загальна перевірка.
             if (testThing.StuffName != StuffName
                 )
             {
@@ -286,7 +286,7 @@ namespace Model
                 return false;
             }
 
-            //в зависимости от Concrete
+            // Залежно від Concrete.
             int hitPrecent = (testThing.HitPoints + 1) * 100 / testThing.MaxHitPoints;
             if (Concrete)
             {
@@ -308,7 +308,7 @@ namespace Model
                 if (thing.LabelShort != DataThing.LabelShort) return false;
             }
 
-            //Проверка схожести средствами игры, для надёжности и идентификации индивидуальности пешек
+            // Перевірка подібності засобами гри для надійності та ідентифікації індивідуальності пішаків.
             if (Concrete)
             {
                 //Log.Message(DataThing.def.defName + " ? " + thing.def.defName + " " + TransferableUtility.TransferAsOne(thing, DataThing).ToString());
@@ -320,7 +320,7 @@ namespace Model
         }
 
         /// <summary>
-        /// Минимальные данные для создания простых вещей в том числе на сервере
+        /// Мінімальні дані для створення простих предметів, зокрема на сервері.
         /// </summary>
         /// <param name="thingDefName"></param>
         /// <param name="count"></param>
@@ -353,8 +353,8 @@ namespace Model
         }
 
         /// <summary>
-        /// Заполнить только базовые свойства для требования к вещи, не пешки для BuyThings и потом MatchesThing(ThingTrade)
-        /// После создания в фильты ещё редактируются значениия WornByCorpse
+        /// Заповнити лише базові властивості вимоги до предмета (не пішака) для BuyThings і подальшого MatchesThing(ThingTrade).
+        /// Після створення у фільтрах також редагується значення WornByCorpse.
         /// </summary>
         public static ThingTrade CreateTrade(ThingDef thingDef, float minHitPointsPercents, QualityCategory minQualities, int count)
         {
@@ -371,7 +371,7 @@ namespace Model
             that.GameCost = thingDef.BaseMarketValue;
             if (that.GameCost < 0.01f) that.GameCost = 0.01f;
 
-            // Не заполняются:
+            // Не заповнюються:
             //Data
             //OriginalID
             //StuffName
@@ -408,7 +408,7 @@ namespace Model
                 this.PawnParam =
                     $"{/*pawn.kindDef*/(pawn.RaceProps.Humanlike ? pawn.IsColonist ? "Colonist" : "Humanlike" : "")} gender: {pawn.gender}, lifeStage: {pawn.ageTracker.CurLifeStageIndex}"
                     //+ $" years:{(int)pawn.ageTracker.AgeChronologicalYears}"
-                    + (pawn.RaceProps.Humanlike ? " " + pawn.LabelShort /*LabelCap ?*/ : ""); // для людей (не животных), проверяем имена, для идентификации
+                    + (pawn.RaceProps.Humanlike ? " " + pawn.LabelShort /*LabelCap ?*/ : ""); // Для людей (не тварин) перевіряємо імена для ідентифікації.
             }
             QualityCategory qq;
             if (QualityUtility.TryGetQuality(thing, out qq)) this.Quality = (int)qq;
@@ -446,7 +446,7 @@ namespace Model
         {
             if (Data != null) return base.CreateThing(useOriginalID, stackCount);
 
-            //useOriginalID не используется.
+            // useOriginalID не використовується.
 
             var def = (ThingDef)GenDefDatabase.GetDef(typeof(ThingDef), DefName);
             var stuffDef = !string.IsNullOrEmpty(StuffName) ? (ThingDef)GenDefDatabase.GetDef(typeof(ThingDef), StuffName) : null;
@@ -491,8 +491,8 @@ namespace Model
 
 
         /// <summary>
-        /// Информация достатоная для отображения.
-        /// defName, кол-во, цена, качество, параметры пешки (PawnParam), скилы (SkillsToString)
+        /// Інформація, достатня для відображення.
+        /// defName, кількість, ціна, якість, параметри пішака (PawnParam), навички (SkillsToString).
         /// </summary>
         /// <returns></returns>
         public virtual string PackToString()
@@ -546,7 +546,7 @@ namespace Model
     public static class ThingTradeHelper
     {
         /// <summary>
-        /// Отсортировать: сначала плохие потом хорошие
+        /// Відсортувати: спочатку гірші, потім кращі.
         /// </summary>
         /// <param name="targets"></param>
         /// <returns></returns>
@@ -559,7 +559,7 @@ namespace Model
         }
 
         /// <summary>
-        /// Отсортировать: сначала хорошие потом плохие
+        /// Відсортувати: спочатку кращі, потім гірші.
         /// </summary>
         /// <param name="targets"></param>
         /// <returns></returns>

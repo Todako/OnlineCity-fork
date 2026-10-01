@@ -4,13 +4,13 @@ using System;
 namespace Transfer.ModelMails
 {
     /// <summary>
-    /// Родительский класс для писем. Какое именно действие будет осуществлено на клиенте при получении письма см. класс RimWorldOnlineCity.MailController
+    /// Базовий клас листів. Дію, яку виконає клієнт після отримання листа, див. у класі RimWorldOnlineCity.MailController.
     /// </summary>
     [Serializable]
     public abstract class ModelMail
     {
         /// <summary>
-        /// Время когда было добавлено на сервер в первый раз, пока служит только для уникальности письма
+        /// Час першого додавання на сервер; наразі використовується лише для унікальності листа.
         /// </summary>
         public DateTime Created { get; set; }
         public Player From { get; set; }

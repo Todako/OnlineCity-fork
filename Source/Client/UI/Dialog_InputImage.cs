@@ -1,7 +1,7 @@
 ﻿using System;
-using Rect = UnityEngine.Rect;
 using UnityEngine;
 using Verse;
+using Rect = UnityEngine.Rect;
 
 namespace RimWorldOnlineCity
 {

@@ -1,5 +1,5 @@
-﻿using System;
-using RimWorld;
+﻿using RimWorld;
+using System;
 using Verse;
 
 namespace OCUnion.Transfer.Model
@@ -30,7 +30,7 @@ namespace OCUnion.Transfer.Model
 
         public AttackThingState(Thing mp)
         {
-            //А применяется созданый здесь контейнер в GameUtils.ApplyState
+            // Цей контейнер застосовується в GameUtils.ApplyState.
             HostThingID = mp.thingIDNumber;
             StackCount = mp.stackCount;
             Position = new IntVec3S(mp.Position);

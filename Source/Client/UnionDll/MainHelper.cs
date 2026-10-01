@@ -12,11 +12,11 @@ namespace OCUnion
     public static class MainHelper
     {
         /// <summary>
-        /// Активирует разрабатваемые блоки и дополнительное логирования
+        /// Активує блоки, що розробляються, і додаткове журналювання.
         /// </summary>
         public static bool DebugMode = false;
         /// <summary>
-        /// Отключить все логи в файл и консоль. Сервер всегда меняет значение на false
+        /// Вимикає всі журнали у файл і консоль. Сервер завжди змінює значення на false.
         /// </summary>
         public static bool OffAllLog = false;
 
@@ -34,7 +34,7 @@ namespace OCUnion
         public static string Key = "";
 
         /// <summary>
-        /// Для автоматической проверки: версия клиента должна быть больше или равна версии сервера
+        /// Для автоматичної перевірки: версія клієнта має бути більшою або дорівнювати версії сервера.
         /// </summary>
         public static long VersionNum = AssemblyVersion.Major * 10000 * 10000
           + AssemblyVersion.Minor * 10000

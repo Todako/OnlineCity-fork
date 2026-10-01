@@ -6,7 +6,7 @@
         int Tile { get; set; }
 
         /// <summary>
-        /// Id с сервера, соответствующий определенному игровому объекту WorldObject
+        /// Id із сервера, що відповідає певному ігровому об'єкту WorldObject.
         /// </summary>
         long PlaceServerId { get; set; }
     }

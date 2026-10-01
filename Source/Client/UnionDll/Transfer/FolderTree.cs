@@ -35,14 +35,14 @@ namespace OCUnion.Transfer
         {
             foreach (var subFolder in folderTree.SubDirs)
             {
-                // создаем под директорию 
+                // Створюємо підкаталог.
                 var fullNameSubDir = Path.Combine(rootFolder, subFolder.directoryName).NormalizePath();
                 if (!Directory.Exists(fullNameSubDir))
                 {
                     Directory.CreateDirectory(fullNameSubDir);
                 }
 
-                // для каждой созданной диретории создаем её поддиреторию 
+                // Для кожного створеного каталогу створюємо його підкаталоги.
                 foreach (var subTree in subFolder.SubDirs)
                 {
                     ReCreateeTree(fullNameSubDir, subTree);

@@ -105,7 +105,7 @@ namespace OC.DiscordBotServer
                 return;
             }
 
-            IsUpdatingBotStatus = true; // Этого по идее не нужно, т.к. запуск раз в 10 минут и за это время цикл должен успеть отработь
+            IsUpdatingBotStatus = true; // Теоретично це не потрібно: запуск відбувається раз на 10 хвилин, тож цикл має встигнути завершитися.
             try
             {
                 foreach (var bindServer in _applicationContext.DiscrordToOCServer)

@@ -7,6 +7,7 @@ using RimWorldOnlineCity.Services;
 using RimWorldOnlineCity.UI;
 using System;
 using UnityEngine;
+using Verse;
 
 namespace RimWorldOnlineCity
 {

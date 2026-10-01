@@ -1,4 +1,6 @@
-﻿namespace RimWorldOnlineCity.GameClasses
+﻿using Verse;
+
+namespace RimWorldOnlineCity.GameClasses
 {
     public static class DebugSettingsDefault
     {

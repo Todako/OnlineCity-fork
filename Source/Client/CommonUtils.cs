@@ -57,7 +57,7 @@ namespace RimWorldOnlineCity
                     }
                     else
                     {
-                        //как лучше узнать кол-во и тип?
+                        // Як краще дізнатися кількість і тип?
                         int cnt = 0;
                         foreach (var o in obj as IEnumerable) cnt++;
                         array = Array.CreateInstance(typeof(object), cnt);

@@ -1,5 +1,7 @@
 using Model;
 using OCUnion;
+using OCUnion.Common;
+using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;

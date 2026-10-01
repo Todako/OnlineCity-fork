@@ -13,19 +13,19 @@ namespace Model
     {
         Thing,
         /// <summary>
-        /// Колонист
+        /// Колоніст.
         /// </summary>
         Colonist,
         /// <summary>
-        /// Пленник, передается пират под наркозом
+        /// Полонений, передається піратом під наркозом.
         /// </summary>
         Prisoner,
         /// <summary>
-        /// Раб
+        /// Раб.
         /// </summary>
         Slave,
         /// <summary>
-        /// Пленник, передается пират без наркоза
+        /// Полонений, передається піратом без наркозу.
         /// </summary>
         Enemy
     }
@@ -33,44 +33,44 @@ namespace Model
     {
         Empty,
         /// <summary>
-        /// Идеология игрока
+        /// Ідеологія гравця.
         /// </summary>
         Colonist,
         /// <summary>
-        /// Любая другая идеология
+        /// Будь-яка інша ідеологія.
         /// </summary>
         Enemy
     }
 
     /// <summary>
-    /// Модель хранящая игровой объект с для сериализации и восстановления.
+    /// Модель, що зберігає ігровий об'єкт для серіалізації та відновлення.
     /// </summary>
     [Serializable]
     public class ThingEntry
     {
         /// <summary>
-        /// Имя как то, которое выводится в интерфейсе игры
+        /// Назва, яка відображається в інтерфейсі гри.
         /// </summary>
         public string Name { get; set; }
         /// <summary>
-        /// Количество
+        /// Кількість.
         /// </summary>
         public int Count { get; set; }
         /// <summary>
-        /// XML с данными
+        /// XML із даними.
         /// </summary>
         [XmlIgnore]
         public string Data { get; set; }
         /// <summary>
-        /// Хеш поля Data для передачи его через AnyLoad / UploadService
+        /// Хеш поля Data для передавання через AnyLoad / UploadService.
         /// </summary>
         public long DataHash { get; set; }
         /// <summary>
-        /// Оригинальный ID
+        /// Початковий ID.
         /// </summary>
         public int OriginalID { get; set; }
         /// <summary>
-        /// ID объекта до передачи
+        /// ID об'єкта до передавання.
         /// </summary>
         public int TransportID { get; set; }
 
@@ -81,7 +81,7 @@ namespace Model
 
         public string LabelTextShort => Name + (Count > 1 ? " x" + Count.ToString() : "")
             + (IsCorpse ? " (corpse)" : "")
-            + (Affiliation == PawnAffiliation.Prisoner ? " (prisoner)" /* ⚯ ↀ "TabPrisoner"*/ //нельзя локализовать из-за использования на сервере
+            + (Affiliation == PawnAffiliation.Prisoner ? " (prisoner)" /* ⚯ ↀ "TabPrisoner"*/ // Не можна локалізувати через використання на сервері.
                 : Affiliation == PawnAffiliation.Slave ? " (slave)" /* ☹ ꃢ  "Slave"*/: "");
 
         public override string ToString()
@@ -245,32 +245,32 @@ namespace Model
 
             //var factionPirateLoadID = factionPirate.GetUniqueLoadID();
 
-            //меняем фракцию на игрока для всех
+            // Замінюємо фракцію на фракцію гравця для всіх.
 
             if (string.IsNullOrEmpty(data) || !data.Contains(" Class=\"Pawn\"")) return data;
             if (MainHelper.DebugMode) File.WriteAllText(Loger.PathLog + "MailPawnB" + (++nnnn).ToString() + ".xml", data);
 
             RegisterReferencing(Find.FactionManager.OfPlayer);
 
-            //логика коррекции основывается на 3х группах:
-            //колонист, человек не колонист (пират или пленник), животное
+            // Логіка коригування ґрунтується на трьох групах:
+            // колоніст, людина не-колоніст (пірат або полонений), тварина.
 
             bool col = data.Contains("<kindDef>Colonist</kindDef>");
-            if (!col) col = data.Contains("ColonistGeneral</kindDef>"); //для мода с андроидами
+            if (!col) col = data.Contains("ColonistGeneral</kindDef>"); // Для мода з андроїдами.
 
             bool isAnimal = GameXMLUtils.GetByTag(data, "def") == GameXMLUtils.GetByTag(data, "kindDef");
 
-            //для всех людей устанавливаем фракцию игрока (у животных не меняем)
+            // Для всіх людей встановлюємо фракцію гравця (у тварин не змінюємо).
 
             if (!isAnimal)
             {
                 string fraction = factionColonistLoadID; //col ? fractionColonist : fractionPirate;
                 data = GameXMLUtils.ReplaceByTag(data, "faction", fraction);
-                if (!col) data = GameXMLUtils.ReplaceByTag(data, "kindDef", "Colonist"); //or "Pirate"
+                if (!col) data = GameXMLUtils.ReplaceByTag(data, "kindDef", "Colonist"); // або "Pirate".
                 //if (MainHelper.DebugMode) Loger.Log(" Replace faction=>" + fraction);
             }
 
-            //если это гости, то убираем у них это свойство - оно должно выставиться потом
+            // Якщо це гості, видаляємо цю властивість — її потрібно встановити пізніше.
             /*
             data = GameXMLUtils.ReplaceByTag(data, "guest", @"
     <hostFaction>null</hostFaction>
@@ -290,7 +290,7 @@ namespace Model
     <ideoForConversion>null</ideoForConversion>
   ");
 
-            //локализуем фракцию роялти
+            // Прив'язуємо фракцію королівства.
             var tagRoyalty = GameXMLUtils.GetByTag(data, "royalty");
             if (tagRoyalty != null)
             {
@@ -307,7 +307,7 @@ namespace Model
                 data = GameXMLUtils.ReplaceByTag(data, "royalty", tagRoyalty);
             }
 
-            //идеология
+            // Ідеологія.
             var ideoIndex = data.IndexOf("<ideo>");
             if (ideoIndex > 0)
             {
@@ -321,7 +321,7 @@ namespace Model
 
                 if (Ideo == PawnIdeo.Empty)
                 {
-                    //удаляем у пешки идеологию
+                    // Видаляємо ідеологію пішака.
                     if (MainHelper.DebugMode) Loger.Log("Client PrepareSpawnThingEntry ideo Clear");
                     var iiClose1 = data.IndexOf("</ideo>", ideoIndex);
                     if (iiClose1 >= 0)
@@ -350,7 +350,7 @@ namespace Model
                             else
                             {
                                 if (MainHelper.DebugMode) Loger.Log("Client PrepareSpawnThingEntry ideo Enemy RegisterReferencing");
-                                //Для определенной пешки, у игрока будет всегда одна и так же случайная идеология из общего пула
+                                // Для конкретного пішака гравець завжди матиме одну й ту саму випадкову ідеологію із загального набору.
                                 var listIdeo = Find.IdeoManager.IdeosListForReading.Where(i => i != ideo).ToList();
                                 var ideoEnemy = listIdeo.Count == 0 ? null : listIdeo[new Random(data.GetHashCode()).Next(listIdeo.Count)];
                                 if (ideoEnemy != null)
@@ -365,7 +365,7 @@ namespace Model
                                 }
                             }
 
-                            // если есть идиология и поле <ideo>Ideo_9</ideo> не пустое
+                            // Якщо ідеологія є, а поле <ideo>Ideo_9</ideo> не порожнє.
                             iiClose1 = iiClose2;
                             var ideoL = "<ideo>".Length;
                             //var ideoEL = "</ideo>".Length;
@@ -379,7 +379,7 @@ namespace Model
                 }
             }
 
-            //возвращаем true, если это человек и не колонист (пират или пленник)
+            // Повертаємо true, якщо це людина, яка не є колоністом (пірат або полонений).
 
             if (MainHelper.DebugMode) File.WriteAllText(Loger.PathLog + "MailPawnA" + nnnn.ToString() + ".xml", data);
             return data;
@@ -389,14 +389,14 @@ namespace Model
         public static List<IExposable> crossReferencingExposables;
         public static void RegisterReferencing(IExposable obj)
         {
-            /*  Не сработало, не понятно почему
+            /*  Не спрацювало, незрозуміло чому.
             if (Scribe.loader?.crossRefs?.crossReferencingExposables != null
                 && !Scribe.loader.crossRefs.crossReferencingExposables.Contains(obj))
             {
                 Scribe.loader.crossRefs.RegisterForCrossRefResolve(obj);
             }
             */
-            /*  Тоже не сработало, тоже не понятно почему
+            /*  Також не спрацювало, теж незрозуміло чому.
             try
             {
                 Loger.Log("Client RegisterReferencing " + obj.GetUniqueLoadID());
@@ -414,14 +414,14 @@ namespace Model
             if (!crossReferencingExposables.Contains(obj))
                 crossReferencingExposables.Add(obj);
 
-            /* Попытка убрать ошибку. Не сработало, но похоже это не важно
+            /* Спроба усунути помилку. Не спрацювало, але, схоже, це неважливо.
                 Could not get load ID. We're asking for something which was never added during LoadingVars. pathRelToParent=/leader, parent=PlayerColony
 
             if (obj is Faction
                 && Scribe.loader?.crossRefs?.loadIDs != null)
             {
                 Scribe.loader.crossRefs.loadIDs.RegisterLoadIDReadFromXml(
-                    null // может сюда передать это? (obj as Faction).loadID
+                    null // Можливо, передати сюди це? (obj as Faction).loadID
                     , obj.GetType()
                     , "/leader"
                     , obj);

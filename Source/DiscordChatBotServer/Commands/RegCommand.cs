@@ -22,8 +22,8 @@ namespace OC.DiscordBotServer.Commands
 
         protected string CanExecute(SocketCommandContext context, string ip, string token, out IPEndPoint serverAdr)
         {
-            // RU: Проверка на дурака: такой сервер не зарегистрирован, и сервер живой
-            // RU: Регистрируем сервер и сохраняем параметры: в виде таблицы: IDканала, IPserver
+            // Перевіряємо, що сервер не зареєстровано та він доступний.
+            // Реєструємо сервер і зберігаємо параметри у вигляді таблиці: ID каналу, IP сервера.
             serverAdr = Helper.TryParseStringToIp(ip);
             if (serverAdr == null)
             {

@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace OC.DiscordBotServer.Modules
 {
     /// <summary>
-    /// RU: Команды только для администратора сервера RimworldOnlineCity
+    /// Команди лише для адміністратора сервера RimworldOnlineCity.
     /// EN: Commands only for admin server RimworldOnlineCity
     /// </summary>
     public sealed class AdminServerModule : ModuleBase<SocketCommandContext>
@@ -27,7 +27,7 @@ namespace OC.DiscordBotServer.Modules
             "\n Register a new server RimWorldOnlineCity on the Discord channel: " +
             "\n type \"/Discord ServerToken\" in Game for get token. Remember! " +
             "\n Token is Secret! Do not say it anybody !")]
-        //RU: Регистрирует новый сервер RimWorldOnlineCity на канале Discord: reg IP_server
+        // Реєструє новий сервер RimWorldOnlineCity на каналі Discord: reg IP_server.
         public async Task RegAsync(string ip, string token)
         {
             await ReplyAsync(_regCmd.Execute(Context, ip, token));

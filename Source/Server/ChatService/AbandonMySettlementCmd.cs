@@ -31,11 +31,11 @@ namespace ServerOnlineCity.ChatService
             }
 
             //var msg = "User " + player.Public.Login + " deleted settlements.";
-            //_chatManager.AddSystemPostToPublicChat(msg); //раскомментировать, чтобы постить в общем чате всем
+            //_chatManager.AddSystemPostToPublicChat(msg); // Розкоментувати, щоб публікувати повідомлення в загальному чаті для всіх.
 
             player.AbandonSettlement();
             Loger.Log("Server killmyallplease " + player.Public.Login);
-            player = null; ///  значение передается по ссылке, и успешно обнуляет у передающего класса
+            player = null; /// Значення передається за посиланням і обнуляє його в класі-відправнику.
 
             return new ModelStatus()
             {

@@ -18,7 +18,7 @@ namespace OC.DiscordBotServer.Modules
         }
 
         [Description("Status server: where started, online player e.t.c ")]
-        // RU: Сообщает статус сервера, когда запущен, сколько игроков онлайн и т.д.
+        // Повідомляє стан сервера: чи запущений він, скільки гравців онлайн тощо.
         [Command("status")]
         public async Task StatusAsync()
         {
@@ -30,7 +30,7 @@ namespace OC.DiscordBotServer.Modules
         [Description("{OCLogin}" +
             "\n Linking account discord user to RimWorld Online City"
             + "\n Attention: type it only in private chat! Bot self find where are registred and send link to a channel")]
-        // RU: Привязывает аккаунт пользователя Discrod к серверу RimworldOnlineCity: !regme Логин_в_RimworldonlineCity
+        // Прив'язує обліковий запис користувача Discord до сервера RimworldOnlineCity: !regme Логін_у_RimworldonlineCity.
         public async Task RegmeAsync(string userToken)
         {
             await ReplyAsync(_regUserCmd.Execute(Context, userToken));
@@ -38,7 +38,7 @@ namespace OC.DiscordBotServer.Modules
 
         [Command("help")]
         [Description("List of all commands")]
-        //RU: Выводит список команд
+        // Виводить список команд.
         public async Task Helpsync()
         {
             var sb = new StringBuilder();

@@ -66,7 +66,7 @@ namespace ServerOnlineCity.ChatService
 
             if (argsM.Count >= 2 && argsM[1].ToLower() == "del")
             {
-                //удаляем роль
+                // Видаляємо роль.
                 foreach (var p in Repository.GetData.GetStatePlayers(player.Public.StateName)
                     .Where(p => p.Public.StatePositionName == position.Name))
                     p.Public.StatePositionName = null;
@@ -79,7 +79,7 @@ namespace ServerOnlineCity.ChatService
 
                 return new ModelStatus();
             }
-            //меняем роль
+            // Змінюємо роль.
             if (argsM.Count < 4)
             {
                 return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.CommandNotFound, myLogin, chat, "Parameters is empty");

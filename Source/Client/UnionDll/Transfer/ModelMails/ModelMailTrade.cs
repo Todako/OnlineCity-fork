@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace Transfer.ModelMails
 {
     /// <summary>
-    /// Послыка от каравана другого игрока
+    /// Повідомлення від каравану іншого гравця.
     /// </summary>
     [Serializable]
     public class ModelMailTrade : ModelMail, IModelPlace

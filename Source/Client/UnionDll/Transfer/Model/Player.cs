@@ -42,12 +42,12 @@ namespace Model
         public bool ExistsEnemyPawns { get; set; }
 
         /// <summary>
-        /// Государство. Reference by State.Name
+        /// Держава. Посилання на State.Name.
         /// </summary>
         public string StateName { get; set; }
 
         /// <summary>
-        /// Должность в государстве. Reference by StatePosition.Name
+        /// Посада в державі. Посилання на StatePosition.Name.
         /// </summary>
         public string StatePositionName { get; set; }
 
@@ -62,7 +62,7 @@ namespace Model
         public int ColonistsNeedingTend { get; set; }
         public int AnimalObedienceCount { get; set; }
         /// <summary>
-        /// Сколько пешек имеют 8 из 12 навыков 20 уровня. Предположительно всегда должно быть = 0. Если оно равно ColonistsCount, значит это чит
+        /// Скільки пішаків мають 8 із 12 навичок 20-го рівня. Імовірно, завжди має дорівнювати 0. Якщо значення дорівнює ColonistsCount, це чит.
         /// </summary>
         public int PawnMaxSkill { get; set; }
         public int KillsHumanlikes { get; set; }

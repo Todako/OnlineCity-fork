@@ -9,14 +9,14 @@ namespace OCUnion
         {
             if (isSettlement)
             {
-                //Очень грубо упрощенная средняя формула получения цены атакующих рейдов из исходника игры
-                //  4 / (25/1000000 + 10/богатство колонии) + 2000 = богатство нападающих   (4 от сложности и коэф. времени, + 2000 на еду каравана)
+                // Дуже приблизна спрощена середня формула обчислення вартості атакувальних рейдів із вихідного коду гри.
+                //  4 / (25/1000000 + 10/багатство колонії) + 2000 = багатство нападників (4 — складність і коефіцієнт часу, + 2000 — їжа для каравану).
 
                 return 4f / (25f / 1000000f + 10f / costTarget) + 2000f;
             }
             else
             {
-                //Если будет атака на караваны, то атакуемые могут быть сильнее на 15%
+                // Якщо атакують каравани, атакувані можуть бути сильнішими на 15%.
                 return costTarget * 1.15f;
             }
         }
@@ -43,14 +43,14 @@ namespace OCUnion
                 var attCost = attCosts.MarketValueTotal;
 
                 res =
-                    //стоимость колонии больше стоимости каравана
+                    // Вартість колонії більша за вартість каравану.
                     attCost > hostCost
                     ? //"The cost of the attackers is higher than the cost of the colony, this is not fair"
                     "The cost of the attacker must be less than " + ((long)hostCost).ToString()
-                    //колонии больше 1 года
+                    // Колонії більше одного року.
                     //to do  : host.Public.LastTick < 3600000 ? "You must not attack the game for less than a year"
 
-                    //колонию атаковали недавно 
+                    // На колонію нещодавно нападали.
                     : (DateTime.UtcNow - host.Public.LastPVPTime).TotalMinutes < host.MinutesIntervalBetweenPVP
                     ? "It was recently attacked. Wait to " + host.Public.LastPVPTime.ToGoodUtcString()
                     : null;

@@ -83,7 +83,7 @@ namespace ServerCore.Model
         };
 
         ///// <summary>
-        ///// Директория где храняется моды
+         ///// Каталог, у якому зберігаються моди.
         ///// </summary>
         //public string ModsDirectory { get; set; } = "C:\\Games\\RimWorld\\Mods";
 
@@ -94,13 +94,13 @@ namespace ServerCore.Model
         public bool ProtectingNovice { get; set; }
 
         /// <summary>
-        /// Сервер будет автоматически удалять не развитые поселения за которые давно не играют
+        /// Сервер автоматично видалятиме нерозвинені поселення, у яких давно не грали.
         /// The server will automatically delete undeveloped settlements that have not been played for a long time
         /// </summary>
         public bool DeleteAbandonedSettlements { get; set; }
 
         /// <summary>
-        /// Максимальный размер папки со скриншотами колоний, которого нужно стараться придерживаться.
+        /// Максимальний розмір папки зі знімками екрана колоній, якого слід намагатися дотримуватися.
         /// Maximum folder size with screenshots of colonies.
         /// </summary>
         public int ColonyScreenFolderMaxMb { get; set; } = 1024;

@@ -48,12 +48,12 @@ namespace ServerOnlineCity.ChatService
                 }
             }
 
-            //базовая проверка аргументов
+            // Базова перевірка аргументів.
             if (argsM.Count < 2)
                 return chatManager?.PostCommandPrivatPostActivChat(ChatCmdResult.IncorrectSubCmd, ownLogin, chat,
                     "OC_Incidents_CallIncidents_Err1");
 
-            //собираем данные
+            // Збираємо дані.
             var incident = Incidents.ParseIncidentName(argsM[0]);
             if (incident == null)
             {
@@ -149,7 +149,7 @@ namespace ServerOnlineCity.ChatService
 
             if (cost > 0 && targetPlayer != null)
             {
-                //изымаем золото со склада
+                // Вилучаємо золото зі сховища.
                 lock (player)
                 {
                     var data = Repository.GetData;
@@ -186,7 +186,7 @@ namespace ServerOnlineCity.ChatService
 
                             if (data.OrderOperator.GetFromStorage(thingsStorage.Tile, player, new List<ThingTrade>() { thingTemplate }) == null)
                             {
-                                //только для логов:
+                                // Лише для журналу:
                                 var storage = data.OrderOperator.GetStorage(thingsStorage.Tile, player.Public, false);
                                 Loger.Log($"Server IncidentLod CallIncidentCmd Operation not possible! Error! thingTemplate=" + thingTemplate.PackToString() + " storage=" + storage.Things.ToStringThing(), Loger.LogLevel.EXCHANGE);
 

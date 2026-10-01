@@ -35,7 +35,7 @@ namespace OC.DiscordBotServer
             int argPos = 0;
 
             var context = new SocketCommandContext(_discordClient, message);
-            // обработка команды явно обращенной к боту. 
+            // Обробка команди, адресованої безпосередньо боту.
             if (message.HasStringPrefix(Program.PX, ref argPos) || message.HasMentionPrefix(_discordClient.CurrentUser, ref argPos))
             {
                 var result = await _commands.ExecuteAsync(context, argPos + 1, _services);
@@ -49,7 +49,7 @@ namespace OC.DiscordBotServer
             }
 
             var idServer = message.Channel.Id;
-            // проверяем что сообщение находится в заригестрированном канале, и если да, то обрабатываем его дальше
+            // Перевіряємо, чи надійшло повідомлення в зареєстрованому каналі; якщо так, обробляємо його далі.
             // check message: typed in registred channel  if not  exit
 
             if (!_app.UserOnServers.TryGetValue(idServer, out ConcurrentDictionary<ulong, OCUser> users))
@@ -60,7 +60,7 @@ namespace OC.DiscordBotServer
             var privateChannel = await message.Author.GetOrCreateDMChannelAsync();
             if (!users.TryGetValue(message.Author.Id, out OCUser user))
             {
-                // отправим приватное сообщение пользователю что он не зарегистрирован и удалим его сообщение с канала
+                // Надсилаємо користувачеві приватне повідомлення про те, що його не зареєстровано, і видаляємо його повідомлення з каналу.
                 await privateChannel.SendMessageAsync(Translator.InfUserNotFound);
                 await message.DeleteAsync();
                 return;

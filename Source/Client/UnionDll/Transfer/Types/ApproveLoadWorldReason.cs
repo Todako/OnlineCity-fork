@@ -2,26 +2,26 @@
 {
     /*
     /// <summary>
-    /// Флаги проверки перед загрузкой мира клиенту
+    /// Прапорці перевірки перед завантаженням світу клієнту.
     /// </summary>
     [Serializable]
     [Flags]
     public enum ApproveLoadWorldReason : byte
     {
         /// <summary>
-        /// Прошел аутентификацию (значение по умолчанию)
+        /// Автентифікацію пройдено (значення за замовчуванням).
         /// </summary>
         LoginOk = 0,
         /// <summary>
-        /// Папка Mods проверена
+        /// Папку Mods перевірено.
         /// </summary>
         ModsFilesFail = 1,
         /// <summary>
-        /// Папка модов steamWorkShop проверена
+        /// Папку модів steamWorkShop перевірено.
         /// </summary>
         ModsSteamWorkShopFail = 2,
         /// <summary>
-        /// Не все файлы есть у клиента, необходимо догрузить
+        /// У клієнта є не всі файли, потрібно завантажити решту.
         /// </summary>
         NotAllFilesOnClient = 4,
         /// <summary>

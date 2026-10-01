@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
+using Verse;
 
 namespace RimWorldOnlineCity.ClientHashCheck
 {

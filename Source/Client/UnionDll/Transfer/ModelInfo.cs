@@ -13,7 +13,7 @@ namespace Transfer
         public long VersionNum { get; set; }
         public string ServerName { get; set; }
         /// <summary>
-        /// Будет ли выполняться проверка хеша файлов на клиенте
+        /// Чи перевірятиметься хеш файлів на клієнті.
         /// </summary>
         public bool IsModsWhitelisted { get; set; }
 
@@ -36,12 +36,12 @@ namespace Transfer
         public DateTime ServerTime { get; set; }
 
         /// <summary>
-        /// Описание сервера, которые читается с настроек, используется в дискорд боте
+        /// Опис сервера з налаштувань, яке використовує бот Discord.
         /// </summary>
         public string Description { get; set; }
 
         /// <summary>
-        /// Заполняется только при WorldLoad() GetInfo = 3
+        /// Заповнюється лише під час WorldLoad() за GetInfo = 3.
         /// </summary>
         public byte[] SaveFileData { get; set; }
 

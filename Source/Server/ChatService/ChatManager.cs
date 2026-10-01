@@ -96,12 +96,12 @@ namespace ServerOnlineCity.Services
         public ModelStatus PostCommandAddPlayer(PlayerServer player, Chat chat, string who)
         {
             string myLogin = player.Public.Login;
-            // проверка на корректность данных: это не системный чат, мы хозяин чата, такой пользователь существует.
+            // Перевіряємо коректність даних: це не системний чат, ми є власником чату, такий користувач існує.
             var newPlayer = Repository.GetPlayerByLogin(who);
             if (newPlayer == null)
                 return PostCommandPrivatPostActivChat(ChatCmdResult.UserNotFound, myLogin, chat, "User " + who + " not found");
 
-            if (!chat.OwnerMaker) // Вопрос к автору, что это такое, если отработает следующее условие:  The player is already here?
+            if (!chat.OwnerMaker) // Запитання до автора: що це означає, якщо спрацює наступна умова: The player is already here?
                 return PostCommandPrivatPostActivChat(ChatCmdResult.CantAccess, myLogin, chat, "People can not be added to a shared channel");
 
             var isAdmin = (player.Public.Grants & Grants.SuperAdmin) > 0;

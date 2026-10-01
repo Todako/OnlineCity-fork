@@ -13,22 +13,22 @@ namespace ServerOnlineCity.ChatService
     {
         public string CmdID => "say";
 
-        //только для модераторов и админов
+        // Лише для модераторів і адміністраторів.
         public Grants GrantsForRun => Grants.SuperAdmin | Grants.Moderator | Grants.DiscordBot;
 
         public string Help => ChatManager.prefix + "say {UserLogin | system} {/color} {Label} {text}";
 
-        //say {'имя игрока'} {/цвет}* { 'заголовок'} { текст} { продолжение текста}
-        //... -отправляет сообщение игроку в виде игрового письма, доступно администратору.
-        //*не обязательный параметр цвет определяется по началу с / Может быть таким:
+        // say {'ім'я гравця'} {/колір}* {'заголовок'} {текст} {продовження тексту}
+        // ... — надсилає гравцеві повідомлення у вигляді ігрового листа; доступно адміністратору.
+        // * Необов'язковий параметр кольору визначається за початковим символом /. Можливі значення:
 
-        // treatbig - красное письмо со звуком
-        //treatsmall - красное письмо
-        //death - серое письмо со звуком
-        //negative - желтое письмо
-        //positive - синее письмо со звуком
-        //visitor - синее письмо
-        //neutral - серое письмо (по умолчанию)
+        // treatbig — червоний лист зі звуком
+        // treatsmall — червоний лист
+        // death — сірий лист зі звуком
+        // negative — жовтий лист
+        // positive — синій лист зі звуком
+        // visitor — синій лист
+        // neutral — сірий лист (за замовчуванням)
 
         private readonly ChatManager _chatManager;
 
@@ -45,7 +45,7 @@ namespace ServerOnlineCity.ChatService
             if (argsM.Count < 3)
             {
                 return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.IncorrectSubCmd, ownLogin, chat,
-                   "OC_IncdidentMessadge_ArgErr"); // Необходимо минимум 3 аргумента: имя игрока, заголовок, текст
+                   "OC_IncdidentMessadge_ArgErr"); // Потрібно щонайменше 3 аргументи: ім'я гравця, заголовок і текст.
             }
             int argNum = 0;
 
@@ -68,7 +68,7 @@ namespace ServerOnlineCity.ChatService
                 if (targetPlayer == player)
                 {
                     return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.IncorrectSubCmd, ownLogin, chat,
-                        "OC_IncdidentMessadge_targetErr");// Нельзя указывать самого себя
+                        "OC_IncdidentMessadge_targetErr");// Не можна вказувати самого себе.
                 }
             }
             argNum++;
@@ -105,7 +105,7 @@ namespace ServerOnlineCity.ChatService
                         break;
                     default:
                         return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.IncorrectSubCmd, ownLogin, chat,
-                        "OC_IncdidentMessadge_typeErr");  // Неверный тип сообщения
+                        "OC_IncdidentMessadge_typeErr");  // Неправильний тип повідомлення.
                 }
                 argNum++;
             }
@@ -118,7 +118,7 @@ namespace ServerOnlineCity.ChatService
             }
 
 
-            //формируем пакет
+            // Формуємо пакет.
             string reciever = "error";
             if (online)
             {

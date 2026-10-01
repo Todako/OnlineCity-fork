@@ -11,14 +11,14 @@ using Transfer.ModelMails;
 namespace ServerOnlineCity.Mechanics
 {
     /// <summary>
-    /// Инструкция по добавлению инцндентов:
-    /// Добавить новый тип в CallIncident (ParseIncidentTypes и по коду, если есть новый параметр)
-    /// Также если добавляется новый параметр в командную строку, то добавить в CallIncidentCmd, ModelMailStartIncident, MailProcessStartIncident функция MailProcessStartIncident() и поле в OCIncident
-    /// Добавить тип в FMailIncident. Тут задается в конструкторе (очередь) и функции в конце класса (текстовки, задержка до начала инциндента и задержка очереди после него)
-    /// Добавить в интерфейс в Dialog_BaseOnlineButton
-    /// Добавить реализацию на клиенте в новый класс Incident*
-    /// Добавить вызов класса в Incidents
-    /// Добавить в OCIncident расчет стоимости CalculateRaidCost() и расчет интенсивности от стоимости поселения (если используется) CalculatePoints()
+    /// Інструкція з додавання інцидентів:
+    /// Додати новий тип у CallIncident (ParseIncidentTypes і обробку коду, якщо є новий параметр).
+    /// Якщо додається новий параметр командного рядка, додати його в CallIncidentCmd, ModelMailStartIncident, функцію MailProcessStartIncident() та поле в OCIncident.
+    /// Додати тип у FMailIncident. Він задається в конструкторі (черга) та у функціях наприкінці класу (тексти, затримка до початку інциденту й затримка черги після нього).
+    /// Додати його в інтерфейс Dialog_BaseOnlineButton.
+    /// Додати реалізацію на клієнті в новий клас Incident*.
+    /// Додати виклик класу в Incidents.
+    /// Додати в OCIncident розрахунок вартості CalculateRaidCost() і розрахунок інтенсивності на основі вартості поселення (якщо використовується) CalculatePoints().
     /// </summary>
     public static class CallIncident
     {
@@ -56,7 +56,7 @@ namespace ServerOnlineCity.Mechanics
 
             mult = mult > ServerManager.ServerSettings.GeneralSettings.IncidentMaxMult ? ServerManager.ServerSettings.GeneralSettings.IncidentMaxMult : mult;
 
-            //формируем пакет
+            // Формуємо пакет.
             var packet = new ModelMailStartIncident()
             {
                 From = player.Public,
@@ -74,7 +74,7 @@ namespace ServerOnlineCity.Mechanics
 
             Loger.Log("Server test call " + type + " " + targetPlayer.Public.Login);
 
-            //проверка на допустимость и добавление инциндента.
+            // Перевіряємо допустимість і додаємо інцидент.
             var ownLogin = player.Public.Login;
             lock (targetPlayer)
             {
@@ -89,8 +89,8 @@ namespace ServerOnlineCity.Mechanics
                 //if (list.Count(m => m.Mail.From.Login == ownLogin) > 1)
                 //    return "OC_Incidents_CallIncidents_NotShooted";
 
-                //Проверка окончена!
-                //Если у нас проверочный запуск, то выходим
+                // Перевірку завершено.
+                // Якщо це тестовий запуск, виходимо.
                 if (checkMode)
                 {
                     Loger.Log("IncidentLod CallIncident.CreateIncident 3 checkMode OK");
@@ -98,13 +98,13 @@ namespace ServerOnlineCity.Mechanics
                 }
 
                 //targetPlayer.Mails.Add(packet);
-                //Вместо немедленной отправки, делаем это через обработчик отложенной отправки, для паузы между рейдами
+                // Замість негайного надсилання використовуємо обробник відкладеного надсилання, щоб витримати паузу між рейдами.
                 targetPlayer.FunctionMails.Add(fPacket);
             }
 
-            player.AttacksInitiatorCount++;   //не прибавлять положительные инцинденты! 
+            player.AttacksInitiatorCount++;   // Не збільшувати для позитивних інцидентів!
 
-            //Добавляем в спец лог
+            // Додаємо до спеціального журналу.
             IncidentLogAppend("NewIncident", packet, "", (int)costAllPlayer, (int)costAllTargetPlayer);
 
             Loger.Log("IncidentLod CallIncident.CreateIncident 3");
@@ -122,7 +122,7 @@ namespace ServerOnlineCity.Mechanics
             {
                 File.WriteAllText(fileName, $"time;record" +
                     $";fromLogin;toLogin;fromDay;toDay;fromWorth;toWorth;paramIncident;serverId" +
-                    //структура data:
+                    // Структура data:
                     $";worthTarget;delayAfterMail;numberOrder;countInOrder" +
                     Environment.NewLine, Encoding.UTF8);
             }

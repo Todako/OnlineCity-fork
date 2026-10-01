@@ -8,102 +8,102 @@ namespace OCUnion
     public struct ServerGeneralSettings
     {
         /// <summary>
-        /// Деф рассказчика.
+        /// Def оповідача.
         /// </summary>
         public string StorytellerDef { get; set; }
 
         /// <summary>
-        /// Сложность.
+        /// Складність.
         /// </summary>
         public string Difficulty { get; set; }
 
         /// <summary>
-        /// Включить режим нападения игроков друг на друга онлайн с ограниченным управлением
+        /// Увімкнути режим онлайн-нападів гравців один на одного з обмеженим керуванням.
         /// </summary>
         public bool EnablePVP { get; set; }
 
         /// <summary>
-        /// Запретить менять настройки рассказчика и модификаций в игре
+        /// Заборонити змінювати налаштування оповідача та модифікацій у грі.
         /// </summary>
         public bool DisableGameSettings { get; set; }
 
         /// <summary>
-        /// Разрешены ли инценденты
+        /// Чи дозволені інциденти.
         /// </summary>
         public bool IncidentEnable { get; set; }
 
         /// <summary>
-        /// Сколько разрешено инцендентов в очереди
+        /// Скільки інцидентів дозволено в черзі.
         /// </summary>
         public int IncidentCountInOffline { get; set; }
 
         /// <summary>
-        /// Максимальный коэф. силы инцендентов
+        /// Максимальний коефіцієнт сили інцидентів.
         /// </summary>
         public int IncidentMaxMult { get; set; }
 
         /// <summary>
-        /// Минимальная пауза между инциндентами в тиках (1 день = 60000)
+        /// Мінімальна пауза між інцидентами в тіках (1 день = 60000).
         /// </summary>
         public int IncidentTickDelayBetween { get; set; }
 
         /// <summary>
-        /// Модификатор стоимости найма в процентах
+        /// Модифікатор вартості найму у відсотках.
         /// </summary>
         public int IncidentCostPrecent { get; set; }
 
         /// <summary>
-        /// Модификатор силы рейдов в процентах
+        /// Модифікатор сили рейдів у відсотках.
         /// </summary>
         public int IncidentPowerPrecent { get; set; }
 
         /// <summary>
-        /// Модификатор передышки после рейда
+        /// Модифікатор перерви після рейду.
         /// </summary>
         public int IncidentCoolDownPercent { get; set; }
 
         /// <summary>
-        /// Модификатор предупреждения перед рейдом
+        /// Модифікатор попередження перед рейдом.
         /// </summary>
         public int IncidentAlarmInHours { get; set; }
 
         /// <summary>
-        /// Включить синхронизацию объектов на планете между всеми игроками (WIP)
+        /// Увімкнути синхронізацію об'єктів на планеті між усіма гравцями (WIP).
         /// </summary>
         public bool EquableWorldObjects { get; set; }
 
         /// <summary>
-        /// Включить биржу (WIP)
+        /// Увімкнути біржу (WIP).
         /// </summary>
         public bool ExchengeEnable { get; set; }
 
         /// <summary>
-        /// включить выбор старта
+        /// Увімкнути вибір місця старту.
         /// </summary>
         public bool ScenarioAviable { get; set; }
 
         /// <summary>
-        /// Стоимость вещей на бирже, в сделках и на счету для рейдов на 1000 серебра (50 - это 5%). Рекомендация 1000 или 1200.
+        /// Вартість речей на біржі, в угодах і на рахунку для рейдів на 1000 срібла (50 — це 5%). Рекомендоване значення: 1000 або 1200.
         /// </summary>
         public int ExchengePrecentWealthForIncident { get; set; }
 
         /// <summary>
-        /// Комиссия перевода 1000 серебра его в безналичный счет или назад (50 - это 5%)
+        /// Комісія за переказ еквівалента 1000 срібла на безготівковий рахунок або назад (50 — це 5%).
         /// </summary>
         public int ExchengePrecentCommissionConvertToCashlessCurrency { get; set; }
 
         /// <summary>
-        /// Стоимость доставки 1000 серебра на расстояние 100 клеток (это примерно 1/15 планеты по экватору, а если /10 то сколько стоит доставка соседям)
+        /// Вартість доставки еквівалента 1000 срібла на відстань 100 клітинок (це приблизно 1/15 планети по екватору; при /10 — вартість доставки сусідам).
         /// </summary>
         public int ExchengeCostCargoDelivery { get; set; }
 
         /// <summary>
-        /// Процент надбавки цены за быструю доставку
+        /// Відсоток надбавки до ціни за швидку доставку.
         /// </summary>
         public int ExchengeAddPrecentCostForFastCargoDelivery { get; set; }
 
         /// <summary>
-        /// Перечисленные через запятую defName вещей, которые запрещены к передаче.
+        /// Перелік defName речей, заборонених до передавання, через кому.
         /// </summary>
         public string ExchengeForbiddenDefNames { get; set; }
         [NonSerialized]
@@ -122,32 +122,32 @@ namespace OCUnion
         }
 
         /// <summary>
-        /// Назначит стартовый год в игре вместо 5500
+        /// Встановлює початковий рік у грі замість 5500.
         /// </summary>
         public int StartGameYear { get; set; }
 
         /// <summary>
-        /// Предупреждение при входе на сервер.
+        /// Попередження під час входу на сервер.
         /// </summary>
         public string EntranceWarning { get; set; }
 
         /// <summary>
-        /// Предупреждение при входе на сервер. На русском.
+        /// Попередження під час входу на сервер російською мовою.
         /// </summary>
         public string EntranceWarningRussian { get; set; }
 
         /// <summary>
-        /// Делать снимки колоний каждый полдень
+        /// Робити знімки колоній щодня опівдні.
         /// </summary>
         public bool ColonyScreenEnable { get; set; }
 
         /// <summary>
-        /// Высокое качество снимков колоний
+        /// Висока якість знімків колоній.
         /// </summary>
         public bool ColonyScreenHighQuality { get; set; }
 
         /// <summary>
-        /// Через сколько дней делать снимки колоний. От 1 до 60 (больше 59 снимок 1 раз в год)
+        /// Інтервал між знімками колоній у днях: від 1 до 60 (якщо більше 59 — знімок раз на рік).
         /// </summary>
         public int ColonyScreenDelayDays { get; set; }
 

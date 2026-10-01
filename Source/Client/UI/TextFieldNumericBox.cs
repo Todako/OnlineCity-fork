@@ -1,7 +1,6 @@
-﻿using System;
+﻿using RimWorld;
+using System;
 using UnityEngine;
-using RimWorld;
-using RimWorld.Planet;
 using Verse;
 using Verse.Sound;
 

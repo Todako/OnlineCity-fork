@@ -62,16 +62,16 @@ namespace ServerOnlineCity
             {
                 if (setting.IgnoreTag != null && setting.IgnoreTag.Count > 0)
                 {
-                    //Это не дериктория, а один XML файл
+                    // Це не директорія, а один XML-файл.
                     var ni = new CheckedDirAndFile()
                     {
                         Settings = setting,
-                        //больше ничего не устанавилвается, т.к. брем отдельно из настроек
+                        // Більше нічого не встановлюємо, оскільки беремо це окремо з налаштувань.
                     };
                     if (!resultXML.ContainsKey(setting.FolderType)) resultXML.Add(setting.FolderType, new List<CheckedDirAndFile>());
                     resultXML[setting.FolderType].Add(ni);
                     result.Add((int)setting.FolderType * 1000 + resultXML[setting.FolderType].Count, ni);
-                    //убираем файл из списка стандартной синхронизации
+                    // Прибираємо файл зі списку стандартної синхронізації.
                     if (result.ContainsKey((int)setting.FolderType * 1000))
                     {
                         result[(int)setting.FolderType * 1000].IgnoredFiles.Add(setting.XMLFileName.NormalizePath());

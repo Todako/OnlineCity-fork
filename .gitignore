@@ -4,3 +4,5 @@
 /Source/UnitTest/obj
 /Source/Client/obj
 /Source/BuildOutput
+/Build
+/Source/Client/MigrationBackup

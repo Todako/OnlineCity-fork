@@ -16,7 +16,7 @@ namespace Transfer.ModelMails
         public int IncidentMult { get; set; }
         public List<string> IncidentParams { get; set; }
         /// <summary>
-        /// Только для просмотра в интерфейсе тех, кто уже в очереди.
+        /// Лише для перегляду в інтерфейсі тих, хто вже в черзі.
         /// </summary>
         public bool AlreadyStart { get; set; }
 

@@ -9,55 +9,55 @@ namespace Transfer
     [Serializable]
     public class TradeOrder : TradeOrderShort
     {
-        // Id на сервере. 
-        // Если 0 - то добавить новый.
-        // Если больше 0 - отредактировать
-        // Если меньше 0 - удалить c Id без минуса
+        // Id на сервері.
+        // Якщо 0 — додати новий.
+        // Якщо більше 0 — відредагувати.
+        // Якщо менше 0 — видалити з Id без мінуса.
 
         /// <summary>
-        /// Создатель сделки, его имя в LoginOwner
+        /// Власник угоди; його ім'я зберігається в LoginOwner.
         /// </summary>
         [XmlIgnore]
         public Player Owner { get; set; }
 
         /// <summary>
-        /// Где находиться товар
+        /// Де знаходиться товар.
         /// </summary>
         public Place Place { get; set; }
 
         /// <summary>
-        /// Время размещения на сервере
+        /// Час розміщення на сервері.
         /// </summary>
         public DateTime Created { get; set; }
 
         /// <summary>
-        /// Вещи (тип и кол-во) которые отдаст Owner. Все должны быть Concrete = true
+        /// Речі (тип і кількість), які передасть Owner. Для всіх має бути Concrete = true.
         /// </summary>
         public List<ThingTrade> SellThings { get; set; }
 
         /// <summary>
-        /// Вещи которые получит Owner. Могут быть с любым Concrete
-        /// Может быть использовать только как фильтр: BuyThings[i].MatchesThing()
+        /// Речі, які отримає Owner. Concrete може мати будь-яке значення.
+        /// Можна використовувати лише як фільтр: BuyThings[i].MatchesThing().
         /// </summary>
         public List<ThingTrade> BuyThings { get; set; }
 
         /// <summary>
-        /// Кол-во сделок успешно реализованнх
+        /// Кількість успішно виконаних угод.
         /// </summary>
         public int CountFnished { get; set; }
 
         /// <summary>
-        /// Кол-во доступных сделок. Определяет кол-во заблокированных вещей (SellThings*CountReady)
+        /// Кількість доступних угод. Визначає кількість заблокованих речей (SellThings*CountReady).
         /// </summary>
         public int CountReady { get; set; }
 
         /// <summary>
-        /// Если список не пустой, то это приватная сделка доступная только перечисленным игрокам
+        /// Якщо список не порожній, це приватна угода, доступна лише переліченим гравцям.
         /// </summary>
         public List<Player> PrivatPlayers { get; set; }
 
         /// <summary>
-        /// Требует ручного сброса в null при изменении SellThings
+        /// Потрібно вручну скидати в null після зміни SellThings.
         /// </summary>
         public int SellThingsHash
         {
@@ -74,7 +74,7 @@ namespace Transfer
         private int _SellThingsHash;
 
         /// <summary>
-        /// Требует ручного сброса в null при изменении SellThings
+        /// Потрібно вручну скидати в null після зміни SellThings.
         /// </summary>
         public int BuyThingsHash
         {
@@ -91,8 +91,8 @@ namespace Transfer
         private int _BuyThingsHash;
 
         /// <summary>
-        /// Хеш, для предварительно проверки простых условий.
-        /// Соответствует ли одни список вещей другому, по типу вещей (точнее то, что будет проверяться на строгое равенство)
+        /// Хеш для попередньої перевірки простих умов.
+        /// Чи відповідає один список речей іншому за типом речей (точніше, чи збігаються дані для перевірки на точну рівність).
         /// </summary>
         private int GetThingsHash(List<ThingTrade> things)
         {

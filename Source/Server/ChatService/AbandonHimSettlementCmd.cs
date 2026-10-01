@@ -39,7 +39,7 @@ namespace ServerOnlineCity.ChatService
             }
 
             //var msg = "User " + killPlayer.Public.Login + " deleted settlements.";
-            //_chatManager.AddSystemPostToPublicChat(msg); //раскомментировать, чтобы постить в общем чате всем
+            //_chatManager.AddSystemPostToPublicChat(msg); // Розкоментувати, щоб публікувати повідомлення в загальному чаті для всіх.
 
             killPlayer.AbandonSettlement();
             Loger.Log("Server killhimplease " + killPlayer.Public.Login);

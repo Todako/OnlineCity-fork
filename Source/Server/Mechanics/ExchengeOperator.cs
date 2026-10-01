@@ -15,25 +15,25 @@ namespace ServerOnlineCity.Mechanics
 {
     public class ExchengeOperator
     {
-        // При расчете сделки сравниваются одна.BuyThings.MatchesThing(другая.SellThings) и наоброт, определяется макс кол-во повторов для каждой из 2х сделок
-        // Например если один продавал бревна по 2 шт * 10, а другой покупал по 10 шт * 2
-        // Лишнее количество в SellThings обоих сделках помещается в их яблоки (до кратности кол-во повторов)
-        //Пример (sell, buy): (1 бревно, 10 монет) и (12 монет, 1 бревно) => работает + возврат 2х монет за каждый повтор в яблоко владельца второй сделки
-        // (1 бревно, 12 монет) и (10 монет, 1 бревно) => не работает
-        // (10 монет, 1 бревно) и (1 бревно, 12 монет) => не работает
-        // т.е. должно соблюдаться оба условия одна.SellThings >= другая.BuyThings (если >, то остаток shell в яблоко)
-        // (2 бревна, 10 монет) и (12 монет, 1 бревно) => работает + возврат 2х монет второму и 1 бревна первому 
-        // (можно перед возвратом перерасчитать на сколько хватит сделки и увеличить её повторы, но не надо наверное)
-        //В ExchengeBuy тот же функционал только предлагаемые в уплату вещи не из SellThings, а из яблока
-        //Для ExchengeBuy: (1 бревно, 10 монет) и (содержимое яблока, копия "1 бревно")
-        //для быстрого отсечения сделок сделать хеш BuyThings и SellThings: отсортированный DefName
+        // Під час розрахунку угоди порівнюються одна.BuyThings.MatchesThing(інша.SellThings), після чого визначається максимальна кількість повторів для кожної з двох угод.
+        // Наприклад, один продає колоди по 2 шт. * 10, а інший купує по 10 шт. * 2.
+        // Надлишок у SellThings обох угод поміщається до їхніх сховищ (кратний кількості повторів).
+        // Приклад (sell, buy): (1 колода, 10 монет) і (12 монет, 1 колода) => угода виконується, а 2 монети за кожен повтор повертаються до сховища власника другої угоди.
+        // (1 колода, 12 монет) і (10 монет, 1 колода) => угода не виконується.
+        // (10 монет, 1 колода) і (1 колода, 12 монет) => угода не виконується.
+        // Тобто мають виконуватися обидві умови: одна.SellThings >= інша.BuyThings (якщо >, залишок повертається до сховища).
+        // (2 колоди, 10 монет) і (12 монет, 1 колода) => угода виконується, 2 монети повертаються другому учаснику, а 1 колода — першому.
+        // (Перед поверненням можна повторно розрахувати, на скільки вистачить угоди, і збільшити кількість її повторів, але, мабуть, це зайве.)
+        // В ExchengeBuy функціональність така сама, але речі для оплати беруться не з SellThings, а зі сховища.
+        // Для ExchengeBuy: (1 колода, 10 монет) і (вміст сховища, копія "1 колода").
+        // Для швидкого відсіювання угод створюємо хеш BuyThings і SellThings: DefName у відсортованому вигляді.
 
-        //(s, b) продает 2 за 10 повторы: 3 (6 - 30) повторы: 9 (18 - 90)
-        //(b, s) покупка 3 за 90          2 (6 - 270)         1 (3  - 90)
-        // обязательно чтобы s одной сделки было >= b другой, если не ==, а >, то в этом случае лишнее возвращается владельцу sZZ
+        //(s, b) продає 2 за 10, повтори: 3 (6 - 30), повтори: 9 (18 - 90)
+        //(b, s) купує 3 за 90          2 (6 - 270)         1 (3  - 90)
+        // Обов'язково, щоб s однієї угоди було >= b іншої; якщо не ==, а >, надлишок повертається власнику sZZ.
 
-        //(s, b) продает 2 за 4 повторы: 3 (6 - 12) повторы: 3 (6  - 12)
-        //(b, s) покупка 3 за 3          2 (6 - 6)           4 (12 - 12)
+        //(s, b) продає 2 за 4, повтори: 3 (6 - 12), повтори: 3 (6  - 12)
+        //(b, s) купує 3 за 3          2 (6 - 6)           4 (12 - 12)
 
         public BaseContainer Data;
 
@@ -110,7 +110,7 @@ namespace ServerOnlineCity.Mechanics
                 TradeWorldObjects.Remove(trade);
                 TradeWorldObjectsDeleted.Add(trade);
             }
-            //Перекидываем вещи в торговый склад
+            // Переміщуємо речі до торгового сховища.
             foreach (var st in order.SellThings)
             {
                 st.Count *= order.CountReady;
@@ -119,11 +119,11 @@ namespace ServerOnlineCity.Mechanics
         }
         public bool OrderUpdate(TradeOrder newOrder, TradeOrder oldOrder)
         {
-            //Перекидываем вещи, на которые уменьшилось в торговый склад:
-            //удаляем из oldOrder всё что есть в новой, остатки на склад
-            var newThings = newOrder.SellThings.OrderByDescendingCost();  // сначала выбираем хорошие, более требовательные вещи
-            var oldThings = oldOrder.SellThings.OrderByCost(); // сначала предлагаем на соответствие более плохие вещи
-            var newThingsOrig = new List<ThingTrade>(); //вещи новые в сделке, их нужно отнять с торгового склада
+            // Переміщуємо до торгового сховища речі, кількість яких зменшилася:
+            // видаляємо з oldOrder усе, що є в новому замовленні, а залишок повертаємо на склад.
+            var newThings = newOrder.SellThings.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
+            var oldThings = oldOrder.SellThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
+            var newThingsOrig = new List<ThingTrade>(); // Нові речі в угоді, які потрібно забрати з торгового сховища.
             for (int si = 0; si < oldThings.Count; si++)
             {
                 oldThings[si] = (ThingTrade)oldThings[si].Clone();
@@ -183,17 +183,17 @@ namespace ServerOnlineCity.Mechanics
                 }
             }
 
-            //Проверяем не сработаетют ли сделки
+            // Перевіряємо, чи можуть виконатися угоди.
             ImplementTrade(newOrder);
 
             return true;
         }
 
         /// <summary>
-        /// Находит все вещи с указаным def
+        /// Знаходить усі речі із зазначеним def.
         /// </summary>
         /// <param name="thingDef"></param>
-        /// <returns>Словарь всех вещей и место где они находяться, только для чтения.</returns>
+        /// <returns>Словник усіх речей і місць їхнього зберігання, лише для читання.</returns>
         public Dictionary<ThingTrade, TradeThingStorage> FindThingDef(PlayerServer player, ThingTrade thingDef)
         {
             return player.TradeThingStorages?
@@ -213,7 +213,7 @@ namespace ServerOnlineCity.Mechanics
         {
             var dicPl = CacheStorage.GetOrAdd(player.Login, (login) =>
             {
-                //Загружаем все данные игрока при первом обращении к игроку
+                // Завантажуємо всі дані гравця під час першого звернення до нього.
                 var pl = Repository.GetPlayerByLogin(player.Login);
                 return new ConcurrentDictionary<int, TradeThingStorage>(pl.TradeThingStorages.ToDictionary(s => s.Tile));
             });
@@ -221,7 +221,7 @@ namespace ServerOnlineCity.Mechanics
             {
                 var storage = dicPl.GetOrAdd(tile, (t) =>
                 {
-                    //При обращении к точке создаем её, если её нет
+                    // Створюємо сховище для цієї точки, якщо його ще немає.
                     var ns = new TradeThingStorage()
                     {
                         Id = 0,
@@ -246,19 +246,19 @@ namespace ServerOnlineCity.Mechanics
         }
 
         /// <summary>
-        /// Добавляет вещи в хранилище игрока, если хранилищя нет, он создается
+        /// Додає речі до сховища гравця; якщо сховища немає, воно створюється.
         /// </summary>
         public void SendToStorage(int tile, PlayerServer player, List<ThingTrade> things)
         {
-            things = things.OrderByDescendingCost();  // сначала выбираем хорошие, более требовательные вещи, также проверка на 0 кол-во
+            things = things.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі; також перевіряємо кількість на нуль.
             if (things.Count == 0) return;
 
             Loger.Log($"Server SendToStorage tile={tile} pl={player.Public.Login} things=" + things.ToStringLabel());
 
             var storage = GetStorage(tile, player.Public, true);
-            var storageRead = storage.Things.OrderByCost(); // сначала предлагаем на соответствие более плохие вещи
+            var storageRead = storage.Things.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
 
-            //находим вещи, которые уже есть в хранилище и объединяем их, остальные просто добавляем
+            // Знаходимо речі, які вже є у сховищі, та об'єднуємо їх; решту просто додаємо.
             for (int bi = 0; bi < things.Count; bi++)
             {
                 var thing = things[bi];
@@ -286,16 +286,16 @@ namespace ServerOnlineCity.Mechanics
         }
 
         /// <summary>
-        /// Изымает вещи из хранилища по фильтру. Если хотя бы чего-то не хватает результат null
+        /// Вилучає речі зі сховища за фільтром. Якщо чогось бракує, повертає null.
         /// </summary>
         public List<ThingTrade> GetFromStorage(int tile, PlayerServer player, List<ThingTrade> filter, int filterRate = 1)
         {
             Loger.Log($"Server GetFromStorage tile={tile} pl={player.Public.Login} rate={filterRate} filter=" + filter?.ToStringThing());
 
-            filter = filter.OrderByDescendingCost();  // сначала выбираем хорошие, более требовательные вещи
+            filter = filter.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
             var storage = GetStorage(tile, player.Public, false);
             var storageThings = storage?.Things ?? new List<ThingTrade>();
-            var storageRead = storageThings.OrderByCost(); // сначала предлагаем на соответствие более плохие вещи
+            var storageRead = storageThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
 
             var select = new List<ThingTrade>();
             var selectCashless = 0;
@@ -345,7 +345,7 @@ namespace ServerOnlineCity.Mechanics
                     }
                 if (countSelected < need.Count * filterRate) return null;
             }
-            //если выхода не было, значит вещей достаточно, выбираем со склада
+            // Якщо виходу раніше не було, речей достатньо — вибираємо їх зі складу.
             if (selectCashless > 0)
             {
                 player.CashlessBalance -= selectCashless;
@@ -368,16 +368,16 @@ namespace ServerOnlineCity.Mechanics
         }
 
         /// <summary>
-        /// Два списка вещей и их максимальное количество повторов.
+        /// Два списки речей і максимальна кількість їхніх повторів.
         /// </summary>
-        /// <returns>Неизрасходованные вещи в sellThings для каждой сделки с учетом повторов в sellRepeat, но без учета возможных повторов сверх того</returns>
+        /// <returns>Невикористані речі в sellThings для кожної угоди з урахуванням повторів sellRepeat, але без можливих додаткових повторів.</returns>
         private List<ThingTrade> CompareListTrade(List<ThingTrade> sellThings, List<ThingTrade> buyThings
             , ref int sellRepeat, ref int buyRepeat
             , int sellAllCount, int buyAllCount
             , out List<ThingTrade> sellByBuyThings)
         {
-            buyThings = buyThings.OrderByDescendingCost();  // сначала выбираем хорошие, более требовательные вещи
-            var sts = sellThings.OrderByCost(); // сначала предлагаем на соответствие более плохие вещи
+            buyThings = buyThings.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
+            var sts = sellThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
             var excess = new List<ThingTrade>();
             sellByBuyThings = new List<ThingTrade>();
             for (int bi = 0; bi < buyThings.Count; bi++)
@@ -388,18 +388,18 @@ namespace ServerOnlineCity.Mechanics
                     var buy = buyThings[bi];
                     var sell = sts[si];
                     if (!buy.MatchesThingTrade(sell)) continue;
-                    //это одна и та же вешь, теперь вопрос в количестве
+                    // Це та сама річ; тепер потрібно перевірити кількість.
 
-                    //если предложение меньше спроса, то может быть можно установить разные пропорции повтора сделки
+                    // Якщо пропозиція менша за попит, можливо, можна встановити різні пропорції повторення угоди.
                     if (sell.Count * sellRepeat < buy.Count * buyRepeat)
                     {
-                        //если тербуется разные повторы у sell и buy при том, что они уже заданы, то сделка невозможна
+                        // Якщо для sell і buy потрібна різна кількість повторів, але вона вже задана, угода неможлива.
                         if (sellRepeat != 1 || buyRepeat != 1) continue;
 
-                        //кол-во единиц товара для минимального оборота каждой стороны (при возможных разных кол-во повторов для обоих сторон)
+                        // Кількість одиниць товару для мінімального обсягу угоди кожної сторони (кількість повторів може відрізнятися).
                         var cnt = NOK(sell.Count, buy.Count); // (2,3)=6  (10,5)=10
 
-                        //достаточно ли количества для хотя бы 1 сделки
+                        // Чи вистачає кількості хоча б на одну угоду.
                         if (sellAllCount * sell.Count < cnt || buyAllCount * buy.Count < cnt) continue;
 
                         sellRepeat = cnt / sell.Count;
@@ -409,12 +409,12 @@ namespace ServerOnlineCity.Mechanics
                     }
                     if (sell.Count * sellRepeat > buy.Count * buyRepeat)
                     {
-                        //отмечаем лишние ресурсы не учавствующие в сделке
+                        // Позначаємо зайві ресурси, які не беруть участі в угоді.
                         var sellClone = (ThingTrade)sell.Clone();
                         sellClone.Count = sell.Count * sellRepeat - buy.Count * buyRepeat;
                         excess.Add(sellClone);
                     }
-                    //пропорции уравновешины, лишнее убрано (лишнее когда покупатель готов заплатить больше чем требует продавец)
+                    // Пропорції збалансовано, надлишок прибрано (він виникає, коли покупець готовий заплатити більше, ніж вимагає продавець).
                     var sellByBuyThing = (ThingTrade)sell.Clone();
                     sellByBuyThing.Count = buy.Count * buyRepeat;
                     sellByBuyThings.Add(sellByBuyThing);
@@ -450,8 +450,8 @@ namespace ServerOnlineCity.Mechanics
         }
 
         /// <summary>
-        /// Реализация сделки о всеми с которыми возможно в её точке.
-        /// Запускать для любой измененной или созданной сделки.
+        /// Виконує угоду з усіма можливими контрагентами в цій точці.
+        /// Викликати для кожної зміненої або створеної угоди.
         /// </summary>
         private void ImplementTrade(TradeOrder o1)
         {
@@ -461,7 +461,7 @@ namespace ServerOnlineCity.Mechanics
             var tradeOrders = to.ToList();
             tradeOrders.Remove(o1);
 
-            //цикл каждый с каждым
+            // Цикл попарного зіставлення.
             ImplementSelectTrade best;
             do
             {
@@ -479,7 +479,7 @@ namespace ServerOnlineCity.Mechanics
                     var sellEnd2 = CompareListTrade(o2.SellThings, o1.BuyThings, ref repeat2, ref repeat1, o2.CountReady, o1.CountReady, out var thingsFor1);
                     if (sellEnd2 == null) continue;
 
-                    //общие повторы разных повторов repeat1 и repeat2
+                    // Спільна кількість повторів для repeat1 і repeat2.
                     var repeatRepeat = o1.CountReady / repeat1 < o2.CountReady / repeat2 ? o1.CountReady / repeat1 : o2.CountReady / repeat2;
 
                     if (repeatRepeat > 1)
@@ -492,8 +492,8 @@ namespace ServerOnlineCity.Mechanics
 
                     var that = new ImplementSelectTrade()
                     {
-                        //определяем выгоду сделки, по остатку от реализации SellEnd1/2 чем больше тут кол-во тем выгодней
-                        //цена умножается на цену в игре, это имеет значение только если двое разных SellEnd1/2
+                        // Визначаємо вигідність угоди за залишком після виконання SellEnd1/2: що більша кількість, то вигідніше.
+                        // Кількість множиться на ігрову ціну; це важливо лише за наявності різних SellEnd1/2.
                         Cost = sellEnd1.Select(t => t.Count * t.GameCost).Sum(),
                         Count1 = repeat1 * repeatRepeat,
                         Count2 = repeat2 * repeatRepeat,
@@ -506,14 +506,14 @@ namespace ServerOnlineCity.Mechanics
                     };
                     if (best == null || best.Cost < that.Cost) best = that;
                 }
-                //заключаем лучшу сделку
+                // Укладаємо найвигіднішу угоду.
                 if (best != null)
                 {
                     Loger.Log("Server Trade! " + Environment.NewLine
                         + "trade x" + best.Count1 + " " + best.Order1.ToString() + Environment.NewLine
                         + "trade x" + best.Count2 + " " + best.Order2.ToString());
 
-                    var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}"; //локализация этих фраз OC_ ChatController.ServerCharTranslate
+                    var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}"; // Локалізація цих фраз: OC_ ChatController.ServerCharTranslate.
                     var msg1 = string.Format(msg0
                         , best.Count1
                         , best.Order1.CountReady == best.Count1 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order1.CountReady - best.Count1).ToString()
@@ -526,12 +526,12 @@ namespace ServerOnlineCity.Mechanics
                     var playerServer1 = best.Order1.Owner.GetPlayerServer();
                     var playerServer2 = best.Order2.Owner.GetPlayerServer();
 
-                    //отправляем купленное
+                    // Надсилаємо придбане.
                     SendToStorage(o1.Tile, playerServer1, best.ThingsFor1);
                     SendToStorage(o1.Tile, playerServer2, best.ThingsFor2);
 
-                    //реализуем сделку, кол-во раз для первой и второй сделки может быть разным: t1.CountReady - t1Count и t2.CountReady - t2Count
-                    //отправляем избыток в яблоки (например, если кто-то продает дешевле, чем мы собирались купить)
+                    // Виконуємо угоду; кількість повторів для першої та другої угод може відрізнятися: t1.CountReady - t1Count і t2.CountReady - t2Count.
+                    // Надсилаємо надлишок до сховищ (наприклад, якщо хтось продає дешевше, ніж ми збиралися купити).
                     msg0 = "OC_ExchengeOperator_OrderClosedBetter";
                     if (best.SellEnd1.Count > 0)
                     {

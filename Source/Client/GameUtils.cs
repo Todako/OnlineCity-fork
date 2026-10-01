@@ -2,6 +2,8 @@ using HarmonyLib;
 using Model;
 using OCUnion;
 using OCUnion.Transfer.Model;
+using RimWorld;
+using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses.Harmony;
 using RimWorldOnlineCity.UI;
 using System;
@@ -10,11 +12,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Xml;
-using Util;
-using RimWorld;
 using UnityEngine;
+using Util;
 using Verse;
-using RimWorld.Planet;
 
 namespace RimWorldOnlineCity
 {

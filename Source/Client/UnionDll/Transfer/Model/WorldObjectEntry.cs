@@ -11,8 +11,8 @@ namespace Model
     [Serializable]
     public class WorldObjectEntry : IModelPlace
     {
-        //На клиенте данные от других игроков заполняются с сервера, а свои заполняются самостоятельно
-        //Кроме полей MarketValueStorage и MarketValueBalance - значения в своих объектах заполняются с отдельно
+        // На клієнті дані інших гравців надходять із сервера, а власні заповнюються самостійно.
+        // Виняток — поля MarketValueStorage і MarketValueBalance: значення для власних об'єктів заповнюються окремо.
         public WorldObjectEntryType Type { get; set; }
         public int Tile { get; set; }
         public string Name { get; set; }
@@ -27,7 +27,7 @@ namespace Model
         public string LoginOwner { get; set; }
 
         /// <summary>
-        /// Только для сервера (не конфеденциально)
+        /// Лише для сервера (не є конфіденційним).
         /// </summary>
         public DateTime UpdateTime { get; set; }
     }

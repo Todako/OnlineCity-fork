@@ -3,7 +3,7 @@ using OC.DiscordBotServer.Models;
 
 namespace OC.DiscordBotServer
 {
-    // Tools -> Extensions and Updates. И здесь среди всех расширений нам надо установить расширение SQLite for Universal App Platform:
+    // Tools -> Extensions and Updates. Серед розширень потрібно встановити SQLite for Universal App Platform:
     public class BotDataContext : DbContext
     {
         // empty public constructor for Database Migrations

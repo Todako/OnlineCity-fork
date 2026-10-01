@@ -59,7 +59,7 @@ namespace ServerOnlineCity.ChatService
                 return _chatManager.PostCommandPrivatPostActivChat(ChatCmdResult.CommandNotFound, myLogin, chat, "Your position in the state does not allow you to do this.");
             }
 
-            //если удалился последний глава, то государство удаляется
+            // Якщо видалено останнього керівника, держава видаляється.
             if (actStatePosition?.RightHead == true
                 && !Repository.GetData.GetStatePlayers(actPlayer.Public.StateName)
                     .Any(p => p != actPlayer && Repository.GetStatePosition(p.Public)?.RightHead == true))

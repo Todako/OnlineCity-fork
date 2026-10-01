@@ -3,6 +3,7 @@ using OCUnion.Common;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using Verse;
 
 namespace RimWorldOnlineCity
 {
@@ -20,7 +21,7 @@ namespace RimWorldOnlineCity
                 Directory.CreateDirectory(CachePath);
             }
 
-            //удаляем старше 7 дней
+            // Видаляємо файли старші за 7 днів.
             var now = DateTime.UtcNow;
             foreach (var old in Directory.GetFiles(CachePath, "*.*", SearchOption.TopDirectoryOnly))
             {

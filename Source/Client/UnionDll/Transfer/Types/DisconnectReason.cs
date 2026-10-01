@@ -9,7 +9,7 @@ namespace OCUnion.Transfer
     public enum DisconnectReason : byte
     {
         ///
-        /// All good Всё хорошо продолжаем работать
+        /// Усе гаразд, продовжуємо працювати.
         /// 
         AllGood,
         /// <summary>

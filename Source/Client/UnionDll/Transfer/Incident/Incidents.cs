@@ -24,7 +24,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label", // Найняти рейд — перша вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.Infistation,
                     IncidentTypeName = "inf",
@@ -38,7 +38,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label", // Найняти рейд — перша вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.Raid,
                     IncidentTypeName = "raid",
@@ -87,7 +87,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 3,
-                    OrderLabel = "OC_Incidents_Hire_label", //Нанять рейд - первая вкладка
+                    OrderLabel = "OC_Incidents_Hire_label", // Найняти рейд — перша вкладка.
                     Enable = false,
                     IncidentType = IncidentTypes.Bombing,
                     IncidentTypeName = "bomb",
@@ -101,7 +101,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label", // Вплив на область — друга вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.Acid,
                     IncidentTypeName = "acid",
@@ -112,7 +112,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label", // Вплив на область — друга вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.Plague,
                     IncidentTypeName = "plague",
@@ -123,7 +123,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label", // Вплив на область — друга вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.EMP,
                     IncidentTypeName = "emp",
@@ -134,7 +134,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label", // Вплив на область — друга вкладка.
                     Enable = true,
                     IncidentType = IncidentTypes.Eclipse,
                     IncidentTypeName = "eclipse",
@@ -145,18 +145,18 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 2,
-                    OrderLabel = "OC_Incidents_Impact_label", //Воздействие на область - вторая вкладка
+                    OrderLabel = "OC_Incidents_Impact_label", // Вплив на область — друга вкладка.
                     Enable = false,
                     IncidentType = IncidentTypes.Storm,
                     IncidentTypeName = "storm",
-                    Label = "OC_Storm", //Шторм
+                    Label = "OC_Storm", // Шторм.
                     DelayBeforeStart = (mail) => false,
                     CalcCostMult = (_) => 1f,
                 },
                 new IncidentMetadata()
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "", // Позитивні події — відсутні в інтерфейсі. //todo?
                     Enable = false,
                     IncidentType = IncidentTypes.Caravan,
                     IncidentTypeName = "caravan",
@@ -167,7 +167,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "", // Позитивні події — відсутні в інтерфейсі. //todo?
                     Enable = false,
                     IncidentType = IncidentTypes.ChunkDrop,
                     IncidentTypeName = "chunkdrop",
@@ -178,7 +178,7 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 1,
-                    OrderLabel = "", //Позитивные события - нет в интерфейсе //todo?
+                    OrderLabel = "", // Позитивні події — відсутні в інтерфейсі. //todo?
                     Enable = false,
                     IncidentType = IncidentTypes.Quest,
                     IncidentTypeName = "quest",
@@ -189,13 +189,13 @@ namespace OCUnion
                 new IncidentMetadata()
                 {
                     NumberOrder = 0,
-                    OrderLabel = "", //Особые события, мгновенного действия, всегда без интерфейса
+                    OrderLabel = "", // Особливі події миттєвої дії, завжди без інтерфейсу.
                     Enable = false,
                     IncidentType = IncidentTypes.Def,
                     IncidentTypeName = "def",
                     Label = "def",
                     DelayBeforeStart = (mail) => false,
-                    CalcCostMult = (_) => 0, //в "def" параметр используется, но он не влияет на цену, она всегда 0, т.к. "def" только от админа
+                    CalcCostMult = (_) => 0, // У "def" параметр використовується, але не впливає на ціну: вона завжди дорівнює 0, оскільки "def" доступний лише адміністратору.
                 },
             };
         }
@@ -209,28 +209,28 @@ namespace OCUnion
     public class IncidentMetadata
     {
         /// <summary>
-        /// Номер очереди, зависит от типа события
-        /// 0 - без очереди, без ожиданий
-        /// 1 - положительная
-        /// 2 - природное бедствие
-        /// 3 - агресивное, с предупреждением и ожиданием перед событием (если лвл>=5)
+        /// Номер черги, залежить від типу події.
+        /// 0 — без черги та очікування.
+        /// 1 — позитивна подія.
+        /// 2 — стихійне лихо.
+        /// 3 — агресивна подія з попередженням і очікуванням перед початком (якщо рівень >= 5).
         /// </summary>
         public int NumberOrder { get; set; }
         public string OrderLabel { get; set; }
         /// <summary>
-        /// Действует ли
+        /// Чи увімкнено.
         /// </summary>
         public bool Enable { get; set; }
 
         public IncidentTypes IncidentType { get; set; }
         /// <summary>
-        /// Идентификатор, без локализации, только в нижнем регистре без пробелов
+        /// Ідентифікатор без локалізації, лише в нижньому регістрі й без пробілів.
         /// </summary>
         public string IncidentTypeName { get; set; }
         public string Label { get; set; }
 
         /// <summary>
-        /// Делать ли задержку перед инцидентом, если да, то будет перед задержкой будет выведено дополнительное сообщение
+        /// Чи робити затримку перед інцидентом; якщо так, перед нею буде показано додаткове повідомлення.
         /// </summary>
         public Func<ModelMailStartIncident, bool> DelayBeforeStart { get; set; }
         public Func<ModelMailStartIncident, ModelMailMessadge.MessadgeTypes> DelayMessageType { get; set; }
@@ -238,7 +238,7 @@ namespace OCUnion
         public Func<ModelMailStartIncident, string> DelayMessageText { get; set; }
 
         /// <summary>
-        /// Множитель стоимости, передаются параметры mail.IncidentParams
+        /// Множник вартості; параметри передаються в mail.IncidentParams.
         /// </summary>
         public Func<List<string>, float> CalcCostMult { get; set; }
 

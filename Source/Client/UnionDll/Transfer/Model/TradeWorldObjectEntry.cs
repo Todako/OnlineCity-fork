@@ -9,7 +9,7 @@ namespace Model
     }
 
     /// <summary>
-    /// Класс используется как родитель и самостоятельно как облегченная копия TradeOrder, для загрузки всех ордеров на карту планеты
+    /// Клас використовується як батьківський, а також як спрощена копія TradeOrder для завантаження всіх ордерів на карту планети.
     /// </summary>
     [Serializable]
     public class TradeWorldObjectEntry : IModelPlace
@@ -25,7 +25,7 @@ namespace Model
         public string LoginOwner { get; set; }
 
         /// <summary>
-        /// Только для сервера (не конфеденциально)
+        /// Лише для сервера (не є конфіденційним).
         /// </summary>
         public DateTime UpdateTime { get; set; }
 

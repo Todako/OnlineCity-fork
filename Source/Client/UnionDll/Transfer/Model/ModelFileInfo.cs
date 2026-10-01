@@ -3,19 +3,19 @@
 namespace OCUnion.Transfer.Model
 {
     /// <summary>
-    /// Содержит информацию по модам у меня в папке Mods ~15к файлов, даже если взять на каждый по 100 байт,
+    /// Містить інформацію про моди в моїй папці Mods (~15 тис. файлів); навіть якщо на кожен припаде по 100 байтів,
     /// </summary>
     [Serializable]
     public class ModelFileInfo
     {
         /// <summary>
-        /// Полный путь от папки Mods вида OnlineCity\Defs\WorldObjectDefs\WorldObjects.xml
+        /// Повний шлях від папки Mods, наприклад OnlineCity\Defs\WorldObjectDefs\WorldObjects.xml.
         /// </summary>
         public string FileName { get; set; }
         public byte[] Hash { get; set; }
         public long Size { get; set; }
         /// <summary>
-        /// Можно ли заменить файл по содержимому с сервера
+        /// Чи можна замінити файл вмістом із сервера.
         /// </summary>
         public bool NeedReplace { get; set; }
 
@@ -26,7 +26,7 @@ namespace OCUnion.Transfer.Model
                 return 0;
             }
 
-            // переводит первые 4 байта в int
+            // Перетворює перші 4 байти на int.
             return BitConverter.ToInt32(Hash, 0);
         }
 

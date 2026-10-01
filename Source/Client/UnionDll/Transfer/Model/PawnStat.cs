@@ -38,8 +38,8 @@ namespace OCUnion.Transfer.Model
             $"{PawnParam}, cost: {GameCost}, skills: {SkillsToString}";
 
         /// <summary>
-        /// Информация достатоная для отображения.
-        /// defName, кол-во, цена, качество, параметры пешки (PawnParam), скилы (SkillsToString)
+        /// Інформація, достатня для відображення.
+        /// defName, кількість, ціна, якість, параметри пішака (PawnParam), навички (SkillsToString).
         /// </summary>
         /// <returns></returns>
         public override string PackToString()

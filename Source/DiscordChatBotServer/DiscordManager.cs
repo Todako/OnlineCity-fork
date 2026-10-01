@@ -66,7 +66,7 @@ namespace OC.DiscordBotServer
 
             switch (param)
             {
-                // "srvinfo all: информация по всем серверам, отсортированные 1.По количеству пользователей от максимального к минимальному, по дате поcледнего онлайна"
+                // "srvinfo all: інформація про всі сервери, відсортовані за кількістю користувачів (від найбільшої до найменшої), а потім за датою останнього входу"
                 case "all":
                     {
                         //foreach (var sessionClient in _app.DiscrordToOCServer.Values)
@@ -76,7 +76,7 @@ namespace OC.DiscordBotServer
 
                         return "";
                     }
-                //все где я зарегестрирован\n"
+                // усі сервери, де я зареєстрований\n"
                 case "my":
                     {
                         var servers = new List<ulong>();

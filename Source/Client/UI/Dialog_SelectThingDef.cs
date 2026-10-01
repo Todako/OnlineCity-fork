@@ -1,8 +1,9 @@
-﻿using System;
+﻿using RimWorld;
+using System;
 using System.Linq;
-using RimWorld;
 using UnityEngine;
 using Verse;
+using static Verse.ThingFilterUI;
 
 namespace RimWorldOnlineCity.UI
 {
@@ -15,7 +16,7 @@ namespace RimWorldOnlineCity.UI
         public QualityRange SelectQualities = QualityRange.All;
 
         private ThingFilter thingFilter = new ThingFilter();
-        private ThingFilterUI.UIState subWindowState;
+        private UIState subWindowState;
 
         public void ClearFilter()
         {

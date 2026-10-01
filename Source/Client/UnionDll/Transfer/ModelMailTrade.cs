@@ -7,7 +7,7 @@ using System.Text;
 namespace Transfer
 {
     /// <summary>
-    /// Послыка от каравана другого игрока
+    /// Повідомлення від каравану іншого гравця.
     /// </summary>
     [Serializable]
     public class ModelMailTrade
