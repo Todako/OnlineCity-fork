@@ -15,7 +15,7 @@ namespace RimWorldOnlineCity.UI
         public QualityRange SelectQualities = QualityRange.All;
 
         private ThingFilter thingFilter = new ThingFilter();
-        private UIState subWindowState;
+        private ThingFilterUI.UIState subWindowState;
 
         public void ClearFilter()
         {

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using Transfer.ModelMails;
 using RimWorld;
 using RimWorld.Planet;
+using Verse;
 
 namespace RimWorldOnlineCity
 {
