@@ -60,6 +60,15 @@ namespace RimWorldOnlineCity
         private static string CachedSuffix = null;
 
         /// <summary>
+        /// Потокобезпечне логування у внутрішньоігрову консоль RimWorld через головний потік Unity.
+        /// Запобігає виняткам InvalidOperationException у Verse.EditWindow_Log під час реконекту.
+        /// </summary>
+        private static void SafeLogWarning(string text)
+        {
+            ModBaseData.RunMainThread(() => Log.Warning(text));
+        }
+
+        /// <summary>
         /// Початкова ініціалізація під час завантаження модифікації.
         /// </summary>
         public static void Init()
@@ -840,13 +849,13 @@ namespace RimWorldOnlineCity
 
             var logMsg = "Connecting to server. Addr: " + addr + ". Port: " + (port == 0 ? SessionClient.DefaultPort : port).ToString();
             Loger.Log("Client " + logMsg);
-            Log.Warning(logMsg);
+            SafeLogWarning(logMsg);
             var connect = SessionClient.Get;
             if (!connect.Connect(addr, port))
             {
                 logMsg = "Connection fail: " + connect.ErrorMessage?.ServerTranslate();
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 Find.WindowStack.Add(new Dialog_Input("OCity_SessionCC_ConnectionFailTitle".Translate(), connect.ErrorMessage?.ServerTranslate(), true));
                 return connect.ErrorMessage?.ServerTranslate();
             }
@@ -854,7 +863,7 @@ namespace RimWorldOnlineCity
             {
                 logMsg = "Connection OK";
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
             }
 
             return null;
@@ -881,7 +890,7 @@ namespace RimWorldOnlineCity
 
             var logMsg = "Login: " + login;
             Loger.Log("Client " + logMsg);
-            Log.Warning(logMsg);
+            SafeLogWarning(logMsg);
             My = null;
             var pass = new CryptoProvider().GetHash(password);
 
@@ -897,7 +906,7 @@ namespace RimWorldOnlineCity
 
                 logMsg = "Login fail: " + connect.ErrorMessage?.ServerTranslate();
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 Find.WindowStack.Add(new Dialog_Input("OCity_SessionCC_LoginFailTitle".Translate(), connect.ErrorMessage?.ServerTranslate(), true));
                 return connect.ErrorMessage?.ServerTranslate();
             }
@@ -905,7 +914,7 @@ namespace RimWorldOnlineCity
             {
                 logMsg = "Login OK";
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 if (LoginOK(false))
                     InitConnectedIntro();
                 else
@@ -924,7 +933,7 @@ namespace RimWorldOnlineCity
 
             var logMsg = "Registration. Login: " + login;
             Loger.Log("Client " + logMsg);
-            Log.Warning(logMsg);
+            SafeLogWarning(logMsg);
             My = null;
             var pass = new CryptoProvider().GetHash(password);
 
@@ -940,7 +949,7 @@ namespace RimWorldOnlineCity
 
                 logMsg = "Registration fail: " + connect.ErrorMessage?.ServerTranslate();
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 Find.WindowStack.Add(new Dialog_Input("OCity_SessionCC_RegFailTitle".Translate(), connect.ErrorMessage?.ServerTranslate(), true));
                 return connect.ErrorMessage?.ServerTranslate();
             }
@@ -949,7 +958,7 @@ namespace RimWorldOnlineCity
                 MainMenuDrawer_DoMainMenuControls_Patch.DontDisconnectTime = DateTime.UtcNow;
                 logMsg = "Registration OK";
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 LoginOK();
                 InitConnectedIntro();
             }
@@ -984,33 +993,33 @@ namespace RimWorldOnlineCity
             }
             var logMsg = "Reconnect to server. Addr: " + addr + ". Port: " + (port == 0 ? SessionClient.DefaultPort : port).ToString();
             Loger.Log("Client " + logMsg);
-            Log.Warning(logMsg);
+            SafeLogWarning(logMsg);
             var connect = new SessionClient();
             if (!connect.Connect(addr, port))
             {
                 logMsg = "Reconnect net fail: " + connect.ErrorMessage?.ServerTranslate();
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 return false;
             }
             SessionClient.Recreate(connect);
 
             logMsg = "Reconnect login: " + My.Login;
             Loger.Log("Client " + logMsg);
-            Log.Warning(logMsg);
+            SafeLogWarning(logMsg);
 
             if (!connect.Reconnect(My.Login, Data.KeyReconnect, GetSaffix()))
             {
                 logMsg = "Reconnect login fail: " + connect.ErrorMessage?.ServerTranslate();
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 return false;
             }
             else
             {
                 logMsg = "Reconnect OK";
                 Loger.Log("Client " + logMsg);
-                Log.Warning(logMsg);
+                SafeLogWarning(logMsg);
                 return true;
             }
         }
