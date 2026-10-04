@@ -12,6 +12,8 @@ namespace Transfer
     /// </summary>
     public class ConnectClient : IDisposable
     {
+        private static readonly byte[] EmptyByteArray = new byte[0];
+
         public TcpClient Client;
         protected NetworkStream ClientStream;
         public readonly Encoding MessageEncoding = Encoding.UTF8;
@@ -29,6 +31,13 @@ namespace Transfer
         // Постійні екземплярні буфери для усунення виділень пам'яті
         private readonly byte[] _headerSendBuffer = new byte[4];
         private readonly byte[] _headerReceiveBuffer = new byte[4];
+
+        // Буфер для малих повідомлень до 4 КБ (усуває new byte[msgLen + 4] на кожен запит)
+        private const int SmallMessageThreshold = 4096;
+        private readonly byte[] _smallSendBuffer = new byte[SmallMessageThreshold + 4];
+
+        private readonly object _sendLock = new object();
+        private readonly object _receiveLock = new object();
 
         public ConnectClient(string addr, int port)
             : this(new TcpClient(addr, port))
@@ -79,8 +88,7 @@ namespace Transfer
 
         /// <summary>
         /// Відправка повідомлення із 4-байтовим префіксом загальної довжини.
-        /// ОПТИМІЗАЦІЯ: для малих пакетів заголовок і корисне навантаження надсилаються разом,
-        /// запобігаючи дробленню на окремі TCP-сегменти.
+        /// ОПТИМІЗАЦІЯ: для малих пакетів корисне навантаження записується в постійний буфер без виділення нових масивів.
         /// </summary>
         public void SendMessage(byte[] message)
         {
@@ -91,29 +99,30 @@ namespace Transfer
 
             try
             {
-                // Якщо пакет невеликий (до 4 КБ), об'єднуємо в один запис для економії мережевих кадрів
-                if (msgLen > 0 && msgLen <= 4096)
+                lock (_sendLock)
                 {
-                    byte[] combined = new byte[msgLen + 4];
-                    combined[0] = (byte)msgLen;
-                    combined[1] = (byte)(msgLen >> 8);
-                    combined[2] = (byte)(msgLen >> 16);
-                    combined[3] = (byte)(msgLen >> 24);
-                    Buffer.BlockCopy(message, 0, combined, 4, msgLen);
-
-                    ClientStream.Write(combined, 0, combined.Length);
-                }
-                else
-                {
-                    _headerSendBuffer[0] = (byte)msgLen;
-                    _headerSendBuffer[1] = (byte)(msgLen >> 8);
-                    _headerSendBuffer[2] = (byte)(msgLen >> 16);
-                    _headerSendBuffer[3] = (byte)(msgLen >> 24);
-
-                    ClientStream.Write(_headerSendBuffer, 0, 4);
-                    if (msgLen > 0)
+                    if (msgLen > 0 && msgLen <= SmallMessageThreshold)
                     {
-                        ClientStream.Write(message, 0, msgLen);
+                        _smallSendBuffer[0] = (byte)msgLen;
+                        _smallSendBuffer[1] = (byte)(msgLen >> 8);
+                        _smallSendBuffer[2] = (byte)(msgLen >> 16);
+                        _smallSendBuffer[3] = (byte)(msgLen >> 24);
+                        Buffer.BlockCopy(message, 0, _smallSendBuffer, 4, msgLen);
+
+                        ClientStream.Write(_smallSendBuffer, 0, msgLen + 4);
+                    }
+                    else
+                    {
+                        _headerSendBuffer[0] = (byte)msgLen;
+                        _headerSendBuffer[1] = (byte)(msgLen >> 8);
+                        _headerSendBuffer[2] = (byte)(msgLen >> 16);
+                        _headerSendBuffer[3] = (byte)(msgLen >> 24);
+
+                        ClientStream.Write(_headerSendBuffer, 0, 4);
+                        if (msgLen > 0)
+                        {
+                            ClientStream.Write(message, 0, msgLen);
+                        }
                     }
                 }
             }
@@ -142,35 +151,38 @@ namespace Transfer
 
             try
             {
-                int lengthAllMessageByte;
-
-                if (prefix != null && prefix.Length >= 4)
+                lock (_receiveLock)
                 {
-                    lengthAllMessageByte = prefix[0] | (prefix[1] << 8) | (prefix[2] << 16) | (prefix[3] << 24);
-                }
-                else
-                {
-                    ReadExactBytes(_headerReceiveBuffer, 0, Int32Length);
-                    lengthAllMessageByte = _headerReceiveBuffer[0] | (_headerReceiveBuffer[1] << 8) | (_headerReceiveBuffer[2] << 16) | (_headerReceiveBuffer[3] << 24);
-                }
+                    int lengthAllMessageByte;
 
-                if (lengthAllMessageByte < 0 || lengthAllMessageByte > MaxPacketSizeBytes)
-                {
-                    throw new IOException($"Некоректний або занадто великий розмір пакета: {lengthAllMessageByte} байт");
+                    if (prefix != null && prefix.Length >= 4)
+                    {
+                        lengthAllMessageByte = prefix[0] | (prefix[1] << 8) | (prefix[2] << 16) | (prefix[3] << 24);
+                    }
+                    else
+                    {
+                        ReadExactBytes(_headerReceiveBuffer, 0, Int32Length);
+                        lengthAllMessageByte = _headerReceiveBuffer[0] | (_headerReceiveBuffer[1] << 8) | (_headerReceiveBuffer[2] << 16) | (_headerReceiveBuffer[3] << 24);
+                    }
+
+                    if (lengthAllMessageByte < 0 || lengthAllMessageByte > MaxPacketSizeBytes)
+                    {
+                        throw new IOException($"Некоректний або занадто великий розмір пакета: {lengthAllMessageByte} байт");
+                    }
+
+                    if (lengthAllMessageByte == 0)
+                    {
+                        return EmptyByteArray;
+                    }
+
+                    CurrentSendRequestLength = 0;
+                    CurrentReceiveRequestLength = lengthAllMessageByte;
+                    CurrentRequestStart = DateTime.UtcNow;
+
+                    byte[] msg = new byte[lengthAllMessageByte];
+                    ReadExactBytes(msg, 0, lengthAllMessageByte);
+                    return msg;
                 }
-
-                if (lengthAllMessageByte == 0)
-                {
-                    return new byte[0];
-                }
-
-                CurrentSendRequestLength = 0;
-                CurrentReceiveRequestLength = lengthAllMessageByte;
-                CurrentRequestStart = DateTime.UtcNow;
-
-                byte[] msg = new byte[lengthAllMessageByte];
-                ReadExactBytes(msg, 0, lengthAllMessageByte);
-                return msg;
             }
             finally
             {
@@ -216,7 +228,10 @@ namespace Transfer
         public byte[] ReceiveFourByte()
         {
             byte[] four = new byte[4];
-            ReadExactBytes(four, 0, 4);
+            lock (_receiveLock)
+            {
+                ReadExactBytes(four, 0, 4);
+            }
             return four;
         }
 
@@ -235,7 +250,7 @@ namespace Transfer
                         var numberOfBytesRead = ClientStream.EndRead(ar);
                         if (numberOfBytesRead <= 0)
                         {
-                            action(this, new byte[0]);
+                            action(this, EmptyByteArray);
                             return;
                         }
 
@@ -250,13 +265,13 @@ namespace Transfer
                     }
                     catch
                     {
-                        action(this, new byte[0]);
+                        action(this, EmptyByteArray);
                     }
                 }, null);
             }
             catch
             {
-                action(this, new byte[0]);
+                action(this, EmptyByteArray);
             }
         }
 
@@ -264,7 +279,10 @@ namespace Transfer
         {
             if (message != null && message.Length > 0)
             {
-                ClientStream.Write(message, 0, message.Length);
+                lock (_sendLock)
+                {
+                    ClientStream.Write(message, 0, message.Length);
+                }
             }
         }
     }

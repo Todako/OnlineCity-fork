@@ -11,6 +11,8 @@ namespace Util
     /// </summary>
     public static partial class GZip
     {
+        private static readonly byte[] EmptyByteArray = new byte[0];
+
         [ThreadStatic]
         private static BinaryFormatter formatter = null;
 
@@ -74,7 +76,7 @@ namespace Util
 
         public static byte[] ZipByteByte(byte[] bytes)
         {
-            if (bytes == null || bytes.Length == 0) return new byte[0];
+            if (bytes == null || bytes.Length == 0) return EmptyByteArray;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 return ZipStreamByte(msi);
@@ -83,7 +85,7 @@ namespace Util
 
         public static byte[] ZipByte(string str)
         {
-            if (string.IsNullOrEmpty(str)) return new byte[0];
+            if (string.IsNullOrEmpty(str)) return EmptyByteArray;
             var bytes = Encoding.UTF8.GetBytes(str);
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
@@ -96,6 +98,7 @@ namespace Util
         /// </summary>
         public static byte[] Serialize(object obj)
         {
+            if (obj == null) return EmptyByteArray;
             var msi = GetSerializeStream();
             if (formatter == null) formatter = new BinaryFormatter();
             formatter.Serialize(msi, obj);
@@ -108,6 +111,7 @@ namespace Util
         /// </summary>
         public static byte[] ZipObjByte(object obj)
         {
+            if (obj == null) return EmptyByteArray;
             var msi = GetSerializeStream();
             if (formatter == null) formatter = new BinaryFormatter();
             formatter.Serialize(msi, obj);
@@ -118,6 +122,7 @@ namespace Util
 
         public static byte[] ZipStreamByte(Stream msi)
         {
+            if (msi == null) return EmptyByteArray;
             using (var mso = CreateToStream(msi, "data"))
             {
                 return mso.ToArray();
@@ -126,6 +131,7 @@ namespace Util
 
         public static byte[] ZipMoreByteByte(string[] list, Func<string, byte[]> getContent)
         {
+            if (list == null || list.Length == 0) return EmptyByteArray;
             var index = -1;
             Stream lastStream = null;
             Func<string> getZipEntryName = () =>
@@ -136,7 +142,15 @@ namespace Util
             Func<Stream> getMemStreamIn = () =>
             {
                 if (lastStream != null) lastStream.Dispose();
-                lastStream = new MemoryStream(getContent(list[index]));
+                var content = getContent(list[index]);
+                if (content == null || content.Length == 0)
+                {
+                    lastStream = new MemoryStream(EmptyByteArray, false);
+                }
+                else
+                {
+                    lastStream = new MemoryStream(content, 0, content.Length, false, true);
+                }
                 return lastStream;
             };
 
@@ -161,7 +175,7 @@ namespace Util
 
         public static byte[] UnzipByteByte(byte[] bytes)
         {
-            if (bytes == null || bytes.Length == 0) return new byte[0];
+            if (bytes == null || bytes.Length == 0) return EmptyByteArray;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 return UnzipStreamByte(msi);
@@ -181,6 +195,7 @@ namespace Util
         public static object Deserialize(byte[] bytes)
         {
             if (bytes == null || bytes.Length == 0) return null;
+            LastSizeObj = bytes.Length;
             using (var msi = new MemoryStream(bytes, 0, bytes.Length, false, true))
             {
                 if (formatter == null) formatter = new BinaryFormatter();
@@ -206,6 +221,7 @@ namespace Util
 
         public static byte[] UnzipStreamByte(Stream msi)
         {
+            if (msi == null) return EmptyByteArray;
             using (var mso = UnpackFromStream(msi))
             {
                 return mso.ToArray();
