@@ -7,7 +7,6 @@ using ServerOnlineCity.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using Transfer;
 
@@ -52,20 +51,28 @@ namespace ServerOnlineCity.Model
         public List<string> StatesRankingLast { get; set; }
 
         /// <summary>
-        /// Потокобезпечне атомарне оновлення словників та наборів гравців.
+        /// Потокобезпечне атомарне оновлення словників та наборів гравців із точним виділенням ємності.
         /// </summary>
         public void UpdatePlayersAllDic()
         {
             var all = PlayersAll;
             if (all == null) return;
 
-            var approvedDic = new ConcurrentDictionary<string, PlayerServer>(StringComparer.Ordinal);
-            var allDic = new ConcurrentDictionary<string, PlayerServer>(StringComparer.Ordinal);
-            var approvedList = new HashSet<PlayerServer>();
-            var approvedLogins = new HashSet<string>(StringComparer.Ordinal);
+            int concurrencyLevel = Environment.ProcessorCount;
+
+            ConcurrentDictionary<string, PlayerServer> approvedDic;
+            ConcurrentDictionary<string, PlayerServer> allDic;
+            HashSet<PlayerServer> approvedList;
+            HashSet<string> approvedLogins;
 
             lock (all)
             {
+                int capacity = Math.Max(32, all.Count);
+                approvedDic = new ConcurrentDictionary<string, PlayerServer>(concurrencyLevel, capacity, StringComparer.Ordinal);
+                allDic = new ConcurrentDictionary<string, PlayerServer>(concurrencyLevel, capacity, StringComparer.Ordinal);
+                approvedList = new HashSet<PlayerServer>();
+                approvedLogins = new HashSet<string>(capacity, StringComparer.Ordinal);
+
                 for (int i = 0; i < all.Count; i++)
                 {
                     var p = all[i];
@@ -121,7 +128,7 @@ namespace ServerOnlineCity.Model
             long hash = (long)data.GetHashCode();
             if (UploadService == null)
             {
-                UploadService = new ConcurrentDictionary<long, string>();
+                UploadService = new ConcurrentDictionary<long, string>(Environment.ProcessorCount, 32);
             }
             UploadService[hash] = data;
             return hash;
@@ -161,7 +168,7 @@ namespace ServerOnlineCity.Model
         private static readonly HashSet<PlayerServer> EmptyPlayerSet = new HashSet<PlayerServer>();
 
         /// <summary>
-        /// Потокобезпечне атомарне оновлення словників держав та посад.
+        /// Потокобезпечне оновлення держав та посад зі зниженою складністю O(N+M) замість O(N*M).
         /// </summary>
         public void UpdateStatesDic()
         {
@@ -169,12 +176,41 @@ namespace ServerOnlineCity.Model
             var positions = StatePositions;
             if (states == null) return;
 
-            var statesDic = new ConcurrentDictionary<string, State>(StringComparer.Ordinal);
-            var statesList = new HashSet<State>();
-            var positionsDic = new ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>>(StringComparer.Ordinal);
+            int concurrencyLevel = Environment.ProcessorCount;
+
+            ConcurrentDictionary<string, State> statesDic;
+            HashSet<State> statesList;
+            ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>> positionsDic;
 
             lock (states)
             {
+                int statesCount = Math.Max(16, states.Count);
+                statesDic = new ConcurrentDictionary<string, State>(concurrencyLevel, statesCount, StringComparer.Ordinal);
+                statesList = new HashSet<State>();
+                positionsDic = new ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>>(concurrencyLevel, statesCount, StringComparer.Ordinal);
+
+                // Одноразове групування посад за назвою держави з єдиним блокуванням
+                var positionsByState = new Dictionary<string, List<StatePosition>>(statesCount, StringComparer.Ordinal);
+                if (positions != null)
+                {
+                    lock (positions)
+                    {
+                        for (int j = 0; j < positions.Count; j++)
+                        {
+                            var pos = positions[j];
+                            if (pos != null && !string.IsNullOrEmpty(pos.StateName) && !string.IsNullOrEmpty(pos.Name))
+                            {
+                                if (!positionsByState.TryGetValue(pos.StateName, out var list))
+                                {
+                                    list = new List<StatePosition>();
+                                    positionsByState[pos.StateName] = list;
+                                }
+                                list.Add(pos);
+                            }
+                        }
+                    }
+                }
+
                 for (int i = 0; i < states.Count; i++)
                 {
                     var s = states[i];
@@ -183,19 +219,13 @@ namespace ServerOnlineCity.Model
                     statesDic[s.Name] = s;
                     statesList.Add(s);
 
-                    var spDic = new ConcurrentDictionary<string, StatePosition>(StringComparer.Ordinal);
-                    if (positions != null)
+                    var spDic = new ConcurrentDictionary<string, StatePosition>(concurrencyLevel, 8, StringComparer.Ordinal);
+                    if (positionsByState.TryGetValue(s.Name, out var posList))
                     {
-                        lock (positions)
+                        for (int k = 0; k < posList.Count; k++)
                         {
-                            for (int j = 0; j < positions.Count; j++)
-                            {
-                                var pos = positions[j];
-                                if (pos?.StateName == s.Name && !string.IsNullOrEmpty(pos.Name))
-                                {
-                                    spDic[pos.Name] = pos;
-                                }
-                            }
+                            var pos = posList[k];
+                            spDic[pos.Name] = pos;
                         }
                     }
                     positionsDic[s.Name] = spDic;
@@ -205,13 +235,12 @@ namespace ServerOnlineCity.Model
             StatesDic = statesDic;
             GetStates = statesList;
             StatePositionsDic = positionsDic;
-            StatePlayersDic = new ConcurrentDictionary<string, HashSet<PlayerServer>>(StringComparer.Ordinal);
+            StatePlayersDic = new ConcurrentDictionary<string, HashSet<PlayerServer>>(concurrencyLevel, Math.Max(16, states.Count), StringComparer.Ordinal);
             StateUpdateTime = DateTime.UtcNow;
         }
 
         /// <summary>
-        /// Повертає список гравців вказаної держави.
-        /// ОПТИМІЗАЦІЯ: використання фабричного делегата виключає виділення пам'яті під час кожного звернення.
+        /// Повертає список гравців вказаної держави без створення замикань і делегатів.
         /// </summary>
         public HashSet<PlayerServer> GetStatePlayers(string stateName)
         {
@@ -220,21 +249,25 @@ namespace ServerOnlineCity.Model
             var dic = StatePlayersDic;
             if (dic == null) return EmptyPlayerSet;
 
-            return dic.GetOrAdd(stateName, sn =>
+            if (dic.TryGetValue(stateName, out var cached))
             {
-                var players = GetPlayersAll;
-                if (players == null) return EmptyPlayerSet;
+                return cached;
+            }
 
-                var result = new HashSet<PlayerServer>();
-                foreach (var p in players)
+            var players = GetPlayersAll;
+            if (players == null) return EmptyPlayerSet;
+
+            var result = new HashSet<PlayerServer>();
+            foreach (var p in players)
+            {
+                if (p?.Public?.StateName == stateName)
                 {
-                    if (p?.Public?.StateName == sn)
-                    {
-                        result.Add(p);
-                    }
+                    result.Add(p);
                 }
-                return result;
-            });
+            }
+
+            dic[stateName] = result;
+            return result;
         }
 
         public NameValidator NameValidator => _NameValidator;
@@ -291,9 +324,9 @@ namespace ServerOnlineCity.Model
 
             if (!ServerManager.ServerSettings.PlayerNeedApprove)
             {
-                foreach (var player in PlayersAll)
+                for (int i = 0; i < PlayersAll.Count; i++)
                 {
-                    player.Approve = true;
+                    PlayersAll[i].Approve = true;
                 }
             }
 
@@ -308,8 +341,9 @@ namespace ServerOnlineCity.Model
             // Якщо PVP вимкнено в конфігурації сервера — вимикаємо його у всіх гравців
             if (!ServerManager.ServerSettings.GeneralSettings.EnablePVP)
             {
-                foreach (var player in PlayersAll)
+                for (int i = 0; i < PlayersAll.Count; i++)
                 {
+                    var player = PlayersAll[i];
                     if (player?.Public != null)
                     {
                         player.Public.EnablePVP = false;

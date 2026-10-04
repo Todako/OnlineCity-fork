@@ -49,7 +49,7 @@ namespace OCUnion.Common
                     return;
                 }
 
-                using (var f = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
+                using (var f = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan))
                 {
                     mfi.Hash = sha.ComputeHash(f);
                     mfi.Size = f.Length;
@@ -122,6 +122,8 @@ namespace OCUnion.Common
         /// </summary>
         private static ModelFileInfo GenerateHashXMLString(string XML, List<string> ignoreTag)
         {
+            if (string.IsNullOrEmpty(XML)) return new ModelFileInfo { FileName = "" };
+
             if (ignoreTag != null && ignoreTag.Count > 0)
             {
                 for (int i = 0; i < ignoreTag.Count; i++)
@@ -190,8 +192,32 @@ namespace OCUnion.Common
             return result;
         }
 
+        /// <summary>
+        /// ОПТИМІЗАЦІЯ: прямий розрахунок хешу з байтів без декодування у рядок, якщо теги ігнорування відсутні.
+        /// </summary>
         public static ModelFileInfo GenerateHashXML(byte[] XMLByte, List<string> ignoreTag)
         {
+            if (XMLByte == null || XMLByte.Length == 0) return new ModelFileInfo { FileName = "" };
+
+            if (ignoreTag == null || ignoreTag.Count == 0)
+            {
+                int offset = 0;
+                int count = XMLByte.Length;
+
+                if (XMLByte.Length >= 3 && XMLByte[0] == 0xEF && XMLByte[1] == 0xBB && XMLByte[2] == 0xBF)
+                {
+                    offset = 3;
+                    count -= 3;
+                }
+
+                var directResult = new ModelFileInfo { FileName = "" };
+                using (var sha = SHA512.Create())
+                {
+                    directResult.Hash = sha.ComputeHash(XMLByte, offset, count);
+                }
+                return directResult;
+            }
+
             var XML = Encoding.UTF8.GetString(XMLByte);
             return GenerateHashXMLString(XML, ignoreTag);
         }
@@ -249,18 +275,24 @@ namespace OCUnion.Common
 
             generateHashFiles(result, ref rootFolder, rootFolder, ignoreFolder, true);
 
-            var checkFolders = Directory.GetDirectories(rootFolder);
-
-            for (var i = 0; i < checkFolders.Length; i++)
+            int folderIndex = 0;
+            foreach (var folder in Directory.EnumerateDirectories(rootFolder))
             {
-                var folder = checkFolders[i];
-                if (IsIgnoreFolder(folder, ignoreFolder)) continue;
-                onStartUpdateFolder?.Invoke(folder, i);
+                if (IsIgnoreFolder(folder, ignoreFolder))
+                {
+                    folderIndex++;
+                    continue;
+                }
+
+                onStartUpdateFolder?.Invoke(folder, folderIndex);
 
 #if DEBUG
                 var di = new DirectoryInfo(folder);
                 if ("OnlineCity".Equals(di.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    folderIndex++;
                     continue;
+                }
 #endif
 
                 var checkFolder = Path.IsPathRooted(rootFolder) ? Path.Combine(rootFolder, folder) : folder;
@@ -272,6 +304,8 @@ namespace OCUnion.Common
                 {
                     Loger.Log($"Directory not found {checkFolder}", Loger.LogLevel.ERROR);
                 }
+
+                folderIndex++;
             }
 
             return result;
@@ -279,7 +313,7 @@ namespace OCUnion.Common
 
         private static void restoreFolderTree(string modsDir, FoldersTree foldersTree)
         {
-            if (foldersTree.SubDirs == null) return;
+            if (foldersTree?.SubDirs == null) return;
 
             for (int i = 0; i < foldersTree.SubDirs.Count; i++)
             {
@@ -296,31 +330,32 @@ namespace OCUnion.Common
         }
 
         /// <summary>
-        /// Сканування та розрахунок контрольних сум файлів.
-        /// ОПТИМІЗАЦІЯ: для малих папок розрахунок іде послідовно, усуваючи накладні витрати на пул потоків.
+        /// Сканування та розрахунок контрольних сум файлів через EnumerateDirectories / EnumerateFiles.
         /// </summary>
         private static void generateHashFiles(List<ModelFileInfo> result, ref string rootFolder, string folder, List<string> ignoreFolder, bool level0 = false)
         {
             if (!level0)
             {
-                var dirs = Directory.GetDirectories(folder);
-                for (int i = 0; i < dirs.Length; i++)
+                foreach (var subDir in Directory.EnumerateDirectories(folder))
                 {
-                    var subDir = dirs[i];
                     if (IsIgnoreFolder(subDir, ignoreFolder)) continue;
                     generateHashFiles(result, ref rootFolder, subDir, ignoreFolder);
                 }
             }
 
-            var files = Directory.GetFiles(folder);
-            int fileNamePos = rootFolder.Length + 1;
-
-            var targetFiles = new List<(string FullPath, string RelPath)>(files.Length);
-            for (int i = 0; i < files.Length; i++)
+            int fileNamePos = rootFolder.Length;
+            if (!rootFolder.EndsWith("\\") && !rootFolder.EndsWith("/"))
             {
-                if (ApproveExt(files[i]))
+                fileNamePos++;
+            }
+
+            var targetFiles = new List<(string FullPath, string RelPath)>();
+            foreach (var filePath in Directory.EnumerateFiles(folder))
+            {
+                if (ApproveExt(filePath))
                 {
-                    targetFiles.Add((files[i], files[i].Substring(fileNamePos)));
+                    var relPath = filePath.Length > fileNamePos ? filePath.Substring(fileNamePos) : string.Empty;
+                    targetFiles.Add((filePath, relPath));
                 }
             }
 
