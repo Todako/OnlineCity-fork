@@ -35,7 +35,8 @@ namespace RimWorldOnlineCity
         public Dictionary<int, int> SendedState { get; set; }
         public Dictionary<int, int> SendedXP { get; set; }
 
-        public List<int> ToUpdateStateId { get; set; }
+        // ОПТИМІЗАЦІЯ: швидкий HashSet для O(1) перевірок замість List<int>
+        public HashSet<int> ToUpdateStateId { get; set; }
         public List<Thing> ToUpdateState { get; set; }
 
         public HashSet<int> ToSendDeleteId { get; set; }
@@ -59,7 +60,7 @@ namespace RimWorldOnlineCity
 
         private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
 
-        // ОПТИМІЗАЦІЯ: постійні змінні для усунення 20 алокацій new HashSet<Thing>() на секунду
+        // Постійні змінні для усунення 20 алокацій new HashSet<Thing>() на секунду (Double-Buffering)
         private HashSet<Thing> ThingPrepareChange1 = new HashSet<Thing>();
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
@@ -178,18 +179,16 @@ namespace RimWorldOnlineCity
                     CellRect cellRect = CellRect.WholeMap(GameMap);
                     cellRect.ClipInsideMap(GameMap);
 
+                    SendedActual = new Dictionary<int, Thing>(2048);
+                    FireList = new HashSet<Thing>();
+
+                    // ОПТИМІЗАЦІЯ: об'єднання збору рельєфу та речей карти в один прохід замість двох повних обходів
                     foreach (IntVec3 current in cellRect)
                     {
                         var terr = GameMap.terrainGrid.TerrainAt(current);
                         toSrvMap.TerrainDefNameCell.Add(new IntVec3S(current));
                         toSrvMap.TerrainDefName.Add(terr.defName);
-                    }
 
-                    SendedActual = new Dictionary<int, Thing>(2048);
-                    FireList = new HashSet<Thing>();
-
-                    foreach (IntVec3 current in cellRect)
-                    {
                         var thingsAtCell = GameMap.thingGrid.ThingsListAt(current);
                         for (int t = 0; t < thingsAtCell.Count; t++)
                         {
@@ -241,7 +240,7 @@ namespace RimWorldOnlineCity
                         SendedPawnsId = new HashSet<int>();
                         SendedState = new Dictionary<int, int>(64);
                         SendedXP = new Dictionary<int, int>(64);
-                        ToUpdateStateId = new List<int>(32);
+                        ToUpdateStateId = new HashSet<int>();
                         ToUpdateState = new List<Thing>(32);
                         ToSendDeleteId = new HashSet<int>();
                         ToSendAddId = new HashSet<int>();
@@ -445,7 +444,8 @@ namespace RimWorldOnlineCity
 
                                 foreach (var fire in FireList)
                                 {
-                                    if (!ToUpdateState.Contains(fire))
+                                    // ОПТИМІЗАЦІЯ: O(1) перевірка через HashSet замість перебору списку
+                                    if (ToUpdateStateId.Add(fire.thingIDNumber))
                                     {
                                         ToUpdateState.Add(fire);
                                     }
@@ -454,7 +454,7 @@ namespace RimWorldOnlineCity
                                 SendDelayedFillPawnsLastTime = DateTime.UtcNow;
                                 ToSendDelayedFillPawnsId.IntersectWith(AllPawns.Keys);
                                 ToSendDelayedFillPawnsId.ExceptWith(ToSendAddId);
-                                ToSendAddId.AddRange(ToSendDelayedFillPawnsId);
+                                ToSendAddId.UnionWith(ToSendDelayedFillPawnsId);
                                 ToSendDelayedFillPawnsId.Clear();
                             }
 
@@ -472,7 +472,6 @@ namespace RimWorldOnlineCity
                                 ? ToSendAddId.Count
                                 : 3;
 
-                            // ОПТИМІЗАЦІЯ: використання _addedIdBuffer замість new int[cnt] що-50 мс
                             _addedIdBuffer.Clear();
                             foreach (int id in ToSendAddId)
                             {
@@ -568,7 +567,7 @@ namespace RimWorldOnlineCity
                                 _toSendStateBuffer.Add(new AttackThingState(mp));
                             }
 
-                            // ОПТИМІЗАЦІЯ: Double-buffering замість new HashSet<Thing>() кожні 50 мс
+                            // Double-buffering замість нових алокацій кожні 50 мс
                             ThingPrepareChange0.Clear();
                             var tempSet = ThingPrepareChange0;
                             ThingPrepareChange0 = ThingPrepareChange1;
@@ -621,7 +620,7 @@ namespace RimWorldOnlineCity
                             TerribleFatalError = true;
                         }
 
-                        if (toClient.UpdateCommand.Count > 0)
+                        if (toClient.UpdateCommand != null && toClient.UpdateCommand.Count > 0)
                         {
                             UIEventNewJobDisable = true;
                             for (int ii = 0; ii < toClient.UpdateCommand.Count; ii++)
@@ -635,7 +634,7 @@ namespace RimWorldOnlineCity
                             UIEventNewJobDisable = false;
                         }
 
-                        if (toClient.NeedNewThingIDs.Count > 0)
+                        if (toClient.NeedNewThingIDs != null && toClient.NeedNewThingIDs.Count > 0)
                         {
                             lock (ToSendListsSync)
                             {
@@ -727,12 +726,15 @@ namespace RimWorldOnlineCity
 
                 if (!stopJob && !string.IsNullOrEmpty(comm.TargetDefName))
                 {
-                    for (int i = 0; i < pawn.inventory.innerContainer.Count; i++)
+                    if (pawn.inventory?.innerContainer != null)
                     {
-                        var item = pawn.inventory.innerContainer[i];
-                        if (item.def.defName == comm.TargetDefName) { target = item; break; }
+                        for (int i = 0; i < pawn.inventory.innerContainer.Count; i++)
+                        {
+                            var item = pawn.inventory.innerContainer[i];
+                            if (item.def.defName == comm.TargetDefName) { target = item; break; }
+                        }
                     }
-                    if (target == null)
+                    if (target == null && pawn.carryTracker?.innerContainer != null)
                     {
                         for (int i = 0; i < pawn.carryTracker.innerContainer.Count; i++)
                         {
@@ -740,7 +742,7 @@ namespace RimWorldOnlineCity
                             if (item.def.defName == comm.TargetDefName) { target = item; break; }
                         }
                     }
-                    if (target == null)
+                    if (target == null && pawn.equipment?.AllEquipmentListForReading != null)
                     {
                         for (int i = 0; i < pawn.equipment.AllEquipmentListForReading.Count; i++)
                         {
@@ -748,7 +750,7 @@ namespace RimWorldOnlineCity
                             if (item.def.defName == comm.TargetDefName) { target = item; break; }
                         }
                     }
-                    if (target == null)
+                    if (target == null && pawn.apparel?.WornApparel != null)
                     {
                         for (int i = 0; i < pawn.apparel.WornApparel.Count; i++)
                         {
@@ -836,7 +838,6 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    // ОПТИМІЗАЦІЯ: оновлення наявного об'єкта APJBT без створення нового екземпляра
                     if (ApplyPawnJobByTick.TryGetValue(pId, out APJBT existingCheck))
                     {
                         existingCheck.Comm = comm;
@@ -871,7 +872,7 @@ namespace RimWorldOnlineCity
                 {
                     ThingPrepareChange2[pawnId] = job.targetA.Thing;
                 }
-                if (job != null && pawn.RaceProps.Humanlike
+                if (job != null && pawn.RaceProps != null && pawn.RaceProps.Humanlike
                     && (job.def == JobDefOf.Equip
                     || job.def == JobDefOf.TakeInventory
                     || job.def == JobDefOf.Wear
@@ -921,9 +922,8 @@ namespace RimWorldOnlineCity
                     }
                     else
                     {
-                        if (!ToUpdateStateId.Contains(tId))
+                        if (ToUpdateStateId.Add(tId))
                         {
-                            ToUpdateStateId.Add(tId);
                             ToUpdateState.Add(thing);
                         }
                     }
@@ -947,8 +947,9 @@ namespace RimWorldOnlineCity
             bool existHostPawn = false;
             bool existAttackerPawn = false;
 
-            foreach (var pawn in AllPawns.Values)
+            foreach (var kvp in AllPawns)
             {
+                var pawn = kvp.Value;
                 if (pawn.Dead || pawn.Downed) continue;
 
                 if (!existAttackerPawn
