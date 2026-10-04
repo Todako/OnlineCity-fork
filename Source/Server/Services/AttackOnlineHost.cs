@@ -15,33 +15,29 @@ namespace ServerOnlineCity.Services
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
+            if (context?.Player == null || request?.Packet == null) return null;
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
             result.Packet = attackOnlineHost((AttackHostToSrv)request.Packet, context);
             return result;
         }
 
         private AttackHostFromSrv attackOnlineHost(AttackHostToSrv fromClient, ServiceContext context)
         {
+            if (fromClient == null)
+            {
+                return new AttackHostFromSrv { ErrorText = "No request data" };
+            }
+
             lock (context.Player)
             {
-                var timeNow = DateTime.UtcNow;
-                var data = Repository.GetData;
-                var res = new AttackHostFromSrv()
-                {
-                };
-
                 if (context.Player.AttackData == null)
                 {
                     Loger.Log("Server AttackOnlineHost Unexpected error, no data", Loger.LogLevel.ERROR);
-                    res.ErrorText = "Unexpected error, no data";
-                    return res;
+                    return new AttackHostFromSrv { ErrorText = "Unexpected error, no data" };
                 }
 
-                //передаем управление общему объекту
-                res = context.Player.AttackData.RequestHost(fromClient);
-
-                return res;
+                // ОПТИМІЗАЦІЯ: пряме передавання керування без виділення тимчасового об'єкта кожні 50 мс
+                return context.Player.AttackData.RequestHost(fromClient);
             }
         }
     }
