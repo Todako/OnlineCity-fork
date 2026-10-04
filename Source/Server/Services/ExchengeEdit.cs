@@ -5,7 +5,7 @@ using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Text;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -30,13 +30,10 @@ namespace ServerOnlineCity.Services
             try
             {
                 if (context.Player == null) return null;
+
                 lock (context.Player)
                 {
-                    var timeNow = DateTime.UtcNow;
-
-                    var data = Repository.GetData;
-
-                    if (context.Player.Public.Login != order.Owner.Login)
+                    if (order?.Owner == null || context.Player.Public == null || context.Player.Public.Login != order.Owner.Login)
                     {
                         return new ModelStatus()
                         {
@@ -45,21 +42,17 @@ namespace ServerOnlineCity.Services
                         };
                     }
 
+                    var timeNow = DateTime.UtcNow;
+                    var data = Repository.GetData;
+
                     if (order.Id == 0)
                     {
-                        //создать новый
-
-                        //актуализируем
+                        // Створення нового ордера
                         order.Created = timeNow;
                         order.UpdateTime = timeNow;
-
                         order.Owner = context.Player.Public;
 
-                        if (order.PrivatPlayers == null) order.PrivatPlayers = new List<Player>();
-                        order.PrivatPlayers = order.PrivatPlayers
-                            .Select(pp => Repository.GetPlayerByLogin(pp.Login)?.Public)
-                            .ToList();
-                        if (order.PrivatPlayers.Any(pp => pp == null))
+                        if (!ResolvePrivatPlayers(order))
                         {
                             return new ModelStatus()
                             {
@@ -72,10 +65,9 @@ namespace ServerOnlineCity.Services
                         {
                             if (!data.OrderOperator.OrderAdd(order))
                             {
-                                //только для логов:
                                 var storage = data.OrderOperator.GetStorage(order.Tile, context.Player.Public, false);
-                                Loger.Log($"Server exchengeEdit Cancel OrderAdd! order={order}" + Environment.NewLine + Environment.NewLine
-                                    + $" storage=" + storage?.Things?.ToStringLabel() ?? "null", Loger.LogLevel.EXCHANGE);
+                                var storageStr = storage?.Things?.ToStringLabel() ?? "null";
+                                Loger.Log($"Server exchengeEdit Cancel OrderAdd! order={order}\n\n storage={storageStr}", Loger.LogLevel.EXCHANGE);
 
                                 return new ModelStatus()
                                 {
@@ -85,34 +77,27 @@ namespace ServerOnlineCity.Services
                             }
                             else
                             {
-                                HelperMailMessadge.Send( //todo Локализация, проверить
-                                    Repository.GetData.PlayerSystem
-                                    , context.Player
-                                    , "OC_ExchangeEdit_OrderPlaced"
-                                    , "OC_ExchangeEdit_OrderPlaced" + "." + Environment.NewLine
-                                        + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ".\n" + Environment.NewLine
-                                        + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
-                                        + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine
-                                        + (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0
-                                            ? "OC_ExchangeEdit_ForAll"
-                                            : "OC_ExchangeEdit_PrivateOrder" + order.PrivatPlayers.Aggregate("", (r, i) => r + ", " + i.Login))
-                                    , ModelMailMessadge.MessadgeTypes.GreyGoldenLetter
-                                    , order.Tile
-                                    );
+                                HelperMailMessadge.Send(
+                                    Repository.GetData.PlayerSystem,
+                                    context.Player,
+                                    "OC_ExchangeEdit_OrderPlaced",
+                                    BuildMailBody("OC_ExchangeEdit_OrderPlaced", order),
+                                    ModelMailMessadge.MessadgeTypes.GreyGoldenLetter,
+                                    order.Tile
+                                );
                             }
                         }
                         Loger.Log("Server ExchengeEdit " + context.Player.Public.Login + " Add Id = " + order.Id.ToString(), Loger.LogLevel.EXCHANGE);
                     }
                     else
                     {
-                        //проверяем на существование
+                        // Перевірка існування ордера
                         lock (data)
                         {
-                            var id = order.Id > 0 ? order.Id : -order.Id;
-                            TradeOrder dataOrder;
-                            if (!data.OrderOperator.OrdersById.TryGetValue(id, out dataOrder)
+                            long id = order.Id > 0 ? order.Id : -order.Id;
+                            if (!data.OrderOperator.OrdersById.TryGetValue(id, out var dataOrder)
                                 || dataOrder == null
-                                || context.Player.Public.Login != dataOrder.Owner.Login)
+                                || context.Player.Public.Login != dataOrder.Owner?.Login)
                             {
                                 return new ModelStatus()
                                 {
@@ -123,18 +108,11 @@ namespace ServerOnlineCity.Services
 
                             if (order.Id > 0)
                             {
-                                //редактирование 
-
-                                //актуализируем
+                                // Редагування ордера
                                 order.Created = timeNow;
-
                                 order.Owner = context.Player.Public;
 
-                                if (order.PrivatPlayers == null) order.PrivatPlayers = new List<Player>();
-                                order.PrivatPlayers = order.PrivatPlayers
-                                    .Select(pp => Repository.GetPlayerByLogin(pp.Login)?.Public)
-                                    .ToList();
-                                if (order.PrivatPlayers.Any(pp => pp == null))
+                                if (!ResolvePrivatPlayers(order))
                                 {
                                     return new ModelStatus()
                                     {
@@ -146,10 +124,9 @@ namespace ServerOnlineCity.Services
                                 Loger.Log("Server ExchengeEdit " + context.Player.Public.Login + " Edit Id = " + order.Id.ToString(), Loger.LogLevel.EXCHANGE);
                                 if (!data.OrderOperator.OrderUpdate(order, dataOrder))
                                 {
-                                    //только для логов:
                                     var storage = data.OrderOperator.GetStorage(order.Tile, context.Player.Public, false);
-                                    Loger.Log($"Server exchengeEdit Cancel OrderUpdate! order={order}" + Environment.NewLine + Environment.NewLine
-                                        + $" storage=" + storage?.Things?.ToStringLabel() ?? "null", Loger.LogLevel.EXCHANGE);
+                                    var storageStr = storage?.Things?.ToStringLabel() ?? "null";
+                                    Loger.Log($"Server exchengeEdit Cancel OrderUpdate! order={order}\n\n storage={storageStr}", Loger.LogLevel.EXCHANGE);
 
                                     return new ModelStatus()
                                     {
@@ -159,43 +136,31 @@ namespace ServerOnlineCity.Services
                                 }
                                 else
                                 {
-                                    HelperMailMessadge.Send( //todo Локализация, проверить
-                                        Repository.GetData.PlayerSystem
-                                        , context.Player
-                                        , "OC_ExchangeEdit_OrderRedacted"
-                                        , "OC_ExchangeEdit_OrderRedacted" + ". " + Environment.NewLine
-                                            + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ".\n " + Environment.NewLine
-                                            + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
-                                            + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine
-                                            + (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0
-                                                ? "OC_ExchangeEdit_ForAll"
-                                                : "OC_ExchangeEdit_PrivateOrder" + order.PrivatPlayers.Aggregate("", (r, i) => r + ", " + i.Login))
-                                        , ModelMailMessadge.MessadgeTypes.GreyGoldenLetter
-                                        , order.Tile
-                                        );
+                                    HelperMailMessadge.Send(
+                                        Repository.GetData.PlayerSystem,
+                                        context.Player,
+                                        "OC_ExchangeEdit_OrderRedacted",
+                                        BuildMailBody("OC_ExchangeEdit_OrderRedacted", order),
+                                        ModelMailMessadge.MessadgeTypes.GreyGoldenLetter,
+                                        order.Tile
+                                    );
                                 }
                             }
                             else
                             {
-                                //Удаление
+                                // Видалення ордера
                                 Loger.Log("Server ExchengeEdit " + context.Player.Public.Login + " Delete Id = " + order.Id.ToString(), Loger.LogLevel.EXCHANGE);
 
                                 data.OrderOperator.OrderRemove(dataOrder);
 
-                                HelperMailMessadge.Send( //todo Локализация, проверить
-                                    Repository.GetData.PlayerSystem
-                                    , context.Player
-                                    , "OC_ExchangeEdit_OrderDeleted"
-                                    , "OC_ExchangeEdit_OrderDeleted" + ". " + Environment.NewLine
-                                        + "OC_ExchangeEdit_Laps" + ": " + order.CountReady + ". " + Environment.NewLine
-                                        + "OC_ExchangeEdit_YouSell" + order.SellThings.ToStringLabel() + Environment.NewLine
-                                        + "OC_ExchangeEdit_YouBuy" + order.BuyThings.ToStringLabel() + Environment.NewLine
-                                        + (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0
-                                            ? "OC_ExchangeEdit_ForAll"
-                                            : "OC_ExchangeEdit_PrivateOrder" + order.PrivatPlayers.Aggregate("", (r, i) => r + ", " + i.Login))
-                                    , ModelMailMessadge.MessadgeTypes.GreyGoldenLetter
-                                    , order.Tile
-                                    );
+                                HelperMailMessadge.Send(
+                                    Repository.GetData.PlayerSystem,
+                                    context.Player,
+                                    "OC_ExchangeEdit_OrderDeleted",
+                                    BuildMailBody("OC_ExchangeEdit_OrderDeleted", order),
+                                    ModelMailMessadge.MessadgeTypes.GreyGoldenLetter,
+                                    order.Tile
+                                );
                             }
                         }
                     }
@@ -214,6 +179,60 @@ namespace ServerOnlineCity.Services
                 ExceptionUtil.ExceptionLog(exp, "Server ExchengeEdit login=" + context?.Player?.Public?.Login);
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Валідація та актуалізація списку приватних гравців ордера без LINQ.
+        /// </summary>
+        private static bool ResolvePrivatPlayers(TradeOrder order)
+        {
+            if (order.PrivatPlayers == null)
+            {
+                order.PrivatPlayers = new List<Player>(0);
+                return true;
+            }
+
+            var resolved = new List<Player>(order.PrivatPlayers.Count);
+            for (int i = 0; i < order.PrivatPlayers.Count; i++)
+            {
+                var pp = order.PrivatPlayers[i];
+                if (pp == null || string.IsNullOrEmpty(pp.Login)) return false;
+
+                var serverPlayer = Repository.GetPlayerByLogin(pp.Login);
+                if (serverPlayer?.Public == null) return false;
+
+                resolved.Add(serverPlayer.Public);
+            }
+
+            order.PrivatPlayers = resolved;
+            return true;
+        }
+
+        /// <summary>
+        /// Формування тексту системного листа без створення квадратних алокацій рядків.
+        /// </summary>
+        private static string BuildMailBody(string actionKey, TradeOrder order)
+        {
+            var sb = new StringBuilder(256);
+            sb.Append(actionKey).Append(".").AppendLine();
+            sb.Append("OC_ExchangeEdit_Laps: ").Append(order.CountReady).Append(".\n").AppendLine();
+            sb.Append("OC_ExchangeEdit_YouSell").Append(order.SellThings?.ToStringLabel()).AppendLine();
+            sb.Append("OC_ExchangeEdit_YouBuy").Append(order.BuyThings?.ToStringLabel()).AppendLine();
+
+            if (order.PrivatPlayers == null || order.PrivatPlayers.Count == 0)
+            {
+                sb.Append("OC_ExchangeEdit_ForAll");
+            }
+            else
+            {
+                sb.Append("OC_ExchangeEdit_PrivateOrder");
+                for (int i = 0; i < order.PrivatPlayers.Count; i++)
+                {
+                    sb.Append(", ").Append(order.PrivatPlayers[i]?.Login);
+                }
+            }
+
+            return sb.ToString();
         }
     }
 }
