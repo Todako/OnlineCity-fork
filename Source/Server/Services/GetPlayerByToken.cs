@@ -1,7 +1,6 @@
 ﻿using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
 using System;
-using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -14,17 +13,33 @@ namespace ServerOnlineCity.Services
 
         public ModelContainer GenerateModelContainer(ModelContainer modelContainer, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var packet = (Guid)modelContainer.Packet;
-            var result = new ModelContainer { TypePacket = ResponseTypePackage };
+            if (context?.Player == null || !(modelContainer?.Packet is Guid packet)) return null;
 
-            lock (context.Player)
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
+            var data = Repository.GetData;
+            var players = data?.PlayersAll;
+
+            PlayerServer targetPlayer = null;
+
+            if (players != null)
             {
-                var data = Repository.GetData;
-                var playerServer = data.PlayersAll.FirstOrDefault(p => packet.Equals(p.DiscordToken));
-                result.Packet = playerServer?.Public;
-                return result;
+                // ОПТИМІЗАЦІЯ І ЗАХИСТ: потокобезпечний обхід без LINQ і алокацій лямбд
+                lock (players)
+                {
+                    for (int i = 0; i < players.Count; i++)
+                    {
+                        var p = players[i];
+                        if (p != null && p.DiscordToken == packet)
+                        {
+                            targetPlayer = p;
+                            break;
+                        }
+                    }
+                }
             }
+
+            result.Packet = targetPlayer?.Public;
+            return result;
         }
     }
 }

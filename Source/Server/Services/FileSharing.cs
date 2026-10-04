@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
 using Transfer;
-using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Services
 {
@@ -16,7 +14,7 @@ namespace ServerOnlineCity.Services
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
+            if (context?.Player == null || request?.Packet == null) return null;
 
             object result;
             if (request.Packet is List<ModelFileSharing> list)
@@ -25,26 +23,35 @@ namespace ServerOnlineCity.Services
                 var res = new List<ModelFileSharing>(list.Count);
                 for (int i = 0; i < list.Count; i++)
                 {
-                    res.Add(GetFileSharing(list[i], context.Player, true));
+                    var item = list[i];
+                    if (item != null)
+                    {
+                        res.Add(GetFileSharing(item, context.Player, true));
+                    }
                 }
                 result = res;
             }
-            else
+            else if (request.Packet is ModelFileSharing fileSharing)
             {
                 // Одиночний запит на передачу або отримання файлу
-                var fileSharing = (ModelFileSharing)request.Packet;
                 result = GetFileSharing(fileSharing, context.Player, false);
             }
+            else
+            {
+                return null;
+            }
 
-            return new ModelContainer()
+            return new ModelContainer
             {
                 TypePacket = ResponseTypePackage,
-                Packet = result,
+                Packet = result
             };
         }
 
         private ModelFileSharing GetFileSharing(ModelFileSharing fileSharing, PlayerServer player, bool onlyCheck)
         {
+            if (fileSharing == null) return null;
+
             if (!onlyCheck && fileSharing.Data != null)
             {
                 // Запит на збереження файлу на сервері
