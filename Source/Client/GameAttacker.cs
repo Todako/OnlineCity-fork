@@ -22,6 +22,19 @@ namespace RimWorldOnlineCity
         public int TimeStopBeforeAttack { get; } = 60;
         public int MapBorder { get; } = 10;
 
+        private static readonly TimeSpan DefaultPauseTimeToHost = new TimeSpan(0, 0, 60);
+
+        private static readonly HashSet<string> AllowedGenSteps = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ElevationFertility",
+            "Caves",
+            "Terrain",
+            "CavesTerrain",
+            "FindPlayerStartSpot",
+            "ScenParts",
+            "Fog"
+        };
+
         public static bool CanStart => SessionClientController.Data.AttackModule == null;
         public static GameAttacker Get => SessionClientController.Data.AttackModule;
 
@@ -163,11 +176,20 @@ namespace RimWorldOnlineCity
                 {
                     GameMap = map;
 
+                    // ОПТИМІЗАЦІЯ: кешування TerrainDef для уникнення тисяч викликів DefDatabase.GetNamed
+                    var terrainDefCache = new Dictionary<string, TerrainDef>(32, StringComparer.Ordinal);
                     for (int i = 0; i < response.TerrainDefNameCell.Count; i++)
                     {
                         var current = response.TerrainDefNameCell[i].Get();
                         var terrName = response.TerrainDefName[i];
-                        map.terrainGrid.SetTerrain(current, DefDatabase<TerrainDef>.GetNamed(terrName));
+
+                        if (!terrainDefCache.TryGetValue(terrName, out var terrDef))
+                        {
+                            terrDef = DefDatabase<TerrainDef>.GetNamed(terrName);
+                            terrainDefCache[terrName] = terrDef;
+                        }
+
+                        map.terrainGrid.SetTerrain(current, terrDef);
                     }
 
                     ThingsIDDicRev = new Dictionary<int, int>(response.ThingCell.Count);
@@ -454,17 +476,20 @@ namespace RimWorldOnlineCity
                         {
                             State = 10,
                             UpdateCommand = _commandsBuffer,
-                            SetPauseOnTimeToHost = AttackUpdateTick == 2 ? new TimeSpan(0, 0, TimeStopBeforeAttack) : TimeSpan.MinValue,
+                            SetPauseOnTimeToHost = AttackUpdateTick == 2 ? DefaultPauseTimeToHost : TimeSpan.MinValue,
                             VictoryHostToHost = VictoryHostToHost,
                             NeedNewThingIDs = _needNewThingsBuffer,
                         });
 
-                        if (toClient.NewPawns != null && toClient.NewCorpses != null && toClient.NewThings != null
-                            && (toClient.NewPawns.Count > 0 || toClient.NewCorpses.Count > 0 || toClient.NewThings.Count > 0))
+                        bool hasNewPawns = toClient.NewPawns != null && toClient.NewPawns.Count > 0;
+                        bool hasNewCorpses = toClient.NewCorpses != null && toClient.NewCorpses.Count > 0;
+                        bool hasNewThings = toClient.NewThings != null && toClient.NewThings.Count > 0;
+
+                        if (hasNewPawns || hasNewCorpses || hasNewThings)
                         {
                             try
                             {
-                                if (toClient.NewPawns.Count > 0)
+                                if (hasNewPawns && toClient.NewPawnsId != null)
                                 {
                                     for (int i = 0; i < toClient.NewPawnsId.Count; i++)
                                     {
@@ -505,7 +530,7 @@ namespace RimWorldOnlineCity
                                         });
                                 }
 
-                                if (toClient.NewCorpses.Count > 0)
+                                if (hasNewCorpses)
                                 {
                                     for (int i = 0; i < toClient.NewCorpses.Count; i++)
                                     {
@@ -552,7 +577,7 @@ namespace RimWorldOnlineCity
                                         });
                                 }
 
-                                if (toClient.NewThings.Count > 0)
+                                if (hasNewThings && toClient.NewThingsId != null)
                                 {
                                     for (int i = 0; i < toClient.NewThingsId.Count; i++)
                                     {
@@ -617,44 +642,48 @@ namespace RimWorldOnlineCity
 
         public void UIEventNewJob(Pawn pawn, Job job)
         {
+            if (job == null) return;
+
             try
             {
                 if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
 
-                var comm = new AttackPawnCommand { HostPawnID = id };
+                // ОПТИМІЗАЦІЯ: перевірка валідності типу команди до виділення об'єкта AttackPawnCommand
+                AttackPawnCommand.PawnCommand cmdType;
+                if (job.def == JobDefOf.Goto) cmdType = AttackPawnCommand.PawnCommand.Goto;
+                else if (job.def == JobDefOf.AttackStatic) cmdType = AttackPawnCommand.PawnCommand.Attack;
+                else if (job.def == JobDefOf.AttackMelee) cmdType = AttackPawnCommand.PawnCommand.AttackMelee;
+                else if (job.def == JobDefOf.Equip) cmdType = AttackPawnCommand.PawnCommand.Equip;
+                else if (job.def == JobDefOf.TakeInventory) cmdType = AttackPawnCommand.PawnCommand.TakeInventory;
+                else if (job.def == JobDefOf.Wear) cmdType = AttackPawnCommand.PawnCommand.Wear;
+                else if (job.def == JobDefOf.DropEquipment) cmdType = AttackPawnCommand.PawnCommand.DropEquipment;
+                else if (job.def == JobDefOf.RemoveApparel) cmdType = AttackPawnCommand.PawnCommand.RemoveApparel;
+                else if (job.def == JobDefOf.Ingest) cmdType = AttackPawnCommand.PawnCommand.Ingest;
+                else if (job.def == JobDefOf.Strip) cmdType = AttackPawnCommand.PawnCommand.Strip;
+                else if (job.def == JobDefOf.TendPatient) cmdType = AttackPawnCommand.PawnCommand.TendPatient;
+                else return;
 
-                if (job != null)
+                var comm = new AttackPawnCommand
                 {
-                    if (job.targetA.HasThing)
+                    HostPawnID = id,
+                    Command = cmdType
+                };
+
+                if (job.targetA.HasThing)
+                {
+                    if (!ThingsIDDic.TryGetValue(job.targetA.Thing.thingIDNumber, out int tid))
                     {
-                        if (!ThingsIDDic.TryGetValue(job.targetA.Thing.thingIDNumber, out int tid))
-                        {
-                            comm.TargetDefName = job.targetA.Thing.def.defName;
-                        }
-                        else
-                        {
-                            comm.TargetID = tid;
-                        }
+                        comm.TargetDefName = job.targetA.Thing.def.defName;
                     }
                     else
                     {
-                        comm.TargetPos = new IntVec3S(job.targetA.Cell);
+                        comm.TargetID = tid;
                     }
-
-                    if (job.def == JobDefOf.Goto) comm.Command = AttackPawnCommand.PawnCommand.Goto;
-                    else if (job.def == JobDefOf.AttackStatic) comm.Command = AttackPawnCommand.PawnCommand.Attack;
-                    else if (job.def == JobDefOf.AttackMelee) comm.Command = AttackPawnCommand.PawnCommand.AttackMelee;
-                    else if (job.def == JobDefOf.Equip) comm.Command = AttackPawnCommand.PawnCommand.Equip;
-                    else if (job.def == JobDefOf.TakeInventory) comm.Command = AttackPawnCommand.PawnCommand.TakeInventory;
-                    else if (job.def == JobDefOf.Wear) comm.Command = AttackPawnCommand.PawnCommand.Wear;
-                    else if (job.def == JobDefOf.DropEquipment) comm.Command = AttackPawnCommand.PawnCommand.DropEquipment;
-                    else if (job.def == JobDefOf.RemoveApparel) comm.Command = AttackPawnCommand.PawnCommand.RemoveApparel;
-                    else if (job.def == JobDefOf.Ingest) comm.Command = AttackPawnCommand.PawnCommand.Ingest;
-                    else if (job.def == JobDefOf.Strip) comm.Command = AttackPawnCommand.PawnCommand.Strip;
-                    else if (job.def == JobDefOf.TendPatient) comm.Command = AttackPawnCommand.PawnCommand.TendPatient;
-                    else return;
                 }
-                else return;
+                else
+                {
+                    comm.TargetPos = new IntVec3S(job.targetA.Cell);
+                }
 
                 ToSendCommand[id] = comm;
             }
@@ -733,13 +762,7 @@ namespace RimWorldOnlineCity
                         for (int i = 0; i < mapParent.MapGeneratorDef.genSteps.Count; i++)
                         {
                             var gs = mapParent.MapGeneratorDef.genSteps[i];
-                            if (gs.defName == "ElevationFertility"
-                                || gs.defName == "Caves"
-                                || gs.defName == "Terrain"
-                                || gs.defName == "CavesTerrain"
-                                || gs.defName == "FindPlayerStartSpot"
-                                || gs.defName == "ScenParts"
-                                || gs.defName == "Fog")
+                            if (AllowedGenSteps.Contains(gs.defName))
                             {
                                 genSteps.Add(gs);
                             }
