@@ -14,12 +14,12 @@ namespace ServerOnlineCity.Services
 
         public int ResponseTypePackage => (int)PackageType.Response18;
 
-        private readonly ChatManager _chatManager = ChatManager.Instance;
+        private const int FullRequestMinCountPosts = 20;
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
+            if (context?.Player == null) return null;
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
             result.Packet = updateChat((ModelUpdateTime)request.Packet, context);
             return result;
         }
@@ -28,58 +28,83 @@ namespace ServerOnlineCity.Services
         {
             lock (context.Player)
             {
-                var res = new ModelUpdateChat()
+                var playerChats = context.Player.Chats;
+                var res = new ModelUpdateChat
                 {
                     Time = DateTime.UtcNow,
-                    Chats = new List<Chat>(),
+                    Chats = playerChats != null ? new List<Chat>(playerChats.Count) : new List<Chat>(0)
                 };
-                bool fullRequest = time.Time == DateTime.MinValue;
 
-                var myLogin = context.Player.Public.Login;
+                if (playerChats == null || playerChats.Count == 0)
+                {
+                    return res;
+                }
+
+                bool fullRequest = time == null || time.Time == DateTime.MinValue;
+                var myLogin = context.Player.Public?.Login;
 
                 // Список гравців, яких бачить гравець (до побудови консолі зв'язку — радіус 10 клітинок; модератори та discord бачать усіх)
                 var ps = StaticHelper.PartyLoginSee(context.Player);
 
-                foreach (var chatPair in context.Player.Chats)
+                foreach (var chatPair in playerChats)
                 {
                     var ct = chatPair.Key;
-                    var resChat = new Chat()
+                    var ix = chatPair.Value;
+                    if (ct == null || ix == null) continue;
+
+                    var resChat = new Chat
                     {
                         Id = ct.Id,
                         OwnerLogin = ct.OwnerLogin,
                         Name = ct.Name,
                         OwnerMaker = ct.OwnerMaker,
-                        Posts = new List<ChatPost>(),
-                        LastChanged = ct.LastChanged,
+                        LastChanged = ct.LastChanged
                     };
 
-                    // Копіюємо чат без зайвих даних та відфільтровуємо повідомлення
-                    var ix = chatPair.Value;
-                    var countOfPosts = ct.Posts.Count;
-                    const int fullRequestMinCountPosts = 20;
+                    int countOfPosts = ct.Posts?.Count ?? 0;
 
-                    if (fullRequest && countOfPosts - ((int)ix.Value + 1) < fullRequestMinCountPosts)
+                    // Якщо це первинний запит — підтягуємо останні FullRequestMinCountPosts повідомлень без втрати першого
+                    if (fullRequest && countOfPosts - ((int)ix.Value + 1) < FullRequestMinCountPosts)
                     {
-                        ix.Value = countOfPosts - fullRequestMinCountPosts - 1;
-                        if (ix.Value < 0) ix.Value = 0;
+                        ix.Value = countOfPosts <= FullRequestMinCountPosts ? -1 : countOfPosts - FullRequestMinCountPosts - 1;
                     }
 
-                    int startIdx = (int)ix.Value + 1;
-                    for (int i = startIdx; i < countOfPosts; i++)
+                    int startIdx = Math.Max(0, (int)ix.Value + 1);
+                    int toRead = countOfPosts - startIdx;
+
+                    if (toRead > 0 && ct.Posts != null)
                     {
-                        var post = ct.Posts[i];
-                        if ((post.OnlyForPlayerLogin == null && ps.Contains(post.OwnerLogin)) || post.OnlyForPlayerLogin == myLogin)
+                        resChat.Posts = new List<ChatPost>(toRead);
+                        lock (ct.Posts)
                         {
-                            resChat.Posts.Add(post);
+                            int actualCount = ct.Posts.Count;
+                            for (int i = startIdx; i < actualCount; i++)
+                            {
+                                var post = ct.Posts[i];
+                                if (post == null) continue;
+
+                                if ((post.OnlyForPlayerLogin == null && post.OwnerLogin != null && ps.Contains(post.OwnerLogin))
+                                    || (myLogin != null && post.OnlyForPlayerLogin == myLogin))
+                                {
+                                    resChat.Posts.Add(post);
+                                }
+                            }
+                            ix.Value = actualCount - 1;
                         }
                     }
+                    else
+                    {
+                        resChat.Posts = new List<ChatPost>(0);
+                        ix.Value = countOfPosts - 1;
+                    }
 
-                    ix.Value = countOfPosts - 1;
-
-                    // Якщо від моменту останньої зміни змінився список учасників — надсилаємо оновлений перелік
+                    // Якщо змінився склад учасників — відправляємо ізольовану копію списку для уникнення збоїв серіалізації
                     if (fullRequest || ct.LastChanged > ix.Time)
                     {
-                        resChat.PartyLogin = ct.PartyLogin;
+                        lock (ct)
+                        {
+                            resChat.PartyLogin = ct.PartyLogin != null ? new List<string>(ct.PartyLogin) : null;
+                        }
                         ix.Time = ct.LastChanged;
                     }
 
