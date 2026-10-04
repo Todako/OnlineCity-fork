@@ -1,9 +1,9 @@
-﻿using OCUnion.Transfer.Model;
+﻿using Model;
+using OCUnion.Transfer.Model;
 using ServerOnlineCity.Common;
 using ServerOnlineCity.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -26,7 +26,6 @@ namespace ServerOnlineCity.Services
         {
             lock (context.Player)
             {
-                var timeNow = DateTime.UtcNow;
                 var res = new ModelOrderLoad()
                 {
                     Status = 0,
@@ -41,53 +40,118 @@ namespace ServerOnlineCity.Services
 
         private List<TradeOrder> getOrders(PlayerServer player, ModelOrderLoadRequest filters)
         {
-            //Список игроков кого видим
+            var myLogin = player?.Public?.Login;
+            if (string.IsNullOrEmpty(myLogin)) return new List<TradeOrder>(0);
+
+            // Якщо передано порожній масив тайлів — жодна точка не може підійти
+            if (filters?.Tiles != null && filters.Tiles.Count == 0)
+            {
+                return new List<TradeOrder>(0);
+            }
+
+            HashSet<int> tiles = null;
+            if (filters?.Tiles != null && filters.Tiles.Count > 0)
+            {
+                tiles = new HashSet<int>(filters.Tiles);
+            }
+
+            string filterBuy = filters?.FilterBuy;
+            string filterSell = filters?.FilterSell;
+            bool hasFilterBuy = !string.IsNullOrEmpty(filterBuy);
+            bool hasFilterSell = !string.IsNullOrEmpty(filterSell);
+
+            // Список гравців, яких бачимо
             var ps = StaticHelper.PartyLoginSee(player);
             var data = Repository.GetData;
-            //все доступные
-            var orders = data.Orders
-                        .Where(o => player.Public.Login == o.Owner.Login
-                            || ps.Contains(o.Owner.Login)
-                                && (o.PrivatPlayers == null || o.PrivatPlayers.Count == 0 || o.PrivatPlayers.Any(p => p.Login == player.Public.Login)));
-            //фильтры запроса
-            if (filters.Tiles != null /*&& filters.Tiles.Count > 0*/) //если массив задан, то фильтр выбран, просто могло не попать ни одной точки
-            {
-                var tiles = new HashSet<int>(filters.Tiles);
-                orders = orders.Where(o => tiles.Contains(o.Tile));
-            }
-            if (!string.IsNullOrEmpty(filters.FilterBuy) && !string.IsNullOrEmpty(filters.FilterSell))
-            {
-                var fb = filters.FilterBuy.ToLower();
-                var fs = filters.FilterSell.ToLower();
-                orders = orders.Where(o =>
-                    o.BuyThings.Any(t => t.DefName.ToLower() == fb)
-                    || o.SellThings.Any(t => t.DefName.ToLower() == fs));
-            }
-            else if (!string.IsNullOrEmpty(filters.FilterBuy))
-            {
-                var fb = filters.FilterBuy.ToLower();
-                orders = orders.Where(o => o.BuyThings.Any(t => t.DefName.ToLower() == fb));
-            }
-            else if (!string.IsNullOrEmpty(filters.FilterSell))
-            {
-                var fs = filters.FilterSell.ToLower();
-                orders = orders.Where(o => o.SellThings.Any(t => t.DefName.ToLower() == fs));
-            }
+            var fillOrders = new List<TradeOrder>();
 
-            //обрезаем массивные данные для сокращения трафика SellThings[s].Data = null;
-            //они будут получены клиентом через AnyLoad по DataHash
-            var fillOrders = orders.ToList();
-            for (int i = 0; i < fillOrders.Count; i++)
+            lock (data)
             {
-                var order = fillOrders[i] = fillOrders[i].Clone();
+                var allOrders = data.Orders;
+                if (allOrders == null || allOrders.Count == 0) return fillOrders;
 
-                for (int s = 0; s < order.SellThings.Count; s++)
+                for (int i = 0; i < allOrders.Count; i++)
                 {
-                    order.SellThings[s].Data = null;
+                    var o = allOrders[i];
+                    if (o == null) continue;
+
+                    // 1. Перевірка видимості ордера
+                    if (!CanSeeOrder(o, myLogin, ps)) continue;
+
+                    // 2. Фільтр за точками на карті
+                    if (tiles != null && !tiles.Contains(o.Tile)) continue;
+
+                    // 3. Фільтр за назвами товарів (без виділення рядків .ToLower())
+                    if (hasFilterBuy && hasFilterSell)
+                    {
+                        if (!HasMatchingDef(o.BuyThings, filterBuy) && !HasMatchingDef(o.SellThings, filterSell))
+                            continue;
+                    }
+                    else if (hasFilterBuy)
+                    {
+                        if (!HasMatchingDef(o.BuyThings, filterBuy))
+                            continue;
+                    }
+                    else if (hasFilterSell)
+                    {
+                        if (!HasMatchingDef(o.SellThings, filterSell))
+                            continue;
+                    }
+
+                    // 4. Клонуємо та обрізаємо Data для скорочення трафіку мережі
+                    var cloned = o.Clone();
+                    if (cloned.SellThings != null)
+                    {
+                        for (int s = 0; s < cloned.SellThings.Count; s++)
+                        {
+                            if (cloned.SellThings[s] != null)
+                            {
+                                cloned.SellThings[s].Data = null;
+                            }
+                        }
+                    }
+                    fillOrders.Add(cloned);
                 }
             }
 
             return fillOrders;
+        }
+
+        private static bool CanSeeOrder(TradeOrder order, string playerLogin, HashSet<string> partySee)
+        {
+            if (order?.Owner == null) return false;
+            string ownerLogin = order.Owner.Login;
+
+            if (ownerLogin == playerLogin) return true;
+
+            if (partySee != null && partySee.Contains(ownerLogin))
+            {
+                var priv = order.PrivatPlayers;
+                if (priv == null || priv.Count == 0) return true;
+
+                for (int i = 0; i < priv.Count; i++)
+                {
+                    if (priv[i]?.Login == playerLogin) return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingDef(List<ThingTrade> things, string filterDef)
+        {
+            if (things == null || things.Count == 0) return false;
+
+            for (int i = 0; i < things.Count; i++)
+            {
+                var def = things[i]?.DefName;
+                if (def != null && string.Equals(def, filterDef, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
