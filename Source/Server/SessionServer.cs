@@ -28,6 +28,9 @@ namespace ServerOnlineCity
 
         private static readonly Encoding KeyEncoding = Encoding.GetEncoding(1252);
         private static readonly Encoding JsonEncoding = Encoding.UTF8;
+        private static readonly byte[] KeySaltBytes = KeyEncoding.GetBytes("g08Р·dfgиА▀ЫЮЁрЫГxч<2en]*♫7ПМпёf#hю,>√^p147&$`tgjРмБ^g9~hjЮf%#h");
+        private static readonly byte[] HttpOkHeaderBytes = JsonEncoding.GetBytes("HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n");
+
         private readonly CryptoProvider cryptoHash = new CryptoProvider();
         private Service Worker;
         private DateTime ServiceCheckTime;
@@ -72,21 +75,20 @@ namespace ServerOnlineCity
         }
 
         /// <summary>
-        /// Потокобезпечна генерація унікального сесійного ключа.
+        /// Потокобезпечна генерація унікального сесійного ключа без зайвих перерозподілів масивів.
         /// </summary>
         private void SetKey()
         {
             var rnd = new Random();
-            var k = new byte[rnd.Next(400, 600)];
-            for (int i = 0; i < k.Length; i++)
+            int rndLen = rnd.Next(400, 600);
+            var k = new byte[rndLen + KeySaltBytes.Length];
+
+            for (int i = 0; i < rndLen; i++)
             {
                 k[i] = (byte)(rnd.Next(0, 128) + rnd.Next(0, 128));
             }
-            var k2 = KeyEncoding.GetBytes("g08Р·dfgиА▀ЫЮЁрЫГxч<2en]*♫7ПМпёf#hю,>√^p147&$`tgjРмБ^g9~hjЮf%#h");
 
-            int oldLen = k.Length;
-            Array.Resize(ref k, k.Length + k2.Length);
-            Array.Copy(k2, 0, k, oldLen, k2.Length);
+            Array.Copy(KeySaltBytes, 0, k, rndLen, KeySaltBytes.Length);
 
             Key = cryptoHash.GetHash(k);
             KeyStr = Encoding.ASCII.GetString(Key);
@@ -172,11 +174,9 @@ namespace ServerOnlineCity
 
                         if (send is byte[] body)
                         {
-                            var sendHTTP = "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n";
-                            var header = JsonEncoding.GetBytes(sendHTTP);
-                            sendBytes = new byte[header.Length + body.Length];
-                            Array.Copy(header, 0, sendBytes, 0, header.Length);
-                            Array.Copy(body, 0, sendBytes, header.Length, body.Length);
+                            sendBytes = new byte[HttpOkHeaderBytes.Length + body.Length];
+                            Array.Copy(HttpOkHeaderBytes, 0, sendBytes, 0, HttpOkHeaderBytes.Length);
+                            Array.Copy(body, 0, sendBytes, HttpOkHeaderBytes.Length, body.Length);
                         }
                         else
                         {
@@ -187,7 +187,7 @@ namespace ServerOnlineCity
 
                         client.SendAllByte(sendBytes);
 
-                        if (!request.ToLower().Replace(" ", "").Replace("\"q\"", "q").Contains("q:\"s\""))
+                        if (!IsStatusRequest(request))
                         {
                             Loger.Log("DoServiceJson Request: " + request + Environment.NewLine + (send is byte[]? sendBytes.Length.ToString() : send.ToString()), Loger.LogLevel.INFO);
                         }
@@ -205,6 +205,13 @@ namespace ServerOnlineCity
 
             receiveReady.Wait(2000);
             receiveReady.Dispose();
+        }
+
+        private static bool IsStatusRequest(string request)
+        {
+            if (string.IsNullOrEmpty(request)) return false;
+            return request.IndexOf("\"q\":\"s\"", StringComparison.OrdinalIgnoreCase) >= 0
+                || request.IndexOf("\"q\": \"s\"", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public void Do(ConnectClient client, Action<Action<SessionServer>> allSessionAction)
@@ -266,7 +273,7 @@ namespace ServerOnlineCity
                         continue;
                     }
 
-                    var sw = Stopwatch.StartNew();
+                    long startTimestamp = Stopwatch.GetTimestamp();
 
                     // Дешифрування та розпакування отриманого пакета
                     var rec2 = CryptoProvider.SymmetricDecrypt(rec, KeyStr);
@@ -276,7 +283,7 @@ namespace ServerOnlineCity
                     {
                         Loger.Log($"Server Network fromC {rec.Length} unzip {GZip.LastSizeObj}");
                     }
-                    long timeDeserialize = sw.ElapsedMilliseconds;
+                    long timeDeserializeTicks = Stopwatch.GetTimestamp();
 
                     // Обробка бізнес-логіки пакета в службі Service
                     ModelContainer sendObj;
@@ -295,7 +302,7 @@ namespace ServerOnlineCity
                     {
                         sendObj = new ModelContainer { TypePacket = 0 };
                     }
-                    long timeWorker = sw.ElapsedMilliseconds;
+                    long timeWorkerTicks = Stopwatch.GetTimestamp();
 
                     // Стиснення та шифрування пакета-відповіді
                     var ob = GZip.ZipObjByte(sendObj);
@@ -305,19 +312,25 @@ namespace ServerOnlineCity
                     {
                         Loger.Log($"Server Network toC {send.Length} unzip {GZip.LastSizeObj}");
                     }
-                    long timeSerialize = sw.ElapsedMilliseconds;
+                    long timeSerializeTicks = Stopwatch.GetTimestamp();
 
                     // Відправка клієнту
                     Client.SendMessage(send);
-                    long timeSend = sw.ElapsedMilliseconds;
+                    long timeSendTicks = Stopwatch.GetTimestamp();
 
-                    if (timeSend > 900)
+                    long totalMs = (timeSendTicks - startTimestamp) * 1000 / Stopwatch.Frequency;
+                    if (totalMs > 900)
                     {
-                        Loger.Log($"Server Network total {timeSend}ms: " +
-                            $"Deserialize {timeDeserialize}ms, " +
-                            $"Worker {timeWorker - timeDeserialize}ms, " +
-                            $"Serialize {timeSerialize - timeWorker}ms, " +
-                            $"Send {timeSend - timeSerialize}ms");
+                        long deserializeMs = (timeDeserializeTicks - startTimestamp) * 1000 / Stopwatch.Frequency;
+                        long workerMs = (timeWorkerTicks - timeDeserializeTicks) * 1000 / Stopwatch.Frequency;
+                        long serializeMs = (timeSerializeTicks - timeWorkerTicks) * 1000 / Stopwatch.Frequency;
+                        long sendMs = (timeSendTicks - timeSerializeTicks) * 1000 / Stopwatch.Frequency;
+
+                        Loger.Log($"Server Network total {totalMs}ms: " +
+                            $"Deserialize {deserializeMs}ms, " +
+                            $"Worker {workerMs}ms, " +
+                            $"Serialize {serializeMs}ms, " +
+                            $"Send {sendMs}ms");
                     }
 
                     // Оновлення часу останньої активності та перевірка запиту на відключення
