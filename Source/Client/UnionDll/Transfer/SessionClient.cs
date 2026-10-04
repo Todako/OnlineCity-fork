@@ -45,7 +45,7 @@ namespace Transfer
 
         #region Стан сесії та підключення
 
-        public static bool IsRelogin = false;
+        public static volatile bool IsRelogin = false;
 
         public bool IsLogined
         {
@@ -62,20 +62,25 @@ namespace Transfer
         public string ErrorMessage;
 
         /// <summary>
-        /// Розірвання поточного з'єднання та звільнення ресурсів сокета.
+        /// Розірвання поточного з'єднання та своєчасне видалення з вартового таймера.
         /// </summary>
         public void Disconnect()
         {
-            try
-            {
-                IsLogined = false;
-                Client?.Dispose();
-            }
-            catch { }
-
+            var oldClient = Client;
             Client = null;
+            IsLogined = false;
             KeyStr = null;
             Key = null;
+
+            if (oldClient != null)
+            {
+                ConnectSaver.RemoveClient(oldClient);
+                try
+                {
+                    oldClient.Dispose();
+                }
+                catch { }
+            }
         }
 
         /// <summary>
@@ -113,14 +118,7 @@ namespace Transfer
                 KeyStr = Key != null ? Encoding.ASCII.GetString(Key) : string.Empty;
 
                 // Реєстрація клієнта у вартовому таймері підтримки з'єднання
-                ConnectSaver.AddClient(Client, (cl) =>
-                {
-                    lock (LockObj)
-                    {
-                        cl.SendMessage(PingByte);
-                        cl.ReceiveBytes();
-                    }
-                });
+                ConnectSaver.AddClient(Client, PingWorkerAction);
 
                 return true;
             }
@@ -130,6 +128,15 @@ namespace Transfer
                 ErrorMessage = FormatException(e);
                 ExceptionUtil.ExceptionLog(e, "Client Connect");
                 return false;
+            }
+        }
+
+        private void PingWorkerAction(ConnectClient cl)
+        {
+            lock (LockObj)
+            {
+                cl.SendMessage(PingByte);
+                cl.ReceiveBytes();
             }
         }
 
@@ -195,14 +202,15 @@ namespace Transfer
 
         /// <summary>
         /// Відправка та прийом пакета даних ModelContainer.
-        /// ОПТИМІЗАЦІЯ: серіалізація, стиснення та дешифрування виконуються поза блокуванням LockObj.
+        /// ОПТИМІЗАЦІЯ: серіалізація, стиснення та дешифрування виконуються поза блокуванням LockObj;
+        /// вимір часу здійснюється через апаратний таймер без виділення об'єктів Stopwatch у купі.
         /// </summary>
         private ModelContainer Trans(ModelContainer sendObj)
         {
             ErrorCode = 0;
             ErrorMessage = null;
 
-            var sw = Stopwatch.StartNew();
+            long startTimestamp = Stopwatch.GetTimestamp();
 
             // 1. Серіалізація та шифрування поза блокуванням сокета
             var ob = GZip.ZipObjByte(sendObj);
@@ -213,9 +221,9 @@ namespace Transfer
                 Loger.Log($"Client Network toS {send.Length} unzip {GZip.LastSizeObj}");
             }
 
-            long timeSerialize = sw.ElapsedMilliseconds;
-            long timeWaitLock = 0;
-            long timeSocketIO = 0;
+            long timeSerializeTicks = Stopwatch.GetTimestamp();
+            long timeWaitLockTicks = 0;
+            long timeSocketIOTicks = 0;
 
             // 2. Блокування утримується суто на час передачі/прийому байтів мережевим адаптером
             byte[] rec;
@@ -226,10 +234,10 @@ namespace Transfer
                     throw new IOException("Клієнт не підключений до сервера.");
                 }
 
-                timeWaitLock = sw.ElapsedMilliseconds;
+                timeWaitLockTicks = Stopwatch.GetTimestamp();
                 Client.SendMessage(send);
                 rec = Client.ReceiveBytes();
-                timeSocketIO = sw.ElapsedMilliseconds;
+                timeSocketIOTicks = Stopwatch.GetTimestamp();
             }
 
             if (rec == null || rec.Length == 0)
@@ -243,28 +251,35 @@ namespace Transfer
             {
                 throw new IOException("Помилка дешифрування отриманого пакета від сервера.");
             }
-            long timeDecrypt = sw.ElapsedMilliseconds;
+            long timeDecryptTicks = Stopwatch.GetTimestamp();
 
             var res = (ModelContainer)GZip.UnzipObjByte(rec2);
             if (res == null)
             {
                 throw new IOException("Помилка десеріалізації об'єкта відповіді сервера.");
             }
-            long timeTotal = sw.ElapsedMilliseconds;
+            long endTimestamp = Stopwatch.GetTimestamp();
 
             if (rec.Length > 1024 * 512)
             {
                 Loger.Log($"Client Network fromS {rec.Length} unzip {GZip.LastSizeObj}");
             }
 
-            if (timeTotal > 900)
+            long totalMs = (endTimestamp - startTimestamp) * 1000 / Stopwatch.Frequency;
+            if (totalMs > 900)
             {
-                Loger.Log($"Client Network total {timeTotal}ms: " +
-                    $"Serialize {timeSerialize}ms, " +
-                    $"WaitLock {timeWaitLock - timeSerialize}ms, " +
-                    $"SocketIO {timeSocketIO - timeWaitLock}ms, " +
-                    $"Decrypt {timeDecrypt - timeSocketIO}ms, " +
-                    $"Deserialize {timeTotal - timeDecrypt}ms");
+                long serializeMs = (timeSerializeTicks - startTimestamp) * 1000 / Stopwatch.Frequency;
+                long waitLockMs = (timeWaitLockTicks - timeSerializeTicks) * 1000 / Stopwatch.Frequency;
+                long socketIoMs = (timeSocketIOTicks - timeWaitLockTicks) * 1000 / Stopwatch.Frequency;
+                long decryptMs = (timeDecryptTicks - timeSocketIOTicks) * 1000 / Stopwatch.Frequency;
+                long deserializeMs = (endTimestamp - timeDecryptTicks) * 1000 / Stopwatch.Frequency;
+
+                Loger.Log($"Client Network total {totalMs}ms: " +
+                    $"Serialize {serializeMs}ms, " +
+                    $"WaitLock {waitLockMs}ms, " +
+                    $"SocketIO {socketIoMs}ms, " +
+                    $"Decrypt {decryptMs}ms, " +
+                    $"Deserialize {deserializeMs}ms");
             }
 
             return res;
@@ -401,8 +416,11 @@ namespace Transfer
             var packet = new ModelPostingChat { IdChat = chatId, Message = msg };
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request19PostingChat, (int)PackageType.Response20PostingChat);
 
-            ErrorCode = stat?.Status ?? 0;
-            ErrorMessage = stat?.Message;
+            if (stat != null)
+            {
+                ErrorCode = stat.Status;
+                ErrorMessage = stat.Message;
+            }
 
             if (!raw && OnPostingChatAfter != null) OnPostingChatAfter(chatId, msg, stat);
 
