@@ -6,10 +6,6 @@ using ServerCore.Model;
 using ServerOnlineCity.Model;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Reflection;
-using System.Text;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -22,22 +18,24 @@ namespace ServerOnlineCity.Services
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
+            if (context?.Player == null || request?.Packet == null) return null;
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
             result.Packet = GetInfo((ModelInt)request.Packet, context);
             return result;
         }
 
         public ModelInfo GetInfo(ModelInt packet, ServiceContext context)
         {
+            if (packet == null || context?.Player == null) return new ModelInfo();
+
             lock (context.Player)
             {
                 switch (packet.Value)
                 {
                     case (long)ServerInfoType.Full:
+                    case (long)ServerInfoType.FullWithDescription:
                         {
-                            var result = GetModelInfo(context.Player);
-                            return result;
+                            return GetModelInfo(context.Player);
                         }
 
                     case (long)ServerInfoType.SendSave:
@@ -47,90 +45,81 @@ namespace ServerOnlineCity.Services
                                 context.Disconnect("Possibly intruder");
                                 return null;
                             }
-                            var result = new ModelInfo();
-                            //передача файла игры, для загрузки WorldLoad();
-                            // файл передать можно только в том случае если файлы прошли проверку
 
-                            //!Для Pvp проверка нужна всегда, в PvE нет
+                            var result = new ModelInfo();
+
+                            // Передача файлу збереження для завантаження гри WorldLoad()
                             if (ServerManager.ServerSettings.IsModsWhitelisted)
                             {
                                 if (!context.Player.ApproveLoadWorldReason)
                                 {
                                     context.Player.ExitReason = DisconnectReason.FilesMods;
-                                    Loger.Log($"Login : {context.Player.Public.Login} not all files checked,{context.Player.ApproveLoadWorldReason.ToString()} Disconnect", Loger.LogLevel.WARNING);
+                                    Loger.Log($"Login : {context.Player.Public?.Login} not all files checked, {context.Player.ApproveLoadWorldReason} Disconnect", Loger.LogLevel.WARNING);
                                     result.SaveFileData = null;
                                     return result;
                                 }
                             }
 
-                            result.SaveFileData = Repository.GetSaveData.LoadPlayerData(context.Player.Public.Login, 1);
+                            var playerLogin = context.Player.Public?.Login;
+                            if (string.IsNullOrEmpty(playerLogin)) return result;
+
+                            result.SaveFileData = Repository.GetSaveData.LoadPlayerData(playerLogin, 1);
 
                             if (result.SaveFileData != null)
                             {
-                                if (context.Player.MailsConfirmationSave.Count > 0)
+                                var confirmMails = context.Player.MailsConfirmationSave;
+                                if (confirmMails != null && confirmMails.Count > 0)
                                 {
-                                    for (int i = 0; i < context.Player.MailsConfirmationSave.Count; i++)
-                                        context.Player.MailsConfirmationSave[i].NeedSaveGame = false;
+                                    for (int i = 0; i < confirmMails.Count; i++)
+                                    {
+                                        if (confirmMails[i] != null) confirmMails[i].NeedSaveGame = false;
+                                    }
 
-                                    Loger.Log($"MailsConfirmationSave add {context.Player.MailsConfirmationSave.Count} (mails={context.Player.Mails.Count})");
-                                    //Ого! Игрок не сохранился после приема письма, с обязательным сохранением после получения
-                                    //Отправляем письма ещё раз
+                                    Loger.Log($"MailsConfirmationSave add {confirmMails.Count} (mails={context.Player.Mails.Count})");
+
+                                    // Гравець не зберігся після отримання обов'язкового листа — відправляємо повторно без дублювання
                                     if (context.Player.Mails.Count == 0)
                                     {
-                                        context.Player.Mails = context.Player.MailsConfirmationSave.ToList();
+                                        context.Player.Mails.AddRange(confirmMails);
                                     }
                                     else
                                     {
-                                        var ms = context.Player.MailsConfirmationSave
-                                            .Where(mcs => context.Player.Mails.Any(m => m.GetHashBase() != mcs.GetHashBase()))
-                                            .ToList();
-                                        context.Player.Mails.AddRange(ms);
+                                        // ОПТИМІЗАЦІЯ І ВИПРАВЛЕННЯ БАГУ: перевірка на дублікат за рівністю хешів (==), а не через Any(!=)
+                                        for (int i = 0; i < confirmMails.Count; i++)
+                                        {
+                                            var mcs = confirmMails[i];
+                                            if (mcs == null) continue;
+                                            var hash = mcs.GetHashBase();
+
+                                            bool alreadyExists = false;
+                                            for (int j = 0; j < context.Player.Mails.Count; j++)
+                                            {
+                                                if (context.Player.Mails[j]?.GetHashBase() == hash)
+                                                {
+                                                    alreadyExists = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!alreadyExists)
+                                            {
+                                                context.Player.Mails.Add(mcs);
+                                            }
+                                        }
                                     }
+
                                     Loger.Log($"MailsConfirmationSave (mails={context.Player.Mails.Count})");
                                 }
                             }
-                            Loger.Log($"Load World for {context.Player.Public.Login}. (mails={context.Player.Mails.Count}, fMails={context.Player.FunctionMails.Count})");
 
+                            Loger.Log($"Load World for {playerLogin}. (mails={context.Player.Mails.Count}, fMails={context.Player.FunctionMails.Count})");
                             return result;
                         }
 
-                    case (long)ServerInfoType.FullWithDescription:
-                        {
-                            var result = GetModelInfo(context.Player);
-                            //result.Description = "";
-                            var displayAttributes = new List<Tuple<int, string>>();
-
-                            foreach (var prop in typeof(ServerSettings).GetFields())
-                            {
-                                var attribute = prop.GetCustomAttributes(typeof(DisplayAttribute)).FirstOrDefault();
-                                if (attribute is null || !prop.IsPublic)
-                                {
-                                    continue;
-                                }
-
-                                var dispAtr = (DisplayAttribute)attribute;
-                                var strvalue = string.IsNullOrEmpty(dispAtr.GetDescription()) ? prop.Name : dispAtr.GetDescription();
-                                strvalue = strvalue + "=" + prop.GetValue(ServerManager.ServerSettings).ToString();
-                                var order = dispAtr.GetOrder().HasValue ? dispAtr.GetOrder().Value : 0;
-                                displayAttributes.Add(Tuple.Create(order, strvalue));
-                            }
-
-                            var sb = new StringBuilder();
-                            var sorte = new List<string>(displayAttributes.OrderBy(x => x.Item1).Select(y => y.Item2)).AsReadOnly();
-                            foreach (var prop in sorte)
-                            {
-                                sb.AppendLine(prop);
-                            }
-
-                            //result.Description = sb.ToString();
-                            return result;
-                        }
                     case (long)ServerInfoType.Short:
                     default:
                         {
-                            // краткая (зарезервированно, пока не используется) fullInfo = false
-                            var result = new ModelInfo();
-                            return result;
+                            return new ModelInfo();
                         }
                 }
             }
@@ -139,41 +128,45 @@ namespace ServerOnlineCity.Services
         private ModelInfo GetModelInfo(PlayerServer player)
         {
             var data = Repository.GetData;
-            var needCreateWorld = Repository.GetSaveData.GetListPlayerDatas(player.Public.Login).Count == 0;
-            if (needCreateWorld) BeforeBeginSettlement(player);
+            var playerLogin = player.Public?.Login;
+            var needCreateWorld = string.IsNullOrEmpty(playerLogin) || Repository.GetSaveData.GetListPlayerDatas(playerLogin).Count == 0;
 
-            var result =
-                new ModelInfo()
-                {
-                    My = player.Public,
-                    IsAdmin = player.IsAdmin,
-                    VersionInfo = MainHelper.VersionInfo,
-                    VersionNum = MainHelper.VersionNum,
-                    Seed = data.WorldSeed ?? "",
-                    ScenarioName = data.WorldScenarioName,
-                    Storyteller = data.WorldStoryteller,
-                    MapSize = data.WorldMapSize,
-                    PlanetCoverage = data.WorldPlanetCoverage,
-                    Difficulty = data.WorldDifficulty,
-                    NeedCreateWorld = needCreateWorld,
-                    ServerTime = DateTime.UtcNow,
-                    IsModsWhitelisted = ServerManager.ServerSettings.IsModsWhitelisted,
-                    ServerName = ServerManager.ServerSettings.ServerName,
-                    DelaySaveGame = player.SettingDelaySaveGame,
-                    DisableDevMode = ServerManager.ServerSettings.DisableDevMode,
-                    MinutesIntervalBetweenPVP = ServerManager.ServerSettings.MinutesIntervalBetweenPVP,
-                    EnableFileLog = player.SettingEnableFileLog,
-                    TimeChangeEnablePVP = player.TimeChangeEnablePVP,
-                    GeneralSettings = ServerManager.ServerSettings.GeneralSettings,
-                    ProtectingNovice = ServerManager.ServerSettings.ProtectingNovice,
-                };
+            if (needCreateWorld)
+            {
+                BeforeBeginSettlement(player);
+            }
+
+            var result = new ModelInfo
+            {
+                My = player.Public,
+                IsAdmin = player.IsAdmin,
+                VersionInfo = MainHelper.VersionInfo,
+                VersionNum = MainHelper.VersionNum,
+                Seed = data?.WorldSeed ?? "",
+                ScenarioName = data?.WorldScenarioName,
+                Storyteller = data?.WorldStoryteller,
+                MapSize = data?.WorldMapSize ?? 0,
+                PlanetCoverage = data?.WorldPlanetCoverage ?? 0f,
+                Difficulty = data?.WorldDifficulty,
+                NeedCreateWorld = needCreateWorld,
+                ServerTime = DateTime.UtcNow,
+                IsModsWhitelisted = ServerManager.ServerSettings.IsModsWhitelisted,
+                ServerName = ServerManager.ServerSettings.ServerName,
+                DelaySaveGame = player.SettingDelaySaveGame,
+                DisableDevMode = ServerManager.ServerSettings.DisableDevMode,
+                MinutesIntervalBetweenPVP = ServerManager.ServerSettings.MinutesIntervalBetweenPVP,
+                EnableFileLog = player.SettingEnableFileLog,
+                TimeChangeEnablePVP = player.TimeChangeEnablePVP,
+                GeneralSettings = ServerManager.ServerSettings.GeneralSettings,
+                ProtectingNovice = ServerManager.ServerSettings.ProtectingNovice,
+            };
 
             return result;
         }
 
         private void BeforeBeginSettlement(PlayerServer player)
         {
-            player.GameProgress = new PlayerGameProgress() { Pawns = new List<PawnStat>() };
+            player.GameProgress = new PlayerGameProgress { Pawns = new List<PawnStat>(0) };
             player.AttacksWonCount = 0;
             player.AttacksInitiatorCount = 0;
 
