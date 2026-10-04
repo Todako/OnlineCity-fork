@@ -1,8 +1,6 @@
 ﻿using OCUnion;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace ServerOnlineCity.Model
 {
@@ -25,27 +23,57 @@ namespace ServerOnlineCity.Model
         /// </summary>
         public string IntruderKeys;
 
+        /// <summary>
+        /// Оновлення ключів перевірки без алокацій LINQ (.Where, .Union, .Aggregate).
+        /// Знижує складність з O(N*M) до лінійної O(N+M).
+        /// </summary>
         public void Logined()
         {
-            if (IntruderKeys != null)
+            if (IntruderKeys == null || Player == null) return;
+
+            if (Player.IntruderKeys == null)
             {
-                if (Player.IntruderKeys == null) Player.IntruderKeys = "";
+                Player.IntruderKeys = "";
+            }
 
-                var lks = Player.IntruderKeys.Split(new string[] { "@@@" }, StringSplitOptions.None)
-                    .Where(k => k.Length > 3)
-                    .ToList();
+            // Збираємо наявні ключі гравця
+            var existingKeys = Player.IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.RemoveEmptyEntries);
+            var keySet = new HashSet<string>(StringComparer.Ordinal);
+            var keyList = new List<string>(existingKeys.Length + 8);
 
-                var add = IntruderKeys.Split(new string[] { "@@@" }, StringSplitOptions.None)
-                    .Where(k => k.Length > 3)
-                    .Where(k => !lks.Contains(k))
-                    .ToList();
+            for (int i = 0; i < existingKeys.Length; i++)
+            {
+                var k = existingKeys[i];
+                if (k.Length > 3 && keySet.Add(k))
+                {
+                    keyList.Add(k);
+                }
+            }
 
-                if (add.Count > 0) Player.IntruderKeys = lks.Union(add).Aggregate((r, k) => r + "@@@" + k);
+            // Додаємо нові валідні ключі
+            var newKeys = IntruderKeys.Split(new[] { "@@@" }, StringSplitOptions.RemoveEmptyEntries);
+            bool addedAny = false;
+
+            for (int i = 0; i < newKeys.Length; i++)
+            {
+                var k = newKeys[i];
+                if (k.Length > 3 && keySet.Add(k))
+                {
+                    keyList.Add(k);
+                    addedAny = true;
+                }
+            }
+
+            if (addedAny && keyList.Count > 0)
+            {
+                Player.IntruderKeys = string.Join("@@@", keyList);
             }
         }
 
         public void Disconnect(string logMsg)
         {
+            if (AllSessionAction == null) return;
+
             AllSessionAction(session =>
             {
                 var sc = session.GetContext();
@@ -58,6 +86,8 @@ namespace ServerOnlineCity.Model
 
         public void DisconnectLogin(string login, string logMsg)
         {
+            if (AllSessionAction == null) return;
+
             AllSessionAction(session =>
             {
                 var sc = session.GetContext();

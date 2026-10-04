@@ -1,9 +1,9 @@
 ﻿using OCUnion.Transfer;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
+using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -30,102 +30,103 @@ namespace ServerOnlineCity.Services
                 packet.CodeRequest,
                 out var checkedDirAndFile))
             {
-                //отвечаем всё ок ничего не нужно синхронить
+                // Все гаразд, синхронізація не потрібна
                 return new ModelModsFilesResponse()
                 {
                     Folder = new FolderCheck() { FolderType = packet.FolderType },
-                    Files = new List<ModelFileInfo>(),
+                    Files = new List<ModelFileInfo>(0),
                     FoldersTree = new FoldersTree(),
                     TotalSize = 0
                 };
             }
 
-            var result = new List<ModelFileInfo>();
+            var result = new List<ModelFileInfo>(32);
 
             if (packet.CodeRequest % 1000 == 0)
             {
-                var allServerFiles = new HashSet<string>(checkedDirAndFile.HashFiles.Keys);
-                var packetFiles = packet.Files != null ? packet.Files : new List<ModelFileInfo>(0);
+                var allServerFiles = new HashSet<string>(checkedDirAndFile.HashFiles.Keys, StringComparer.Ordinal);
+                var packetFiles = packet.Files;
                 long packetSize = 0;
                 long totalSize = 0;
 
-                foreach (var modelFile in packetFiles)
+                if (packetFiles != null)
                 {
-                    var modelFileFileName = modelFile.FileName.ToLower();
-                    if (FileHashChecker.FileNameContainsIgnored(modelFileFileName, checkedDirAndFile.IgnoredFiles
-                        , checkedDirAndFile.IgnoredFolder))
+                    for (int i = 0; i < packetFiles.Count; i++)
                     {
-                        continue;
-                    }
+                        var modelFile = packetFiles[i];
+                        if (modelFile?.FileName == null) continue;
 
-                    if (checkedDirAndFile.HashFiles.TryGetValue(modelFileFileName, out ModelFileInfo fileInfo))
-                    {
-                        allServerFiles.Remove(modelFileFileName); // 
-
-                        if (!ModelFileInfo.UnsafeByteArraysEquale(modelFile.Hash, fileInfo.Hash))
+                        var modelFileFileName = modelFile.FileName.ToLowerInvariant();
+                        if (FileHashChecker.FileNameContainsIgnored(modelFileFileName, checkedDirAndFile.IgnoredFiles, checkedDirAndFile.IgnoredFolder))
                         {
-                            // read file for send to Client      
-                            // файл  найден, но хеши не совпадают, необходимо заменить файл
-                            if (packetSize < MaxPacketSize)
+                            continue;
+                        }
+
+                        if (checkedDirAndFile.HashFiles.TryGetValue(modelFileFileName, out ModelFileInfo fileInfo))
+                        {
+                            allServerFiles.Remove(modelFileFileName);
+
+                            if (!ModelFileInfo.UnsafeByteArraysEquale(modelFile.Hash, fileInfo.Hash))
                             {
-                                var addFile = GetFile(checkedDirAndFile.Settings.ServerPath, fileInfo.FileName, checkedDirAndFile.Settings.NeedReplace);
-                                result.Add(addFile);
-                                packetSize += addFile.Size;
-                                totalSize += addFile.Size;
-                                //Loger.Log($"packetSize={packetSize} totalSize={totalSize}");
-                            }
-                            else
-                            {
-                                var size = GetFileSize(checkedDirAndFile.Settings.ServerPath, fileInfo.FileName);
-                                totalSize += size;
+                                // Файл знайдено, але хеші не збігаються — потрібна заміна
+                                if (packetSize < MaxPacketSize)
+                                {
+                                    var addFile = GetFile(checkedDirAndFile.Settings.ServerPath, fileInfo.FileName, checkedDirAndFile.Settings.NeedReplace, fileInfo.Size);
+                                    result.Add(addFile);
+                                    packetSize += addFile.Size;
+                                    totalSize += addFile.Size;
+                                }
+                                else
+                                {
+                                    var size = fileInfo.Size > 0 ? fileInfo.Size : GetFileSize(checkedDirAndFile.Settings.ServerPath, fileInfo.FileName);
+                                    totalSize += size;
+                                }
                             }
                         }
-                    }
-                    else
-                    {
-                        // mark file for delete 
-                        // Если файл с таким именем не найден, помечаем файл на удаление
-                        modelFile.Hash = null;
-                        modelFile.NeedReplace = checkedDirAndFile.Settings.NeedReplace;
-                        result.Add(modelFile);
+                        else
+                        {
+                            // Файл на сервері не знайдено — позначаємо на видалення
+                            modelFile.Hash = null;
+                            modelFile.NeedReplace = checkedDirAndFile.Settings.NeedReplace;
+                            result.Add(modelFile);
+                        }
                     }
                 }
 
                 lock (context.Player)
                 {
-                    // проверяем в обратном порядке: что бы у клиенты были все файлы
-                    if (allServerFiles.Any())
+                    // Перевіряємо у зворотному порядку: чи є у клієнта всі файли
+                    if (allServerFiles.Count > 0)
                     {
                         foreach (var fileName in allServerFiles)
                         {
-                            if (FileHashChecker.FileNameContainsIgnored(fileName, checkedDirAndFile.IgnoredFiles
-                                , checkedDirAndFile.IgnoredFolder))
+                            if (FileHashChecker.FileNameContainsIgnored(fileName, checkedDirAndFile.IgnoredFiles, checkedDirAndFile.IgnoredFolder))
                             {
                                 continue;
                             }
 
                             context.Player.ApproveLoadWorldReason = false;
 
-                            if (packetSize < MaxPacketSize)
+                            if (checkedDirAndFile.HashFiles.TryGetValue(fileName, out var serverFileInfo))
                             {
-                                var addFile = GetFile(checkedDirAndFile.Settings.ServerPath
-                                    , checkedDirAndFile.HashFiles[fileName].FileName
-                                    , checkedDirAndFile.Settings.NeedReplace); //workDict[fileName].FileName вместо fileName для восстановления заглавных
-                                result.Add(addFile);
-                                packetSize += addFile.Size;
-                                totalSize += addFile.Size;
-                                //Loger.Log($"packetSize={packetSize} totalSize={totalSize}");
-                            }
-                            else
-                            {
-                                var size = GetFileSize(checkedDirAndFile.Settings.ServerPath, checkedDirAndFile.HashFiles[fileName].FileName);
-                                totalSize += size;
+                                if (packetSize < MaxPacketSize)
+                                {
+                                    var addFile = GetFile(checkedDirAndFile.Settings.ServerPath, serverFileInfo.FileName, checkedDirAndFile.Settings.NeedReplace, serverFileInfo.Size);
+                                    result.Add(addFile);
+                                    packetSize += addFile.Size;
+                                    totalSize += addFile.Size;
+                                }
+                                else
+                                {
+                                    var size = serverFileInfo.Size > 0 ? serverFileInfo.Size : GetFileSize(checkedDirAndFile.Settings.ServerPath, serverFileInfo.FileName);
+                                    totalSize += size;
+                                }
                             }
                         }
                     }
 
-                    // Если файлы не прошли проверку, помечаем флагом, запрет загрузки мира
-                    if (result.Any())
+                    // Якщо файли не пройшли перевірку, блокуємо завантаження світу
+                    if (result.Count > 0)
                     {
                         context.Player.ApproveLoadWorldReason = false;
                     }
@@ -135,9 +136,8 @@ namespace ServerOnlineCity.Services
                 {
                     Folder = checkedDirAndFile.Settings,
                     Files = result,
-                    // микроптимизация: если файлы не будут восстанавливаться, не отправляем обратно список папок
-                    // на восстановление ( десериализацию папок также тратится время)
-                    FoldersTree = result.Any() ? checkedDirAndFile.FolderTree : new FoldersTree(),
+                    // Якщо файли не відновлюватимуться, дерево папок не передаємо
+                    FoldersTree = result.Count > 0 ? checkedDirAndFile.FolderTree : new FoldersTree(),
                     TotalSize = totalSize,
                 };
             }
@@ -158,7 +158,7 @@ namespace ServerOnlineCity.Services
             }
         }
 
-        private ModelFileInfo GetFile(string rootDir, string fileName, bool needReplace)
+        private ModelFileInfo GetFile(string rootDir, string fileName, bool needReplace, long knownSize = 0)
         {
             var newFile = new ModelFileInfo() { FileName = fileName, NeedReplace = needReplace };
             if (needReplace)
@@ -169,15 +169,22 @@ namespace ServerOnlineCity.Services
             }
             else
             {
-                newFile.Size = GetFileSize(rootDir, fileName);
+                newFile.Size = knownSize > 0 ? knownSize : GetFileSize(rootDir, fileName);
             }
             return newFile;
         }
 
         private long GetFileSize(string rootDir, string fileName)
         {
-            var fullname = Path.Combine(rootDir, fileName);
-            return new FileInfo(fullname).Length;
+            try
+            {
+                var fullname = Path.Combine(rootDir, fileName);
+                return new FileInfo(fullname).Length;
+            }
+            catch
+            {
+                return 0;
+            }
         }
     }
 }
