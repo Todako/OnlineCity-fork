@@ -23,13 +23,30 @@ namespace ServerOnlineCity.Services
 
         private ModelStatus exchengeBuy(ModelOrderBuy buy, ServiceContext context)
         {
+            if (buy == null || buy.Count <= 0 || buy.OrderId == 0)
+            {
+                return new ModelStatus
+                {
+                    Status = 1,
+                    Message = "Invalid buy request"
+                };
+            }
+
             lock (context.Player)
             {
                 var data = Repository.GetData;
+                if (data?.OrderOperator == null || context.Player.Public == null)
+                {
+                    return new ModelStatus
+                    {
+                        Status = 2,
+                        Message = "Service unavailable"
+                    };
+                }
 
                 lock (data)
                 {
-                    if (!data.OrderOperator.OrdersById.TryGetValue(buy.OrderId, out var order))
+                    if (!data.OrderOperator.OrdersById.TryGetValue(buy.OrderId, out var order) || order == null)
                     {
                         return new ModelStatus()
                         {
@@ -40,10 +57,9 @@ namespace ServerOnlineCity.Services
 
                     if (!data.OrderOperator.ImplementTradeByStorage(order, context.Player, buy.Count))
                     {
-                        //только для логов:
                         var storage = data.OrderOperator.GetStorage(order.Tile, context.Player.Public, false);
-                        Loger.Log($"Server exchengeBuy Operation not possible! order={order}" + Environment.NewLine + Environment.NewLine
-                            + $" storage=" + storage?.Things?.ToStringLabel() ?? "null", Loger.LogLevel.EXCHANGE);
+                        var storageStr = storage?.Things?.ToStringLabel() ?? "null";
+                        Loger.Log($"Server exchengeBuy Operation not possible! order={order}\n\n storage={storageStr}", Loger.LogLevel.EXCHANGE);
 
                         return new ModelStatus()
                         {
@@ -54,6 +70,7 @@ namespace ServerOnlineCity.Services
 
                     Repository.Get.ChangeData = true;
                 }
+
                 return new ModelStatus()
                 {
                     Status = 0,
