@@ -41,6 +41,35 @@ namespace RimWorldOnlineCity
         private static readonly ConcurrentDictionary<int, string> ShortTagTileCache =
             new ConcurrentDictionary<int, string>();
 
+        // Статичні фабрики для GetOrAdd, що усувають алокацію замикань компілятора
+        private static readonly Func<string, string> TranslateTokenFunc = key =>
+        {
+            var translated = key.Translate().ToString();
+            return translated.StartsWith("OC_", StringComparison.Ordinal) ? key : translated;
+        };
+
+        private static readonly Func<string, string> ShortTagEmojiFunc = c => $"<img Emoji/Emoji_{c}>";
+
+        private static readonly Func<string, string> ShortTagPlayerFunc = c => $"<btn name=pl{c} class=player arg={c}><img pl_{c}> {c}</btn>";
+
+        private static readonly Func<string, string> ShortTagDefFunc = c => (c == "Human" ? "<img IconHuman />" : $"<img defName={c} />") + $"<l>{c}.label</l>";
+
+        private static readonly Func<int, string> ShortTagTileFunc = t =>
+        {
+            if (Find.WorldGrid == null || t < 0 || t >= Find.WorldGrid.tiles.Count) return null;
+            var tileObj = Find.WorldGrid[t];
+            var biome = tileObj.biome;
+            Vector2 vector = Find.WorldGrid.LongLatOf(t);
+            var coor = vector.y.ToStringLatitude() + " " + vector.x.ToStringLongitude();
+            var msg = $"<img name=Waypoint />{coor} <l>{biome.defName}.label</l>";
+            if (!biome.impassable)
+            {
+                msg += $" (<l>{GameUtils.GetHillinessLabel(tileObj.hilliness)}</l>)";
+            }
+
+            return $"<btn name=tile{t} class=tile d={t} arg={t}>{msg}</btn>";
+        };
+
         public static void Init(bool inOnlineGame)
         {
             var connect = SessionClient.Get;
@@ -117,11 +146,7 @@ namespace RimWorldOnlineCity
                 int len = ep - pos;
                 var sub = textChat.Substring(pos, len);
 
-                string tr = TranslatedTokenCache.GetOrAdd(sub, key =>
-                {
-                    var translated = key.Translate().ToString();
-                    return translated.StartsWith("OC_", StringComparison.Ordinal) ? key : translated;
-                });
+                string tr = TranslatedTokenCache.GetOrAdd(sub, TranslateTokenFunc);
 
                 sb.Append(tr);
 
@@ -142,6 +167,9 @@ namespace RimWorldOnlineCity
             return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == ',' || c == '.' || c == ':' || c == '*' || c == '<' || c == '>';
         }
 
+        /// <summary>
+        /// Швидкий розбір шорт-тегів без зайвих виділень пам'яті на проміжні рядки й обрізання.
+        /// </summary>
         public static string PrepareShortTag(string textChat)
         {
             if (string.IsNullOrEmpty(textChat) || textChat.IndexOf('<') < 0) return textChat;
@@ -181,8 +209,19 @@ namespace RimWorldOnlineCity
 
                 bool isSelfClosing = textChat[posE - 1] == '/';
                 int contentStart = pos + 2;
-                int contentLength = posE - contentStart - (isSelfClosing ? 1 : 0);
+                int contentEnd = posE - (isSelfClosing ? 1 : 0);
 
+                // Нуль-алокаційний Trim за індексами
+                while (contentStart < contentEnd && char.IsWhiteSpace(textChat[contentStart])) contentStart++;
+                while (contentEnd > contentStart && char.IsWhiteSpace(textChat[contentEnd - 1])) contentEnd--;
+
+                if (tagType == ':' && contentEnd > contentStart && textChat[contentEnd - 1] == ':')
+                {
+                    contentEnd--;
+                    while (contentEnd > contentStart && char.IsWhiteSpace(textChat[contentEnd - 1])) contentEnd--;
+                }
+
+                int contentLength = contentEnd - contentStart;
                 if (contentLength <= 0)
                 {
                     current = posE + 1;
@@ -229,48 +268,29 @@ namespace RimWorldOnlineCity
 
         private static string ShortTagEmoji(string content)
         {
-            if (content.EndsWith(":")) content = content.Substring(0, content.Length - 1);
-            content = content.Trim();
-
-            return ShortTagEmojiCache.GetOrAdd(content, c => $"<img Emoji/Emoji_{c}>");
+            return ShortTagEmojiCache.GetOrAdd(content, ShortTagEmojiFunc);
         }
 
         private static string ShortTagPlayer(string content)
         {
-            content = content.Trim();
-            return ShortTagPlayerCache.GetOrAdd(content, c => $"<btn name=pl{c} class=player arg={c}><img pl_{c}> {c}</btn>");
+            return ShortTagPlayerCache.GetOrAdd(content, ShortTagPlayerFunc);
         }
 
         private static string ShortTagTile(string content)
         {
-            content = content.Trim();
             if (!int.TryParse(content, out int tile)) return null;
             if (Find.WorldGrid == null || tile < 0 || tile >= Find.WorldGrid.tiles.Count) return null;
 
-            return ShortTagTileCache.GetOrAdd(tile, t =>
-            {
-                var biome = Find.WorldGrid[t].biome;
-                Vector2 vector = Find.WorldGrid.LongLatOf(t);
-                var coor = vector.y.ToStringLatitude() + " " + vector.x.ToStringLongitude();
-                var msg = $"<img name=Waypoint />{coor} <l>{biome.defName}.label</l>";
-                if (!biome.impassable)
-                {
-                    msg += $" (<l>{GameUtils.GetHillinessLabel(Find.WorldGrid[t].hilliness)}</l>)";
-                }
-
-                return $"<btn name=tile{t} class=tile d={t} arg={t}>{msg}</btn>";
-            });
+            return ShortTagTileCache.GetOrAdd(tile, ShortTagTileFunc);
         }
 
         private static string ShortTagDef(string content)
         {
-            content = content.Trim();
-            return ShortTagDefCache.GetOrAdd(content, c => (c == "Human" ? "<img IconHuman />" : $"<img defName={c} />") + $"<l>{c}.label</l>");
+            return ShortTagDefCache.GetOrAdd(content, ShortTagDefFunc);
         }
 
         private static string ShortTagServerId(string content)
         {
-            content = content.Trim();
             if (!int.TryParse(content, out int serverId)) return null;
 
             int tile = 0;

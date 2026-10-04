@@ -6,8 +6,6 @@ using ServerOnlineCity.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
 using Transfer;
 using Transfer.ModelMails;
 
@@ -15,73 +13,79 @@ namespace ServerOnlineCity.Mechanics
 {
     public class ExchengeOperator
     {
-        // Під час розрахунку угоди порівнюються одна.BuyThings.MatchesThing(інша.SellThings), після чого визначається максимальна кількість повторів для кожної з двох угод.
-        // Наприклад, один продає колоди по 2 шт. * 10, а інший купує по 10 шт. * 2.
-        // Надлишок у SellThings обох угод поміщається до їхніх сховищ (кратний кількості повторів).
-        // Приклад (sell, buy): (1 колода, 10 монет) і (12 монет, 1 колода) => угода виконується, а 2 монети за кожен повтор повертаються до сховища власника другої угоди.
-        // (1 колода, 12 монет) і (10 монет, 1 колода) => угода не виконується.
-        // (10 монет, 1 колода) і (1 колода, 12 монет) => угода не виконується.
-        // Тобто мають виконуватися обидві умови: одна.SellThings >= інша.BuyThings (якщо >, залишок повертається до сховища).
-        // (2 колоди, 10 монет) і (12 монет, 1 колода) => угода виконується, 2 монети повертаються другому учаснику, а 1 колода — першому.
-        // (Перед поверненням можна повторно розрахувати, на скільки вистачить угоди, і збільшити кількість її повторів, але, мабуть, це зайве.)
-        // В ExchengeBuy функціональність така сама, але речі для оплати беруться не з SellThings, а зі сховища.
-        // Для ExchengeBuy: (1 колода, 10 монет) і (вміст сховища, копія "1 колода").
-        // Для швидкого відсіювання угод створюємо хеш BuyThings і SellThings: DefName у відсортованому вигляді.
-
-        //(s, b) продає 2 за 10, повтори: 3 (6 - 30), повтори: 9 (18 - 90)
-        //(b, s) купує 3 за 90          2 (6 - 270)         1 (3  - 90)
-        // Обов'язково, щоб s однієї угоди було >= b іншої; якщо не ==, а >, надлишок повертається власнику sZZ.
-
-        //(s, b) продає 2 за 4, повтори: 3 (6 - 12), повтори: 3 (6  - 12)
-        //(b, s) купує 3 за 3          2 (6 - 6)           4 (12 - 12)
-
         public BaseContainer Data;
 
-        public List<TradeWorldObjectEntry> TradeWorldObjects; //calc from Data.Orders
+        public List<TradeWorldObjectEntry> TradeWorldObjects; // calc from Data.Orders
 
         public List<TradeWorldObjectEntry> TradeWorldObjectsDeleted;
 
-        public ConcurrentDictionary<long, TradeOrder> OrdersById; //calc from Data.Orders
+        public ConcurrentDictionary<long, TradeOrder> OrdersById; // calc from Data.Orders
 
-        public ConcurrentDictionary<int, HashSet<TradeOrder>> OrdersByTile; //calc from Data.Orders
+        public ConcurrentDictionary<int, HashSet<TradeOrder>> OrdersByTile; // calc from Data.Orders
 
         private bool ImplementTradeCalcing = false;
 
-        private ConcurrentDictionary<string, ConcurrentDictionary<int, TradeThingStorage>> CacheStorage = new ConcurrentDictionary<string, ConcurrentDictionary<int, TradeThingStorage>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<int, TradeThingStorage>> CacheStorage =
+            new ConcurrentDictionary<string, ConcurrentDictionary<int, TradeThingStorage>>();
 
         public ExchengeOperator(BaseContainer data)
         {
             Data = data;
-            TradeWorldObjects = Data.Orders.Select(o => (TradeWorldObjectEntry)new TradeOrderShort(o)).ToList();
-            TradeWorldObjectsDeleted = new List<TradeWorldObjectEntry>();
-            OrdersById = new ConcurrentDictionary<long, TradeOrder>(Data.Orders.ToDictionary(o => o.Id));
-            OrdersByTile = new ConcurrentDictionary<int, HashSet<TradeOrder>>(
-                Data.Orders
-                .GroupBy(o => o.Tile)
-                .ToDictionary(g => g.Key, g => g.ToHashSet()));
+            int ordersCount = Data.Orders?.Count ?? 0;
 
-            foreach (var order in Data.Orders)
+            TradeWorldObjects = new List<TradeWorldObjectEntry>(ordersCount);
+            TradeWorldObjectsDeleted = new List<TradeWorldObjectEntry>();
+            OrdersById = new ConcurrentDictionary<long, TradeOrder>(Environment.ProcessorCount, Math.Max(32, ordersCount));
+            OrdersByTile = new ConcurrentDictionary<int, HashSet<TradeOrder>>(Environment.ProcessorCount, Math.Max(16, ordersCount / 2));
+
+            if (Data.Orders != null)
             {
-                foreach (var st in order.SellThings)
+                for (int i = 0; i < Data.Orders.Count; i++)
                 {
-                    if (!string.IsNullOrEmpty(st.Data)) st.DataHash = Data.SetInUploadService(st.Data);
+                    var order = Data.Orders[i];
+                    if (order == null) continue;
+
+                    TradeWorldObjects.Add(new TradeOrderShort(order));
+                    OrdersById.TryAdd(order.Id, order);
+
+                    var set = OrdersByTile.GetOrAdd(order.Tile, _ => new HashSet<TradeOrder>());
+                    set.Add(order);
+
+                    if (order.SellThings != null)
+                    {
+                        for (int j = 0; j < order.SellThings.Count; j++)
+                        {
+                            var st = order.SellThings[j];
+                            if (st != null && !string.IsNullOrEmpty(st.Data))
+                            {
+                                st.DataHash = Data.SetInUploadService(st.Data);
+                            }
+                        }
+                    }
                 }
             }
         }
+
         public bool OrderAdd(TradeOrder order)
         {
             if (GetFromStorage(order.Tile, order.Owner.GetPlayerServer(), order.SellThings, order.CountReady) == null) return false;
 
-            //order.Id = Repository.GetData.GetChatId();
             order.Id = ChatManager.Instance.GetChatId();
             order.UpdateTime = DateTime.UtcNow;
             Data.Orders.Add(order);
             OrdersById.TryAdd(order.Id, order);
-            OrdersByTile.GetOrAdd(order.Tile, new HashSet<TradeOrder>()).Add(order);
+            OrdersByTile.GetOrAdd(order.Tile, _ => new HashSet<TradeOrder>()).Add(order);
 
-            foreach (var st in order.SellThings)
+            if (order.SellThings != null)
             {
-                if (!string.IsNullOrEmpty(st.Data)) st.DataHash = Data.SetInUploadService(st.Data);
+                for (int i = 0; i < order.SellThings.Count; i++)
+                {
+                    var st = order.SellThings[i];
+                    if (st != null && !string.IsNullOrEmpty(st.Data))
+                    {
+                        st.DataHash = Data.SetInUploadService(st.Data);
+                    }
+                }
             }
 
             if (Data.OrdersPlaceServerIdByTile.TryGetValue(order.Tile, out long placeServerId))
@@ -96,39 +100,53 @@ namespace ServerOnlineCity.Mechanics
 
             return true;
         }
+
         public void OrderRemove(TradeOrder order)
         {
             order.UpdateTime = DateTime.UtcNow;
             Data.Orders.Remove(order);
             OrdersById.TryRemove(order.Id, out _);
-            OrdersByTile.TryGetValue(order.Tile, out var obt);
-            obt?.Remove(order);
-            if ((obt?.Count ?? 0) == 0) OrdersByTile.TryRemove(order.Tile, out _);
-            var trade = TradeWorldObjects.FirstOrDefault(to => to.Id == order.Id);
-            if (trade != null)
+
+            if (OrdersByTile.TryGetValue(order.Tile, out var obt))
             {
-                TradeWorldObjects.Remove(trade);
-                TradeWorldObjectsDeleted.Add(trade);
+                obt.Remove(order);
+                if (obt.Count == 0) OrdersByTile.TryRemove(order.Tile, out _);
             }
-            // Переміщуємо речі до торгового сховища.
-            foreach (var st in order.SellThings)
+
+            for (int i = 0; i < TradeWorldObjects.Count; i++)
             {
-                st.Count *= order.CountReady;
+                if (TradeWorldObjects[i].Id == order.Id)
+                {
+                    var trade = TradeWorldObjects[i];
+                    TradeWorldObjects.RemoveAt(i);
+                    TradeWorldObjectsDeleted.Add(trade);
+                    break;
+                }
             }
-            SendToStorage(order.Tile, order.Owner.GetPlayerServer(), order.SellThings);
+
+            // Переміщуємо речі до торгового сховища
+            if (order.SellThings != null)
+            {
+                for (int i = 0; i < order.SellThings.Count; i++)
+                {
+                    order.SellThings[i].Count *= order.CountReady;
+                }
+                SendToStorage(order.Tile, order.Owner.GetPlayerServer(), order.SellThings);
+            }
         }
+
         public bool OrderUpdate(TradeOrder newOrder, TradeOrder oldOrder)
         {
-            // Переміщуємо до торгового сховища речі, кількість яких зменшилася:
-            // видаляємо з oldOrder усе, що є в новому замовленні, а залишок повертаємо на склад.
-            var newThings = newOrder.SellThings.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
-            var oldThings = oldOrder.SellThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
-            var newThingsOrig = new List<ThingTrade>(); // Нові речі в угоді, які потрібно забрати з торгового сховища.
+            var newThings = newOrder.SellThings.OrderByDescendingCost();
+            var oldThings = oldOrder.SellThings.OrderByCost();
+            var newThingsOrig = new List<ThingTrade>(newThings.Count);
+
             for (int si = 0; si < oldThings.Count; si++)
             {
                 oldThings[si] = (ThingTrade)oldThings[si].Clone();
                 oldThings[si].Count *= oldOrder.CountReady;
             }
+
             for (int bi = 0; bi < newThings.Count; bi++)
             {
                 var thing = newThings[bi];
@@ -157,76 +175,115 @@ namespace ServerOnlineCity.Mechanics
                     newThingsOrig.Add(ot);
                 }
             }
+
             var playerServer = oldOrder.Owner.GetPlayerServer();
-            if (newThingsOrig.Count > 0) if (GetFromStorage(oldOrder.Tile, playerServer, newThingsOrig) == null) return false;
+            if (newThingsOrig.Count > 0 && GetFromStorage(oldOrder.Tile, playerServer, newThingsOrig) == null) return false;
             if (oldThings.Count > 0) SendToStorage(oldOrder.Tile, playerServer, oldThings);
 
             newOrder.UpdateTime = DateTime.UtcNow;
-            Data.Orders[Data.Orders.IndexOf(oldOrder)] = newOrder;
-            OrdersById[newOrder.Id] = newOrder;
-            OrdersByTile.TryGetValue(newOrder.Tile, out var obt);
-            obt.Remove(oldOrder);
-            obt.Add(newOrder);
+            int oldIdx = Data.Orders.IndexOf(oldOrder);
+            if (oldIdx >= 0) Data.Orders[oldIdx] = newOrder;
 
-            foreach (var st in newOrder.SellThings)
+            OrdersById[newOrder.Id] = newOrder;
+            if (OrdersByTile.TryGetValue(newOrder.Tile, out var obt))
             {
-                if (!string.IsNullOrEmpty(st.Data)) st.DataHash = Data.SetInUploadService(st.Data);
+                obt.Remove(oldOrder);
+                obt.Add(newOrder);
+            }
+
+            if (newOrder.SellThings != null)
+            {
+                for (int i = 0; i < newOrder.SellThings.Count; i++)
+                {
+                    var st = newOrder.SellThings[i];
+                    if (st != null && !string.IsNullOrEmpty(st.Data))
+                    {
+                        st.DataHash = Data.SetInUploadService(st.Data);
+                    }
+                }
             }
 
             for (int i = 0; i < TradeWorldObjects.Count; i++)
             {
                 if (TradeWorldObjects[i].Id == newOrder.Id)
                 {
-                    var newTrade = new TradeOrderShort(newOrder);
-                    TradeWorldObjects[i] = newTrade;
+                    TradeWorldObjects[i] = new TradeOrderShort(newOrder);
                     break;
                 }
             }
 
-            // Перевіряємо, чи можуть виконатися угоди.
             ImplementTrade(newOrder);
-
             return true;
         }
 
-        /// <summary>
-        /// Знаходить усі речі із зазначеним def.
-        /// </summary>
-        /// <param name="thingDef"></param>
-        /// <returns>Словник усіх речей і місць їхнього зберігання, лише для читання.</returns>
         public Dictionary<ThingTrade, TradeThingStorage> FindThingDef(PlayerServer player, ThingTrade thingDef)
         {
-            return player.TradeThingStorages?
-                .SelectMany(tts => tts.Things?.Where(t => t.DefName == thingDef.DefName).Select(t => new { thing = t, place = tts }))
-                .Where(a => a != null)
-                .ToDictionary(a => a.thing, a => a.place)
-                ?? new Dictionary<ThingTrade, TradeThingStorage>();
+            var result = new Dictionary<ThingTrade, TradeThingStorage>();
+            if (player?.TradeThingStorages == null || thingDef == null) return result;
+
+            var storages = player.TradeThingStorages;
+            for (int i = 0; i < storages.Count; i++)
+            {
+                var tts = storages[i];
+                if (tts?.Things == null) continue;
+
+                for (int j = 0; j < tts.Things.Count; j++)
+                {
+                    var t = tts.Things[j];
+                    if (t != null && t.DefName == thingDef.DefName)
+                    {
+                        result[t] = tts;
+                    }
+                }
+            }
+            return result;
         }
+
         public int CountThingDef(PlayerServer player, ThingTrade thingDef)
         {
-            return player.TradeThingStorages?
-                .Sum(tts => tts.Things?.Where(t => t.DefName == thingDef.DefName).Sum(t => t.Count) ?? 0)
-                ?? 0;
+            if (player?.TradeThingStorages == null || thingDef == null) return 0;
+
+            int sum = 0;
+            var storages = player.TradeThingStorages;
+            for (int i = 0; i < storages.Count; i++)
+            {
+                var tts = storages[i];
+                if (tts?.Things == null) continue;
+
+                for (int j = 0; j < tts.Things.Count; j++)
+                {
+                    var t = tts.Things[j];
+                    if (t != null && t.DefName == thingDef.DefName)
+                    {
+                        sum += t.Count;
+                    }
+                }
+            }
+            return sum;
         }
 
         public TradeThingStorage GetStorage(int tile, Player player, bool needAdd)
         {
-            var dicPl = CacheStorage.GetOrAdd(player.Login, (login) =>
+            var dicPl = CacheStorage.GetOrAdd(player.Login, login =>
             {
-                // Завантажуємо всі дані гравця під час першого звернення до нього.
-                var pl = Repository.GetPlayerByLogin(player.Login);
-                return new ConcurrentDictionary<int, TradeThingStorage>(pl.TradeThingStorages.ToDictionary(s => s.Tile));
+                var pl = Repository.GetPlayerByLogin(login);
+                var dict = new ConcurrentDictionary<int, TradeThingStorage>(Environment.ProcessorCount, Math.Max(8, pl.TradeThingStorages.Count));
+                for (int i = 0; i < pl.TradeThingStorages.Count; i++)
+                {
+                    dict[pl.TradeThingStorages[i].Tile] = pl.TradeThingStorages[i];
+                }
+                return dict;
             });
+
             if (needAdd)
             {
-                var storage = dicPl.GetOrAdd(tile, (t) =>
+                return dicPl.GetOrAdd(tile, t =>
                 {
-                    // Створюємо сховище для цієї точки, якщо його ще немає.
-                    var ns = new TradeThingStorage()
+                    var ns = new TradeThingStorage
                     {
                         Id = 0,
                         PlaceServerId = Data.GetWorldObjectEntryId(),
-                        Tile = tile,
+                        Tile = t,
                         LoginOwner = player.Login,
                         Things = new List<ThingTrade>(),
                         Type = TradeWorldObjectEntryType.ThingsPlayer,
@@ -236,29 +293,22 @@ namespace ServerOnlineCity.Mechanics
                     pl.TradeThingStorages.Add(ns);
                     return ns;
                 });
-                return storage;
             }
-            else
-            {
-                if (!dicPl.TryGetValue(tile, out var storage)) return null;
-                return storage;
-            }
+
+            dicPl.TryGetValue(tile, out var storage);
+            return storage;
         }
 
-        /// <summary>
-        /// Додає речі до сховища гравця; якщо сховища немає, воно створюється.
-        /// </summary>
         public void SendToStorage(int tile, PlayerServer player, List<ThingTrade> things)
         {
-            things = things.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі; також перевіряємо кількість на нуль.
+            things = things.OrderByDescendingCost();
             if (things.Count == 0) return;
 
             Loger.Log($"Server SendToStorage tile={tile} pl={player.Public.Login} things=" + things.ToStringLabel());
 
             var storage = GetStorage(tile, player.Public, true);
-            var storageRead = storage.Things.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
+            var storageRead = storage.Things.OrderByCost();
 
-            // Знаходимо речі, які вже є у сховищі, та об'єднуємо їх; решту просто додаємо.
             for (int bi = 0; bi < things.Count; bi++)
             {
                 var thing = things[bi];
@@ -275,7 +325,10 @@ namespace ServerOnlineCity.Mechanics
                     found = item;
                     break;
                 }
-                if (found != null) found.Count += thing.Count;
+                if (found != null)
+                {
+                    found.Count += thing.Count;
+                }
                 else
                 {
                     storage.Things.Add(thing);
@@ -285,21 +338,19 @@ namespace ServerOnlineCity.Mechanics
             storage.UpdateTime = DateTime.UtcNow;
         }
 
-        /// <summary>
-        /// Вилучає речі зі сховища за фільтром. Якщо чогось бракує, повертає null.
-        /// </summary>
         public List<ThingTrade> GetFromStorage(int tile, PlayerServer player, List<ThingTrade> filter, int filterRate = 1)
         {
             Loger.Log($"Server GetFromStorage tile={tile} pl={player.Public.Login} rate={filterRate} filter=" + filter?.ToStringThing());
 
-            filter = filter.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
+            filter = filter.OrderByDescendingCost();
             var storage = GetStorage(tile, player.Public, false);
             var storageThings = storage?.Things ?? new List<ThingTrade>();
-            var storageRead = storageThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
+            var storageRead = storageThings.OrderByCost();
 
             var select = new List<ThingTrade>();
             var selectCashless = 0;
             var newCountStorage = new Dictionary<ThingTrade, int>();
+
             for (int bi = 0; bi < filter.Count; bi++)
             {
                 var need = filter[bi];
@@ -319,6 +370,7 @@ namespace ServerOnlineCity.Mechanics
                     }
                 }
                 else
+                {
                     for (int si = 0; si < storageRead.Count; si++)
                     {
                         var item = storageRead[si];
@@ -343,14 +395,16 @@ namespace ServerOnlineCity.Mechanics
                             countSelected += itemOut.Count;
                         }
                     }
+                }
                 if (countSelected < need.Count * filterRate) return null;
             }
-            // Якщо виходу раніше не було, речей достатньо — вибираємо їх зі складу.
+
             if (selectCashless > 0)
             {
                 player.CashlessBalance -= selectCashless;
                 select.Add(ThingTrade.CreateTradeServer(MainHelper.CashlessThingDefName, selectCashless));
             }
+
             foreach (var nc in newCountStorage)
             {
                 if (nc.Value > 0) nc.Key.Count = nc.Value;
@@ -360,26 +414,24 @@ namespace ServerOnlineCity.Mechanics
                     storageThings.Remove(nc.Key);
                 }
             }
-            if (newCountStorage.Any() && storage != null)
+
+            if (newCountStorage.Count > 0 && storage != null)
             {
                 storage.UpdateTime = DateTime.UtcNow;
             }
             return select;
         }
 
-        /// <summary>
-        /// Два списки речей і максимальна кількість їхніх повторів.
-        /// </summary>
-        /// <returns>Невикористані речі в sellThings для кожної угоди з урахуванням повторів sellRepeat, але без можливих додаткових повторів.</returns>
         private List<ThingTrade> CompareListTrade(List<ThingTrade> sellThings, List<ThingTrade> buyThings
             , ref int sellRepeat, ref int buyRepeat
             , int sellAllCount, int buyAllCount
             , out List<ThingTrade> sellByBuyThings)
         {
-            buyThings = buyThings.OrderByDescendingCost();  // Спочатку вибираємо кращі, дорожчі речі.
-            var sts = sellThings.OrderByCost(); // Спочатку зіставляємо гірші, дешевші речі.
+            buyThings = buyThings.OrderByDescendingCost();
+            var sts = sellThings.OrderByCost();
             var excess = new List<ThingTrade>();
             sellByBuyThings = new List<ThingTrade>();
+
             for (int bi = 0; bi < buyThings.Count; bi++)
             {
                 bool isOk = false;
@@ -388,33 +440,32 @@ namespace ServerOnlineCity.Mechanics
                     var buy = buyThings[bi];
                     var sell = sts[si];
                     if (!buy.MatchesThingTrade(sell)) continue;
-                    // Це та сама річ; тепер потрібно перевірити кількість.
 
-                    // Якщо пропозиція менша за попит, можливо, можна встановити різні пропорції повторення угоди.
                     if (sell.Count * sellRepeat < buy.Count * buyRepeat)
                     {
-                        // Якщо для sell і buy потрібна різна кількість повторів, але вона вже задана, угода неможлива.
                         if (sellRepeat != 1 || buyRepeat != 1) continue;
 
-                        // Кількість одиниць товару для мінімального обсягу угоди кожної сторони (кількість повторів може відрізнятися).
-                        var cnt = NOK(sell.Count, buy.Count); // (2,3)=6  (10,5)=10
-
-                        // Чи вистачає кількості хоча б на одну угоду.
+                        var cnt = NOK(sell.Count, buy.Count);
                         if (sellAllCount * sell.Count < cnt || buyAllCount * buy.Count < cnt) continue;
 
                         sellRepeat = cnt / sell.Count;
                         buyRepeat = cnt / buy.Count;
 
-                        if (sellRepeat > 1) foreach (var item in excess) item.Count *= sellRepeat;
+                        if (sellRepeat > 1)
+                        {
+                            for (int e = 0; e < excess.Count; e++)
+                            {
+                                excess[e].Count *= sellRepeat;
+                            }
+                        }
                     }
                     if (sell.Count * sellRepeat > buy.Count * buyRepeat)
                     {
-                        // Позначаємо зайві ресурси, які не беруть участі в угоді.
                         var sellClone = (ThingTrade)sell.Clone();
                         sellClone.Count = sell.Count * sellRepeat - buy.Count * buyRepeat;
                         excess.Add(sellClone);
                     }
-                    // Пропорції збалансовано, надлишок прибрано (він виникає, коли покупець готовий заплатити більше, ніж вимагає продавець).
+
                     var sellByBuyThing = (ThingTrade)sell.Clone();
                     sellByBuyThing.Count = buy.Count * buyRepeat;
                     sellByBuyThings.Add(sellByBuyThing);
@@ -427,13 +478,30 @@ namespace ServerOnlineCity.Mechanics
             return excess;
         }
 
+        /// <summary>
+        /// Швидкий НСД без виділення об'єктів BigInteger в купі.
+        /// </summary>
         public static int NOD(int a, int b)
         {
-            return (int)BigInteger.GreatestCommonDivisor((BigInteger)a, (BigInteger)b);
+            a = Math.Abs(a);
+            b = Math.Abs(b);
+            while (b != 0)
+            {
+                int temp = b;
+                b = a % b;
+                a = temp;
+            }
+            return a == 0 ? 1 : a;
         }
+
+        /// <summary>
+        /// Швидкий НСК із захистом від переповнення.
+        /// </summary>
         public static int NOK(int a, int b)
         {
-            return Math.Abs(a * b) / NOD(a, b);
+            if (a == 0 || b == 0) return 0;
+            int gcd = NOD(a, b);
+            return (int)Math.Abs((long)a * b / gcd);
         }
 
         private class ImplementSelectTrade
@@ -449,19 +517,15 @@ namespace ServerOnlineCity.Mechanics
             public List<ThingTrade> ThingsFor2 { get; set; }
         }
 
-        /// <summary>
-        /// Виконує угоду з усіма можливими контрагентами в цій точці.
-        /// Викликати для кожної зміненої або створеної угоди.
-        /// </summary>
         private void ImplementTrade(TradeOrder o1)
         {
             if (ImplementTradeCalcing) return;
             ImplementTradeCalcing = true;
             if (!OrdersByTile.TryGetValue(o1.Tile, out var to)) return;
-            var tradeOrders = to.ToList();
+
+            var tradeOrders = new List<TradeOrder>(to);
             tradeOrders.Remove(o1);
 
-            // Цикл попарного зіставлення.
             ImplementSelectTrade best;
             do
             {
@@ -479,22 +543,25 @@ namespace ServerOnlineCity.Mechanics
                     var sellEnd2 = CompareListTrade(o2.SellThings, o1.BuyThings, ref repeat2, ref repeat1, o2.CountReady, o1.CountReady, out var thingsFor1);
                     if (sellEnd2 == null) continue;
 
-                    // Спільна кількість повторів для repeat1 і repeat2.
                     var repeatRepeat = o1.CountReady / repeat1 < o2.CountReady / repeat2 ? o1.CountReady / repeat1 : o2.CountReady / repeat2;
 
                     if (repeatRepeat > 1)
                     {
-                        foreach (var item in sellEnd1) item.Count *= repeatRepeat;
-                        foreach (var item in sellEnd2) item.Count *= repeatRepeat;
-                        foreach (var item in thingsFor1) item.Count *= repeatRepeat;
-                        foreach (var item in thingsFor2) item.Count *= repeatRepeat;
+                        for (int k = 0; k < sellEnd1.Count; k++) sellEnd1[k].Count *= repeatRepeat;
+                        for (int k = 0; k < sellEnd2.Count; k++) sellEnd2[k].Count *= repeatRepeat;
+                        for (int k = 0; k < thingsFor1.Count; k++) thingsFor1[k].Count *= repeatRepeat;
+                        for (int k = 0; k < thingsFor2.Count; k++) thingsFor2[k].Count *= repeatRepeat;
                     }
 
-                    var that = new ImplementSelectTrade()
+                    float cost = 0f;
+                    for (int k = 0; k < sellEnd1.Count; k++)
                     {
-                        // Визначаємо вигідність угоди за залишком після виконання SellEnd1/2: що більша кількість, то вигідніше.
-                        // Кількість множиться на ігрову ціну; це важливо лише за наявності різних SellEnd1/2.
-                        Cost = sellEnd1.Select(t => t.Count * t.GameCost).Sum(),
+                        cost += sellEnd1[k].Count * sellEnd1[k].GameCost;
+                    }
+
+                    var that = new ImplementSelectTrade
+                    {
+                        Cost = cost,
                         Count1 = repeat1 * repeatRepeat,
                         Count2 = repeat2 * repeatRepeat,
                         Order1 = o1,
@@ -504,16 +571,17 @@ namespace ServerOnlineCity.Mechanics
                         ThingsFor1 = thingsFor1,
                         ThingsFor2 = thingsFor2
                     };
+
                     if (best == null || best.Cost < that.Cost) best = that;
                 }
-                // Укладаємо найвигіднішу угоду.
+
                 if (best != null)
                 {
                     Loger.Log("Server Trade! " + Environment.NewLine
                         + "trade x" + best.Count1 + " " + best.Order1.ToString() + Environment.NewLine
                         + "trade x" + best.Count2 + " " + best.Order2.ToString());
 
-                    var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}"; // Локалізація цих фраз: OC_ ChatController.ServerCharTranslate.
+                    var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}";
                     var msg1 = string.Format(msg0
                         , best.Count1
                         , best.Order1.CountReady == best.Count1 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order1.CountReady - best.Count1).ToString()
@@ -526,12 +594,9 @@ namespace ServerOnlineCity.Mechanics
                     var playerServer1 = best.Order1.Owner.GetPlayerServer();
                     var playerServer2 = best.Order2.Owner.GetPlayerServer();
 
-                    // Надсилаємо придбане.
                     SendToStorage(o1.Tile, playerServer1, best.ThingsFor1);
                     SendToStorage(o1.Tile, playerServer2, best.ThingsFor2);
 
-                    // Виконуємо угоду; кількість повторів для першої та другої угод може відрізнятися: t1.CountReady - t1Count і t2.CountReady - t2Count.
-                    // Надсилаємо надлишок до сховищ (наприклад, якщо хтось продає дешевше, ніж ми збиралися купити).
                     msg0 = "OC_ExchengeOperator_OrderClosedBetter";
                     if (best.SellEnd1.Count > 0)
                     {
@@ -544,11 +609,9 @@ namespace ServerOnlineCity.Mechanics
                         SendToStorage(o1.Tile, playerServer2, best.SellEnd2);
                     }
 
-                    //уменьшаем счетчики сделок
                     best.Order1.CountReady -= best.Count1;
                     best.Order2.CountReady -= best.Count2;
 
-                    //удаляем ставшие пустыми сделки
                     if (best.Order2.CountReady == 0)
                     {
                         OrderRemove(best.Order2);
@@ -560,34 +623,30 @@ namespace ServerOnlineCity.Mechanics
                         break;
                     }
 
-                    //рассылка писем
                     var pl1 = best.Order1.Owner.GetPlayerServer();
                     var pl2 = best.Order2.Owner.GetPlayerServer();
+
                     HelperMailMessadge.Send(
-                        Repository.GetData.PlayerSystem
-                        , pl1
-                        , "OC_ExchengeOperator_OrderDone"
-                        , msg1
-                        , ModelMailMessadge.MessadgeTypes.GoldenLetter
-                        , best.Order1.Tile
-                        );
+                        Repository.GetData.PlayerSystem,
+                        pl1,
+                        "OC_ExchengeOperator_OrderDone",
+                        msg1,
+                        ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                        best.Order1.Tile);
+
                     HelperMailMessadge.Send(
-                        Repository.GetData.PlayerSystem
-                        , pl2
-                        , "OC_ExchengeOperator_OrderDone"
-                        , msg2
-                        , ModelMailMessadge.MessadgeTypes.GoldenLetter
-                        , best.Order1.Tile
-                        );
+                        Repository.GetData.PlayerSystem,
+                        pl2,
+                        "OC_ExchengeOperator_OrderDone",
+                        msg2,
+                        ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                        best.Order1.Tile);
                 }
             } while (best != null);
 
             ImplementTradeCalcing = false;
         }
 
-        /// <summary>
-        /// Икрок хочет купить указанную сделку не за другую сделку, а за содержимое торгового склада
-        /// </summary>
         public bool ImplementTradeByStorage(TradeOrder order, PlayerServer player, int needRepeat)
         {
             if (order.CountReady < needRepeat) return false;
@@ -599,76 +658,130 @@ namespace ServerOnlineCity.Mechanics
             var orderPlayer = order.Owner.GetPlayerServer();
             SendToStorage(order.Tile, orderPlayer, thingsForOrder);
 
-            var msg1 = string.Format("OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}" // Ваша сделка сработала
+            var msg1 = string.Format("OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}"
                 , needRepeat
                 , order.CountReady == needRepeat ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (order.CountReady - needRepeat).ToString()
                 , thingsForOrder.ToStringLabel());
 
-            var thingsFromOrder = order.SellThings.Select(t =>
-                {
-                    var tt = (ThingTrade)t.Clone();
-                    tt.Count *= needRepeat;
-                    return tt;
-                }).ToList();
+            var thingsFromOrder = new List<ThingTrade>(order.SellThings.Count);
+            for (int i = 0; i < order.SellThings.Count; i++)
+            {
+                var tt = (ThingTrade)order.SellThings[i].Clone();
+                tt.Count *= needRepeat;
+                thingsFromOrder.Add(tt);
+            }
 
             SendToStorage(order.Tile, player, thingsFromOrder);
 
-            var msg2 = string.Format("OC_ExchengeOperator_tradeBought0 {0} OC_ExchengeOperator_tradeBought1 {1}" // Вы приобрели по сделке
+            var msg2 = string.Format("OC_ExchengeOperator_tradeBought0 {0} OC_ExchengeOperator_tradeBought1 {1}"
                 , needRepeat
                 , thingsFromOrder.ToStringLabel());
 
-            //уменьшаем счетчики сделок
             order.CountReady -= needRepeat;
 
-            //удаляем ставшие пустыми сделки
             if (order.CountReady == 0)
             {
                 OrderRemove(order);
             }
 
             HelperMailMessadge.Send(
-                Repository.GetData.PlayerSystem
-                , orderPlayer
-                , "OC_ExchengeOperator_OrderDone" // Ваша сделка сработала
-                , msg1
-                , ModelMailMessadge.MessadgeTypes.GoldenLetter
-                , order.Tile
-                );
+                Repository.GetData.PlayerSystem,
+                orderPlayer,
+                "OC_ExchengeOperator_OrderDone",
+                msg1,
+                ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                order.Tile);
 
             HelperMailMessadge.Send(
-                Repository.GetData.PlayerSystem
-                , player
-                , "OC_ExchengeOperator_YouBought" // Вы купили по сделке
-                , msg2
-                , ModelMailMessadge.MessadgeTypes.GoldenLetter
-                , order.Tile
-                );
+                Repository.GetData.PlayerSystem,
+                player,
+                "OC_ExchengeOperator_YouBought",
+                msg2,
+                ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                order.Tile);
 
             return true;
         }
 
-        internal IEnumerable<Tuple<ThingTrade, int>> GetThingsInServer(PlayerServer player) =>
-            player.TradeThingStorages
-                .SelectMany(x => x.Things)
-                .Select(x => new Tuple<ThingTrade, int>(x, 1))
-                .Union(Data?.Orders
-                    .Where(o => o.Owner.Login == player.Public.Login)
-                    .SelectMany(o => o.SellThings.Select(x => new Tuple<ThingTrade, int>(x, o.CountReady)))
-                );
+        internal IEnumerable<Tuple<ThingTrade, int>> GetThingsInServer(PlayerServer player)
+        {
+            var result = new List<Tuple<ThingTrade, int>>();
+            if (player?.TradeThingStorages != null)
+            {
+                for (int i = 0; i < player.TradeThingStorages.Count; i++)
+                {
+                    var st = player.TradeThingStorages[i];
+                    if (st?.Things == null) continue;
+                    for (int j = 0; j < st.Things.Count; j++)
+                    {
+                        result.Add(new Tuple<ThingTrade, int>(st.Things[j], 1));
+                    }
+                }
+            }
+
+            if (Data?.Orders != null && player?.Public?.Login != null)
+            {
+                for (int i = 0; i < Data.Orders.Count; i++)
+                {
+                    var o = Data.Orders[i];
+                    if (o != null && o.Owner?.Login == player.Public.Login && o.SellThings != null)
+                    {
+                        for (int j = 0; j < o.SellThings.Count; j++)
+                        {
+                            result.Add(new Tuple<ThingTrade, int>(o.SellThings[j], o.CountReady));
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
 
         public void DayPassed(PlayerServer player)
         {
-            var data = Repository.GetData;
+            if (player == null) return;
+            double totalCost = 0;
 
-            //для пешек и вещей которые портятся от тепла
-            var summ = data.OrderOperator.GetThingsInServer(player)
-                ?.Where(t => t.Item1.IsPawn || t.Item1.Rottable)
-                ?.Sum(x => x.Item1.GameCost * x.Item1.Count * x.Item2) ?? 0;
+            if (player.TradeThingStorages != null)
+            {
+                for (int i = 0; i < player.TradeThingStorages.Count; i++)
+                {
+                    var storage = player.TradeThingStorages[i];
+                    if (storage?.Things == null) continue;
 
-            //налог = цена в серебре / средняя цена пешки (5000$) * цена сухпайка (25$)
-            summ *= 25f / 5000f;
-            player.CashlessBalance -= (int)summ;
+                    for (int j = 0; j < storage.Things.Count; j++)
+                    {
+                        var t = storage.Things[j];
+                        if (t != null && (t.IsPawn || t.Rottable))
+                        {
+                            totalCost += (double)t.GameCost * t.Count;
+                        }
+                    }
+                }
+            }
+
+            if (Data?.Orders != null && player.Public?.Login != null)
+            {
+                for (int i = 0; i < Data.Orders.Count; i++)
+                {
+                    var o = Data.Orders[i];
+                    if (o != null && o.Owner?.Login == player.Public.Login && o.SellThings != null)
+                    {
+                        int ready = o.CountReady;
+                        for (int j = 0; j < o.SellThings.Count; j++)
+                        {
+                            var t = o.SellThings[j];
+                            if (t != null && (t.IsPawn || t.Rottable))
+                            {
+                                totalCost += (double)t.GameCost * t.Count * ready;
+                            }
+                        }
+                    }
+                }
+            }
+
+            totalCost *= 25.0 / 5000.0;
+            player.CashlessBalance -= (int)totalCost;
         }
-
     }
 }
