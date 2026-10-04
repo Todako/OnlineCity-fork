@@ -20,7 +20,39 @@ namespace RimWorldOnlineCity
         public string OnlinePlayerLogin => OnlineWObject?.LoginOwner;
         public string OnlineName => OnlineWObject == null ? string.Empty : OnlineWObject.Name;
 
-        public PlayerClient Player => SessionClientController.Data?.Players != null && !string.IsNullOrEmpty(OnlinePlayerLogin) && SessionClientController.Data.Players.TryGetValue(OnlinePlayerLogin, out var pl) ? pl : null;
+        // Однокадрове кешування гравця для усунення зайвих пошуків у словнику Players
+        private PlayerClient _cachedPlayer;
+        private string _cachedPlayerLogin;
+        private int _lastPlayerLookupFrame = -1;
+
+        public PlayerClient Player
+        {
+            get
+            {
+                var login = OnlinePlayerLogin;
+                if (string.IsNullOrEmpty(login)) return null;
+
+                int frame = Time.frameCount;
+                if (_lastPlayerLookupFrame == frame && _cachedPlayerLogin == login)
+                {
+                    return _cachedPlayer;
+                }
+
+                _lastPlayerLookupFrame = frame;
+                _cachedPlayerLogin = login;
+
+                if (SessionClientController.Data?.Players != null && SessionClientController.Data.Players.TryGetValue(login, out var pl))
+                {
+                    _cachedPlayer = pl;
+                }
+                else
+                {
+                    _cachedPlayer = null;
+                }
+                return _cachedPlayer;
+            }
+        }
+
         public bool IsOnline => Player != null && Player.Online;
 
         public WorldObjectEntry OnlineWObject;
@@ -52,6 +84,7 @@ namespace RimWorldOnlineCity
         private string _cachedInspectString;
         private bool _lastInspectIsOnline;
         private static string _cachedInspectTemplate;
+        private static string _cachedFreeWeightLabel;
 
         public override string GetInspectString()
         {
@@ -103,8 +136,12 @@ namespace RimWorldOnlineCity
 
             if (OnlineWObject.FreeWeight > 0 && OnlineWObject.FreeWeight < 999999)
             {
+                if (_cachedFreeWeightLabel == null)
+                {
+                    _cachedFreeWeightLabel = "OCity_Caravan_FreeWeight".Translate().ToString();
+                }
                 sb.AppendLine();
-                sb.Append("OCity_Caravan_FreeWeight".Translate());
+                sb.Append(_cachedFreeWeightLabel);
                 sb.Append(OnlineWObject.FreeWeight.ToStringMass());
             }
 
@@ -150,7 +187,7 @@ namespace RimWorldOnlineCity
             var sb = new StringBuilder(256);
             sb.AppendFormat(
                 _cachedInspectExtendedTemplate,
-                $"<&{OnlineWObject.PlaceServerId}> ",
+                "<&" + OnlineWObject.PlaceServerId + "> ",
                 statusOnline + " (sId:" + OnlineWObject.PlaceServerId + ")",
                 "<:money_bag height=16:> " + OnlineWObject.MarketValue.ToStringMoney(),
                 "<:busts_in_silhouette height=16:> " + OnlineWObject.MarketValuePawn.ToStringMoney(),
@@ -166,8 +203,12 @@ namespace RimWorldOnlineCity
 
             if (OnlineWObject.FreeWeight > 0 && OnlineWObject.FreeWeight < 999999)
             {
+                if (_cachedFreeWeightLabel == null)
+                {
+                    _cachedFreeWeightLabel = "OCity_Caravan_FreeWeight".Translate().ToString();
+                }
                 sb.AppendLine();
-                sb.Append("OCity_Caravan_FreeWeight".Translate());
+                sb.Append(_cachedFreeWeightLabel);
                 sb.Append(" <:handbag height=16:> ");
                 sb.Append(OnlineWObject.FreeWeight.ToStringMass());
             }
@@ -181,15 +222,13 @@ namespace RimWorldOnlineCity
         {
             var sb = new StringBuilder(512);
             sb.Append(base.GetDescription());
-            sb.AppendLine();
-            sb.AppendLine();
+            sb.Append("\n\n");
             sb.Append(GetInspectString());
 
             var player = Player;
             if (player != null)
             {
-                sb.AppendLine();
-                sb.AppendLine();
+                sb.Append("\n\n");
                 sb.Append(player.GetTextInfo());
             }
             return sb.ToString();
@@ -263,6 +302,10 @@ namespace RimWorldOnlineCity
             }
         }
 
+        // ОПТИМІЗАЦІЯ: кешування команд Gizmo для усунення алокацій new Command_Action кожні 16 мс
+        private Command_Action _gizmoPlayerInfo;
+        private Command_Action _gizmoTrade;
+
         public override IEnumerable<Gizmo> GetGizmos()
         {
             foreach (Gizmo gizmo in base.GetGizmos())
@@ -270,30 +313,40 @@ namespace RimWorldOnlineCity
                 yield return gizmo;
             }
 
-            if (Player != null)
+            var player = Player;
+            if (player != null)
             {
-                yield return new Command_Action
+                if (_gizmoPlayerInfo == null)
                 {
-                    defaultLabel = "OCity_Dialog_ChennelPlayerInfo".Translate(),
-                    defaultDesc = "OCity_Dialog_ChennelPlayerInfoTitle".Translate() + Player.Public.Login,
-                    icon = GeneralTexture.OCInfo,
+                    _gizmoPlayerInfo = new Command_Action
+                    {
+                        defaultLabel = "OCity_Dialog_ChennelPlayerInfo".Translate(),
+                        icon = GeneralTexture.OCInfo,
+                        action = delegate
+                        {
+                            var p = Player;
+                            if (p != null) Dialog_InfoPlayer.ShowInfoPlayer(p);
+                        }
+                    };
+                }
+                _gizmoPlayerInfo.defaultDesc = "OCity_Dialog_ChennelPlayerInfoTitle".Translate() + player.Public.Login;
+                yield return _gizmoPlayerInfo;
+            }
+
+            if (_gizmoTrade == null)
+            {
+                _gizmoTrade = new Command_Action
+                {
+                    defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                    defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                    icon = GeneralTexture.TradeButtonIcon,
                     action = delegate
                     {
-                        Dialog_InfoPlayer.ShowInfoPlayer(Player);
+                        Find.WindowStack.Add(new Dialog_Exchenge(this));
                     }
                 };
             }
-
-            yield return new Command_Action
-            {
-                defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
-                defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
-                icon = GeneralTexture.TradeButtonIcon,
-                action = delegate
-                {
-                    Find.WindowStack.Add(new Dialog_Exchenge(this));
-                }
-            };
+            yield return _gizmoTrade;
         }
 
         #region Icons
@@ -305,34 +358,37 @@ namespace RimWorldOnlineCity
         private static readonly Texture2D CaravanOnExpanding = ContentFinder<Texture2D>.Get("CaravanOnExpanding");
         private static readonly Texture2D CaravanOffExpanding = ContentFinder<Texture2D>.Get("CaravanOffExpanding");
 
+        static CaravanOnline()
+        {
+            InitMaterials();
+        }
+
+        private static void InitMaterials()
+        {
+            if (MatCaravanOn == null && CaravanOn != null)
+            {
+                MatCaravanOn = MaterialPool.MatFrom(
+                    CaravanOn,
+                    ShaderDatabase.WorldOverlayTransparentLit,
+                    Color.white,
+                    WorldMaterials.WorldObjectRenderQueue);
+            }
+            if (MatCaravanOff == null && CaravanOff != null)
+            {
+                MatCaravanOff = MaterialPool.MatFrom(
+                    CaravanOff,
+                    ShaderDatabase.WorldOverlayTransparentLit,
+                    Color.white,
+                    WorldMaterials.WorldObjectRenderQueue);
+            }
+        }
+
         public override Material Material
         {
             get
             {
-                if (IsOnline)
-                {
-                    if (MatCaravanOn == null)
-                    {
-                        MatCaravanOn = MaterialPool.MatFrom(
-                            CaravanOn,
-                            ShaderDatabase.WorldOverlayTransparentLit,
-                            Color.white,
-                            WorldMaterials.WorldObjectRenderQueue);
-                    }
-                    return MatCaravanOn;
-                }
-                else
-                {
-                    if (MatCaravanOff == null)
-                    {
-                        MatCaravanOff = MaterialPool.MatFrom(
-                            CaravanOff,
-                            ShaderDatabase.WorldOverlayTransparentLit,
-                            Color.white,
-                            WorldMaterials.WorldObjectRenderQueue);
-                    }
-                    return MatCaravanOff;
-                }
+                if (MatCaravanOn == null) InitMaterials();
+                return IsOnline ? MatCaravanOn : MatCaravanOff;
             }
         }
 
