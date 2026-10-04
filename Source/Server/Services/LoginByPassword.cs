@@ -13,6 +13,10 @@ namespace ServerOnlineCity.Services
 
         public int ResponseTypePackage => (int)PackageType.Response4Login;
 
+        private static readonly ModelStatus StatusOk = new ModelStatus { Status = 0, Message = null };
+        private static readonly ModelStatus StatusIncorrect = new ModelStatus { Status = 1, Message = "User or password incorrect" };
+        private static readonly ModelStatus StatusNotApproved = new ModelStatus { Status = 1, Message = "User not approve" };
+
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
             if (context.Player != null) return null;
@@ -23,11 +27,19 @@ namespace ServerOnlineCity.Services
 
         private ModelStatus login(ModelLogin packet, ServiceContext context)
         {
+            if (packet == null || string.IsNullOrEmpty(packet.Login))
+            {
+                return StatusIncorrect;
+            }
+
             Loger.Log($"Player {packet.Login} start login on server.", Loger.LogLevel.LOGIN);
-            Loger.Log($"Player {packet.Login} client version {packet.Version.ToString()}.", Loger.LogLevel.LOGIN);
+            Loger.Log($"Player {packet.Login} client version {packet.Version}.", Loger.LogLevel.LOGIN);
             packet.Email = Repository.CheckIsIntruder(context, packet.Email, packet.Login);
 
-            if (packet.Login == "system") return null;
+            if (string.Equals(packet.Login, "system", StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusIncorrect;
+            }
 
             var player = Repository.GetPlayerByLogin(packet.Login, true);
 
@@ -41,85 +53,88 @@ namespace ServerOnlineCity.Services
                         player = null;
                     }
                     else
+                    {
                         Loger.Log("Reconnect " + player.Public.Login + " OK", Loger.LogLevel.WARNING);
+                    }
                 }
                 else if (player.Pass != packet.Pass)
+                {
                     player = null;
+                }
             }
 
             if (player == null)
             {
-                return new ModelStatus()
-                {
-                    Status = 1,
-                    Message = "User or password incorrect"
-                };
+                return StatusIncorrect;
             }
 
             if (ServerManager.ServerSettings.PlayerNeedApprove && !player.Approve)
             {
-                return new ModelStatus()
-                {
-                    Status = 1,
-                    Message = "User not approve"
-                };
+                return StatusNotApproved;
             }
 
-            //перед входом закрываем все подключения этого же игрока
-            context.AllSessionAction(session =>
+            // Перед входом закриваємо всі попередні підключення цього ж гравця
+            if (context.AllSessionAction != null)
             {
-                var sc = session.GetContext();
-                if (sc == null
-                    || sc.Player?.Public?.Login != player.Public.Login
-                    || sc == context) return;
-
-                Loger.Log("Disconnect old session at relogin " + player.Public.Login, Loger.LogLevel.LOGIN);
-                session.Dispose();
-            });
-
-            //действия перед входом
-            player.ExitReason = OCUnion.Transfer.DisconnectReason.AllGood;
-            player.ApproveLoadWorldReason = true;
-
-            //При восстановлении подключения ничего не делаем
-            if (string.IsNullOrEmpty(packet.KeyReconnect))
-            {
-                //если зашли по паролю, то сбрасываем ключ, для передачи клиенту нового
-                player.KeyReconnect1 = null;
-                //отмена атаки, если оба участника были отключены одновременно
-                if (player.AttackData != null) player.AttackData.Finish();
-                //удаление всех писем с командой на перезагрузку
-                if (player.Mails != null)
+                context.AllSessionAction(session =>
                 {
-                    for (int i = 0; i < player.Mails.Count; i++)
+                    var sc = session.GetContext();
+                    if (sc == null
+                        || sc.Player?.Public?.Login != player.Public.Login
+                        || sc == context) return;
+
+                    Loger.Log("Disconnect old session at relogin " + player.Public.Login, Loger.LogLevel.LOGIN);
+                    session.Dispose();
+                });
+            }
+
+            lock (player)
+            {
+                // Дії перед входом
+                player.ExitReason = OCUnion.Transfer.DisconnectReason.AllGood;
+                player.ApproveLoadWorldReason = true;
+
+                // При відновленні підключення (Reconnect) сесії нічого не скидаємо
+                if (string.IsNullOrEmpty(packet.KeyReconnect))
+                {
+                    // Якщо зайшли за паролем, скидаємо ключ для передачі клієнту нового
+                    player.KeyReconnect1 = null;
+
+                    // Скасування бою, якщо обидва учасники були відключені одночасно
+                    if (player.AttackData != null) player.AttackData.Finish();
+
+                    // Видалення всіх листів з командою на перезавантаження
+                    if (player.Mails != null)
                     {
-                        if (player.Mails[i] is ModelMailAttackCancel)
+                        for (int i = 0; i < player.Mails.Count; i++)
                         {
-                            player.Mails.RemoveAt(i--);
+                            if (player.Mails[i] is ModelMailAttackCancel)
+                            {
+                                player.Mails.RemoveAt(i--);
+                            }
                         }
                     }
-                }
 
-                // обновляем словарь Номер чата, индекс последнего полученного сообщения
-                if (packet.Login != "discord")
-                {
-                    foreach (var v in player.Chats.Values)
+                    // Оновлюємо покажчики прочитаних повідомлень чату
+                    if (packet.Login != "discord" && player.Chats != null)
                     {
-                        v.Value = -1;
-                        v.Time = DateTime.MinValue;
+                        foreach (var v in player.Chats.Values)
+                        {
+                            if (v != null)
+                            {
+                                v.Value = -1;
+                                v.Time = DateTime.MinValue;
+                            }
+                        }
                     }
                 }
             }
 
             context.Player = player;
-
             context.Logined();
             Loger.Log($"Player {packet.Login} was logged in to the server.", Loger.LogLevel.LOGIN);
-            return new ModelStatus()
-            {
-                Status = 0,
-                Message = null
-            };
+
+            return StatusOk;
         }
     }
 }
