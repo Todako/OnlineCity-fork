@@ -3,6 +3,7 @@ using HugsLib.Settings;
 using OCUnion;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using Verse;
 
@@ -10,7 +11,8 @@ namespace RimWorldOnlineCity
 {
     /// <summary>
     /// Головний диспетчер черги завдань основного потоку та налаштувань мода.
-    /// Забезпечує миттєву синхронізацію між фоновими мережевими службами та головним циклом Unity.
+    /// Забезпечує синхронізацію між фоновими мережевими службами та головним циклом Unity
+    /// з обмеженням бюджету часу на кадр (frame time budget) та пулом об'єктів.
     /// </summary>
     public class ModBaseData : ModBase
     {
@@ -54,6 +56,36 @@ namespace RimWorldOnlineCity
             public ManualResetEventSlim DoneEvent;
         }
 
+        #region Пул моделей дій
+        private const int MaxPoolSize = 128;
+        private static int PoolSize = 0;
+        private static readonly ConcurrentQueue<QueueActionModel> ActionPool = new ConcurrentQueue<QueueActionModel>();
+
+        private static QueueActionModel RentAction(Action act, long num, ManualResetEventSlim doneEvent)
+        {
+            if (ActionPool.TryDequeue(out var qa))
+            {
+                Interlocked.Decrement(ref PoolSize);
+                qa.Act = act;
+                qa.Num = num;
+                qa.DoneEvent = doneEvent;
+                return qa;
+            }
+            return new QueueActionModel { Act = act, Num = num, DoneEvent = doneEvent };
+        }
+
+        private static void ReturnAction(QueueActionModel qa)
+        {
+            qa.Act = null;
+            qa.DoneEvent = null;
+            if (PoolSize < MaxPoolSize)
+            {
+                Interlocked.Increment(ref PoolSize);
+                ActionPool.Enqueue(qa);
+            }
+        }
+        #endregion
+
         private long ActionNumNext = 0;
         public long ActionNumReady = 0;
 
@@ -61,10 +93,12 @@ namespace RimWorldOnlineCity
         public int MainThreadNum = int.MinValue;
         public DateTime LastRunDebug;
 
+        // Бюджет часу виконання черги: максимум 3 мс на кадр для уникнення мікрофризів Unity
+        private static readonly long MaxTicksPerFrame = (Stopwatch.Frequency * 3) / 1000;
+
         /// <summary>
         /// Виконує дію в основному потоці гри з очікуванням завершення.
-        /// ОПТИМІЗАЦІЯ: усунено цикл опитування Thread.Sleep. 
-        /// Фоновий потік відновлює роботу миттєво після виконання дії через ManualResetEventSlim.
+        /// ОПТИМІЗАЦІЯ: миттєве відновлення роботи через ManualResetEventSlim і пул завдань.
         /// </summary>
         public static bool RunMainThreadSync(Action act, int waitSecond = 10, bool softTimeout = false)
         {
@@ -74,27 +108,24 @@ namespace RimWorldOnlineCity
                 return true;
             }
 
-            if (softTimeout && GlobalData.MainThread.Count > 2)
+            // Швидка lock-free перевірка навантаження черги за O(1)
+            long pendingCount = Interlocked.Read(ref GlobalData.ActionNumNext) - Interlocked.Read(ref GlobalData.ActionNumReady);
+            if (softTimeout && pendingCount > 2)
             {
-                Loger.Log($"Client RunMainThread CancelRun currentReady={GlobalData.ActionNumReady} count={GlobalData.MainThread.Count} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
+                Loger.Log($"Client RunMainThread CancelRun currentReady={GlobalData.ActionNumReady} pending={pendingCount} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
                 return false;
             }
 
             using (var doneEvent = new ManualResetEventSlim(false))
             {
                 var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
-                var qa = new QueueActionModel
-                {
-                    Num = num,
-                    Act = act,
-                    DoneEvent = doneEvent
-                };
+                var qa = RentAction(act, num, doneEvent);
 
                 GlobalData.MainThread.Enqueue(qa);
 
                 if (!doneEvent.Wait(waitSecond * 1000))
                 {
-                    Loger.Log($"Client RunMainThread Timeout Exception num={num} currentReady={GlobalData.ActionNumReady} count={GlobalData.MainThread.Count} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
+                    Loger.Log($"Client RunMainThread Timeout Exception num={num} currentReady={GlobalData.ActionNumReady} pending={pendingCount} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
                     if (!softTimeout) throw new ApplicationException("Client RunMainThread Timeout");
                     return false;
                 }
@@ -105,23 +136,18 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Додає дію до черги виконання в основному потоці Unity.
-        /// ОПТИМІЗАЦІЯ: повністю безблокувальне (lock-free) додавання до ConcurrentQueue.
+        /// ОПТИМІЗАЦІЯ: повторне використання об'єктів з пулу замість алокацій у купі.
         /// </summary>
         public static long RunMainThread(Action act)
         {
             var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
-            var qa = new QueueActionModel
-            {
-                Num = num,
-                Act = act,
-                DoneEvent = null
-            };
+            var qa = RentAction(act, num, null);
             GlobalData.MainThread.Enqueue(qa);
             return num;
         }
 
         /// <summary>
-        /// Щокадрове оновлення з черги головного потоку RimWorld.
+        /// Щокадрове оновлення з черги головного потоку RimWorld з контролем часу виконання (Frame Budgeting).
         /// </summary>
         public override void Update()
         {
@@ -131,9 +157,11 @@ namespace RimWorldOnlineCity
                 MainThreadNum = Thread.CurrentThread.ManagedThreadId;
             }
 
-            // ОПТИМІЗАЦІЯ: обробка без захоплення глобального блокування черги
+            var sw = Stopwatch.StartNew();
+
             while (MainThread.TryDequeue(out var qa))
             {
+                var done = qa.DoneEvent;
                 try
                 {
                     qa.Act?.Invoke();
@@ -145,7 +173,25 @@ namespace RimWorldOnlineCity
                 finally
                 {
                     ActionNumReady = qa.Num;
-                    qa.DoneEvent?.Set();
+                    ReturnAction(qa);
+
+                    if (done != null)
+                    {
+                        try
+                        {
+                            done.Set();
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // Викликаючий потік завершився за таймаутом і утилізував подію
+                        }
+                    }
+                }
+
+                // Якщо бюджет кадру (3 мс) вичерпано — переносимо решту завдань на наступний кадр
+                if (sw.ElapsedTicks > MaxTicksPerFrame)
+                {
+                    break;
                 }
             }
         }
