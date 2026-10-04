@@ -12,10 +12,15 @@ namespace ServerOnlineCity.Services
 
         public int ResponseTypePackage => (int)PackageType.Response48Storage;
 
+        private static readonly ModelStatus StatusOk = new ModelStatus { Status = 0, Message = null };
+        private static readonly ModelStatus StatusInvalidRequest = new ModelStatus { Status = 1, Message = "Invalid request data" };
+        private static readonly ModelStatus StatusTooMuch = new ModelStatus { Status = 1, Message = "Operation not possible (too much)" };
+        private static readonly ModelStatus StatusNotPossible = new ModelStatus { Status = 1, Message = "Operation not possible" };
+
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
+            if (context?.Player == null || request?.Packet == null) return null;
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
             result.Packet = exchengeStorage(request.Packet as ModelExchengeStorage, context);
             return result;
         }
@@ -24,16 +29,16 @@ namespace ServerOnlineCity.Services
         {
             if (diff == null)
             {
-                return new ModelStatus
-                {
-                    Status = 1,
-                    Message = "Invalid request data"
-                };
+                return StatusInvalidRequest;
             }
 
             lock (context.Player)
             {
                 var data = Repository.GetData;
+                if (data?.OrderOperator == null)
+                {
+                    return StatusNotPossible;
+                }
 
                 lock (data)
                 {
@@ -50,33 +55,33 @@ namespace ServerOnlineCity.Services
                         if (diff.TileTo != 0 && diff.Cost > 0 && diff.Dist > 0
                             && diff.Cost > context.Player.CashlessBalance)
                         {
-                            long costThings = 0;
-                            for (int i = 0; i < deleteThings.Count; i++)
+                            if (Loger.Enable)
                             {
-                                var t = deleteThings[i];
-                                costThings += (long)t.GameCost * t.Count;
-                            }
+                                long costThings = 0;
+                                for (int i = 0; i < deleteThings.Count; i++)
+                                {
+                                    var t = deleteThings[i];
+                                    if (t != null)
+                                    {
+                                        costThings += (long)t.GameCost * t.Count;
+                                    }
+                                }
 
-                            Loger.Log($"Server exchengeStorage CargoDelivery tile {diff.Tile} to {diff.TileTo} cost={diff.Cost} dist={diff.Dist} costThings={costThings}", Loger.LogLevel.EXCHANGE);
-                            return new ModelStatus()
-                            {
-                                Status = 1,
-                                Message = "Operation not possible (too much)"
-                            };
+                                Loger.Log($"Server exchengeStorage CargoDelivery tile {diff.Tile} to {diff.TileTo} cost={diff.Cost} dist={diff.Dist} costThings={costThings}", Loger.LogLevel.EXCHANGE);
+                            }
+                            return StatusTooMuch;
                         }
 
                         if (data.OrderOperator.GetFromStorage(diff.Tile, context.Player, deleteThings) == null)
                         {
-                            // Безпечне логування стану сховища
-                            var storage = data.OrderOperator.GetStorage(diff.Tile, context.Player.Public, false);
-                            var storageStr = storage?.Things?.ToStringThing() ?? "null";
-                            Loger.Log($"Server exchengeStorage Operation not possible! storage={storageStr}", Loger.LogLevel.EXCHANGE);
-
-                            return new ModelStatus()
+                            if (Loger.Enable)
                             {
-                                Status = 1,
-                                Message = "Operation not possible"
-                            };
+                                var storage = data.OrderOperator.GetStorage(diff.Tile, context.Player.Public, false);
+                                var storageStr = storage?.Things?.ToStringThing() ?? "null";
+                                Loger.Log($"Server exchengeStorage Operation not possible! storage={storageStr}", Loger.LogLevel.EXCHANGE);
+                            }
+
+                            return StatusNotPossible;
                         }
                         else
                         {
@@ -90,11 +95,7 @@ namespace ServerOnlineCity.Services
                     }
                 }
 
-                return new ModelStatus()
-                {
-                    Status = 0,
-                    Message = null
-                };
+                return StatusOk;
             }
         }
     }

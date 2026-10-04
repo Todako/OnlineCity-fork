@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
 using Transfer;
-using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Services
 {
@@ -16,25 +14,37 @@ namespace ServerOnlineCity.Services
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
+            if (context?.Player == null) return null;
 
-            var hashs = ((ModelAnyLoad)request.Packet).Hashs;
+            var packet = request?.Packet as ModelAnyLoad;
+            var hashs = packet?.Hashs;
             if (hashs == null) return null;
 
-            var uploadService = Repository.GetData.UploadService;
+            var dataContainer = Repository.GetData;
+            var uploadService = dataContainer?.UploadService;
+
             var datas = new List<string>(hashs.Count);
 
-            // Швидке наповнення списку без LINQ .Select().ToList()
-            for (int i = 0; i < hashs.Count; i++)
+            if (uploadService != null && hashs.Count > 0)
             {
-                uploadService.TryGetValue(hashs[i], out string data);
-                datas.Add(data);
+                lock (uploadService)
+                {
+                    for (int i = 0; i < hashs.Count; i++)
+                    {
+                        uploadService.TryGetValue(hashs[i], out string data);
+                        datas.Add(data);
+                    }
+                }
             }
 
-            var result = new ModelContainer()
+            var result = new ModelContainer
             {
                 TypePacket = ResponseTypePackage,
-                Packet = new ModelAnyLoad() { Hashs = hashs, Datas = datas }
+                Packet = new ModelAnyLoad
+                {
+                    Hashs = hashs,
+                    Datas = datas
+                }
             };
 
             return result;

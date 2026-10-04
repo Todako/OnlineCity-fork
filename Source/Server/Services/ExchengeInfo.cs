@@ -12,30 +12,53 @@ namespace ServerOnlineCity.Services
 
         public int ResponseTypePackage => (int)PackageType.Response54ExchengeInfo;
 
+        private static readonly ModelExchengeInfo ErrorResponse = new ModelExchengeInfo
+        {
+            Status = 1,
+            Message = null,
+            Result = 0
+        };
+
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
-            if (context.Player == null) return null;
-            var result = new ModelContainer() { TypePacket = ResponseTypePackage };
-            result.Packet = exchengeInfo((ModelExchengeInfo)request.Packet, context);
+            if (context?.Player == null || request?.Packet == null) return null;
+
+            var result = new ModelContainer { TypePacket = ResponseTypePackage };
+            result.Packet = exchengeInfo(request.Packet as ModelExchengeInfo, context);
             return result;
         }
 
         private ModelExchengeInfo exchengeInfo(ModelExchengeInfo request, ServiceContext context)
         {
+            if (request == null || context?.Player == null)
+            {
+                return ErrorResponse;
+            }
+
             try
             {
                 lock (context.Player)
                 {
                     var data = Repository.GetData;
+                    if (data?.OrderOperator == null)
+                    {
+                        return ErrorResponse;
+                    }
+
                     lock (data)
                     {
                         switch (request.Request)
                         {
                             case ModelExchengeInfoRequest.GetCountThing:
                                 {
+                                    if (request.Thing == null)
+                                    {
+                                        return ErrorResponse;
+                                    }
+
                                     var count = data.OrderOperator.CountThingDef(context.Player, request.Thing);
 
-                                    return new ModelExchengeInfo()
+                                    return new ModelExchengeInfo
                                     {
                                         Result = count,
                                         Status = 0,
@@ -44,11 +67,7 @@ namespace ServerOnlineCity.Services
                                 }
                             default:
                                 {
-                                    return new ModelExchengeInfo()
-                                    {
-                                        Status = 1,
-                                        Message = null
-                                    };
+                                    return ErrorResponse;
                                 }
                         }
                     }
@@ -57,12 +76,7 @@ namespace ServerOnlineCity.Services
             catch (Exception exp)
             {
                 ExceptionUtil.ExceptionLog(exp, "Server ExchengeInfo login=" + context?.Player?.Public?.Login);
-
-                return new ModelExchengeInfo()
-                {
-                    Status = 1,
-                    Message = null
-                };
+                return ErrorResponse;
             }
         }
     }
