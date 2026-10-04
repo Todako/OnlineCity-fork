@@ -1,17 +1,31 @@
 ﻿using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
-using System.Linq;
+using System;
+using System.Collections.Generic;
 using Transfer;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Services
 {
-
     internal sealed class GetPlayerInfoExtended : IGenerateResponseContainer
     {
         public int RequestTypePackage => (int)PackageType.Request55PlayerInfoExtended;
 
         public int ResponseTypePackage => (int)PackageType.Response56PlayerInfoExtended;
+
+        private readonly struct IncidentSortEntry
+        {
+            public readonly long Sort;
+            public readonly FMailIncident Mail;
+
+            public IncidentSortEntry(long sort, FMailIncident mail)
+            {
+                Sort = sort;
+                Mail = mail;
+            }
+        }
+
+        private static readonly Comparison<IncidentSortEntry> IncidentComparer = (a, b) => a.Sort.CompareTo(b.Sort);
 
         public ModelContainer GenerateModelContainer(ModelContainer request, ServiceContext context)
         {
@@ -23,48 +37,88 @@ namespace ServerOnlineCity.Services
 
         private ModelPlayerInfoExtended getPlayerInfoExtended(ModelName packet, ServiceContext context)
         {
+            if (string.IsNullOrEmpty(packet?.Value)) return new ModelPlayerInfoExtended();
+
             var player = Repository.GetPlayerByLogin(packet.Value);
             if (player == null) return new ModelPlayerInfoExtended();
 
             var result = new ModelPlayerInfoExtended();
             lock (player)
             {
-                result.ColonistsCount = player.GameProgressLast?.ColonistsCount ?? 0;
-                result.ColonistsNeedingTend = player.GameProgressLast?.ColonistsNeedingTend ?? 0;
-                result.ColonistsDownCount = player.GameProgressLast?.ColonistsDownCount ?? 0;
-                result.AnimalObedienceCount = player.GameProgressLast?.AnimalObedienceCount ?? 0;
-                result.ExistsEnemyPawns = player.GameProgressLast?.ExistsEnemyPawns ?? false;
+                var gameProgress = player.GameProgressLast;
+                result.ColonistsCount = gameProgress?.ColonistsCount ?? 0;
+                result.ColonistsNeedingTend = gameProgress?.ColonistsNeedingTend ?? 0;
+                result.ColonistsDownCount = gameProgress?.ColonistsDownCount ?? 0;
+                result.AnimalObedienceCount = gameProgress?.AnimalObedienceCount ?? 0;
+                result.ExistsEnemyPawns = gameProgress?.ExistsEnemyPawns ?? false;
 
-                result.MaxSkills = player.GameProgressLast?.Pawns?.FirstOrDefault()?.Skills?.ToList();
-                if (result.MaxSkills != null)
+                // ОПТИМІЗАЦІЯ: швидкий розрахунок пікових навичок без LINQ
+                var pawns = gameProgress?.Pawns;
+                if (pawns != null && pawns.Count > 0 && pawns[0]?.Skills != null)
                 {
-                    foreach (var pawn in player.GameProgressLast.Pawns)
+                    var maxSkills = new List<int>(pawns[0].Skills);
+                    for (int pIdx = 1; pIdx < pawns.Count; pIdx++)
                     {
-                        for (int i = 0; i < pawn.Skills.Count; i++)
-                            if (result.MaxSkills[i] < pawn.Skills[i]) result.MaxSkills[i] = pawn.Skills[i];
+                        var skills = pawns[pIdx]?.Skills;
+                        if (skills == null) continue;
+
+                        int count = Math.Min(maxSkills.Count, skills.Count);
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (maxSkills[i] < skills[i]) maxSkills[i] = skills[i];
+                        }
                     }
+                    result.MaxSkills = maxSkills;
                 }
 
                 result.MarketValueHistory = player.MarketValueHistory;
-                result.RankingCount = Repository.GetData.PlayersRanking.Count;
+                result.RankingCount = Repository.GetData?.PlayersRanking?.Count ?? 0;
                 result.MarketValueRanking = player.MarketValueRanking;
                 result.MarketValueRankingLast = player.MarketValueRankingLast;
 
-                result.FunctionMailsView = player.FunctionMails
-                    .Where(m => m is FMailIncident)
-                    .Cast<FMailIncident>()
-                    .Select((m, index) => new { sort = m.NumberOrder * 1000000 + index, mi = m })
-                    .OrderBy(a => a.sort)
-                    .Select(a => a.mi)
-                    .Select(m => new ModelMailStartIncident()
-                    {
-                        AlreadyStart = m.AlreadyStart,
-                        IncidentType = m.Mail.IncidentType,
-                        IncidentMult = m.Mail.IncidentMult,
-                        PlaceServerId = m.Mail.PlaceServerId,
-                    })
-                    .ToList();
+                // ОПТИМІЗАЦІЯ: сортування інцидентів без виділення анонімних класів та ітераторів LINQ
+                var fMails = player.FunctionMails;
+                if (fMails != null && fMails.Count > 0)
+                {
+                    var incidentList = new List<IncidentSortEntry>(fMails.Count);
+                    int incidentIndex = 0;
 
+                    for (int i = 0; i < fMails.Count; i++)
+                    {
+                        if (fMails[i] is FMailIncident mi && mi.Mail != null)
+                        {
+                            long sortKey = (long)mi.NumberOrder * 1000000L + incidentIndex++;
+                            incidentList.Add(new IncidentSortEntry(sortKey, mi));
+                        }
+                    }
+
+                    if (incidentList.Count > 0)
+                    {
+                        incidentList.Sort(IncidentComparer);
+
+                        var mailsView = new List<ModelMailStartIncident>(incidentList.Count);
+                        for (int i = 0; i < incidentList.Count; i++)
+                        {
+                            var mi = incidentList[i].Mail;
+                            mailsView.Add(new ModelMailStartIncident
+                            {
+                                AlreadyStart = mi.AlreadyStart,
+                                IncidentType = mi.Mail.IncidentType,
+                                IncidentMult = mi.Mail.IncidentMult,
+                                PlaceServerId = mi.Mail.PlaceServerId,
+                            });
+                        }
+                        result.FunctionMailsView = mailsView;
+                    }
+                    else
+                    {
+                        result.FunctionMailsView = new List<ModelMailStartIncident>(0);
+                    }
+                }
+                else
+                {
+                    result.FunctionMailsView = new List<ModelMailStartIncident>(0);
+                }
             }
             return result;
         }
