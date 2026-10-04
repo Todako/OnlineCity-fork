@@ -2,7 +2,6 @@
 using OCUnion;
 using OCUnion.Transfer.Model;
 using ServerOnlineCity.Model;
-using System.Linq;
 using Transfer;
 
 namespace ServerOnlineCity.Services
@@ -23,24 +22,42 @@ namespace ServerOnlineCity.Services
 
         private ModelStatus exchengeStorage(ModelExchengeStorage diff, ServiceContext context)
         {
+            if (diff == null)
+            {
+                return new ModelStatus
+                {
+                    Status = 1,
+                    Message = "Invalid request data"
+                };
+            }
+
             lock (context.Player)
             {
                 var data = Repository.GetData;
 
                 lock (data)
                 {
-                    if ((diff.AddThings?.Count ?? 0) > 0)
+                    var addThings = diff.AddThings;
+                    if (addThings != null && addThings.Count > 0)
                     {
-                        data.OrderOperator.SendToStorage(diff.Tile, context.Player, diff.AddThings);
+                        data.OrderOperator.SendToStorage(diff.Tile, context.Player, addThings);
                         Repository.Get.ChangeData = true;
                     }
 
-                    if ((diff.DeleteThings?.Count ?? 0) > 0)
+                    var deleteThings = diff.DeleteThings;
+                    if (deleteThings != null && deleteThings.Count > 0)
                     {
                         if (diff.TileTo != 0 && diff.Cost > 0 && diff.Dist > 0
                             && diff.Cost > context.Player.CashlessBalance)
                         {
-                            Loger.Log($"Server exchengeStorage CargoDelivery tile {diff.Tile} to {diff.TileTo} cost={diff.Cost} dist={diff.Dist} costThings=" + diff.DeleteThings.Sum(t => t.GameCost * t.Count), Loger.LogLevel.EXCHANGE);
+                            long costThings = 0;
+                            for (int i = 0; i < deleteThings.Count; i++)
+                            {
+                                var t = deleteThings[i];
+                                costThings += (long)t.GameCost * t.Count;
+                            }
+
+                            Loger.Log($"Server exchengeStorage CargoDelivery tile {diff.Tile} to {diff.TileTo} cost={diff.Cost} dist={diff.Dist} costThings={costThings}", Loger.LogLevel.EXCHANGE);
                             return new ModelStatus()
                             {
                                 Status = 1,
@@ -48,11 +65,12 @@ namespace ServerOnlineCity.Services
                             };
                         }
 
-                        if (data.OrderOperator.GetFromStorage(diff.Tile, context.Player, diff.DeleteThings) == null)
+                        if (data.OrderOperator.GetFromStorage(diff.Tile, context.Player, deleteThings) == null)
                         {
-                            //только для логов:
+                            // Безпечне логування стану сховища
                             var storage = data.OrderOperator.GetStorage(diff.Tile, context.Player.Public, false);
-                            Loger.Log($"Server exchengeStorage Operation not possible! storage=" + storage.Things.ToStringThing(), Loger.LogLevel.EXCHANGE);
+                            var storageStr = storage?.Things?.ToStringThing() ?? "null";
+                            Loger.Log($"Server exchengeStorage Operation not possible! storage={storageStr}", Loger.LogLevel.EXCHANGE);
 
                             return new ModelStatus()
                             {
@@ -64,7 +82,7 @@ namespace ServerOnlineCity.Services
                         {
                             if (diff.TileTo != 0 && diff.Cost > 0 && diff.Dist > 0)
                             {
-                                data.OrderOperator.SendToStorage(diff.TileTo, context.Player, diff.DeleteThings);
+                                data.OrderOperator.SendToStorage(diff.TileTo, context.Player, deleteThings);
                                 context.Player.CashlessBalance -= diff.Cost;
                             }
                         }
