@@ -18,6 +18,11 @@ namespace RimWorldOnlineCity.ClientHashCheck
     /// </summary>
     public class ClientFileChecker
     {
+        private static readonly List<string> EmptyIgnoreFolders = new List<string>(0);
+        private static readonly List<string> ModsIgnoreFolders = new List<string>(1) { "mods" };
+        private static readonly string IgnoreModsPath = "mods\\".NormalizePath();
+        private static readonly string IgnoreModsSubPath = ("\\" + "mods\\".NormalizePath()).NormalizePath();
+
         public FolderCheck Folder { get; }
         public string FolderPath { get; }
 
@@ -140,6 +145,8 @@ namespace RimWorldOnlineCity.ClientHashCheck
                     foreach (var kvp in cache)
                     {
                         var entry = kvp.Value;
+                        if (entry?.Hash == null || entry.RelativePath == null) continue;
+
                         writer.Write(entry.RelativePath);
                         writer.Write(entry.LastWriteTimeUtcTicks);
                         writer.Write(entry.FileSize);
@@ -159,8 +166,8 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
         /// <summary>
         /// Головна процедура швидкого розрахунку хешів.
-        /// ОПТИМІЗАЦІЯ: метадані файлів читаються під час сканування директорій без створення десятків тисяч FileInfo.
-        /// Розрахунок SHA-512 пулиться по робочих потоках.
+        /// ОПТИМІЗАЦІЯ: метадані файлів читаються потоково без створення десятків тисяч FileInfo.
+        /// Розрахунок SHA-512 пулиться по робочих потоках з SequentialScan.
         /// </summary>
         public void CalculateHash()
         {
@@ -180,7 +187,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
             var cacheDirty = false;
 
             var candidateFiles = new List<CandidateFileInfo>(4096);
-            var ignoreFolders = FolderType != FolderType.GamePath ? new List<string>(0) : new List<string> { "mods" };
+            var ignoreFolders = FolderType != FolderType.GamePath ? EmptyIgnoreFolders : ModsIgnoreFolders;
 
             var rootPrefixLen = FolderPath.Length;
             if (!FolderPath.EndsWith("\\") && !FolderPath.EndsWith("/")) rootPrefixLen++;
@@ -190,31 +197,33 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
             var resultList = new List<ModelFileInfo>(candidateFiles.Count);
             var misses = new List<CandidateFileInfo>();
-            var visitedRelPaths = new HashSet<string>(candidateFiles.Count, StringComparer.OrdinalIgnoreCase);
 
-            string ignoreModsPath = null;
-            string ignoreModsSubPath = null;
-            if (FolderType == FolderType.GamePath)
+            HashSet<string> visitedRelPaths = null;
+            if (cache.Count > 0)
             {
-                ignoreModsPath = "mods\\".NormalizePath();
-                ignoreModsSubPath = ("\\" + ignoreModsPath).NormalizePath();
+                visitedRelPaths = new HashSet<string>(candidateFiles.Count, StringComparer.OrdinalIgnoreCase);
             }
+
+            bool isGamePath = FolderType == FolderType.GamePath;
 
             for (int i = 0; i < candidateFiles.Count; i++)
             {
                 var file = candidateFiles[i];
                 var relPath = file.RelPath;
 
-                if (ignoreModsPath != null)
+                if (isGamePath)
                 {
-                    if (relPath.StartsWith(ignoreModsPath, StringComparison.OrdinalIgnoreCase)
-                        || relPath.IndexOf(ignoreModsSubPath, StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (relPath.StartsWith(IgnoreModsPath, StringComparison.OrdinalIgnoreCase)
+                        || relPath.IndexOf(IgnoreModsSubPath, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         continue;
                     }
                 }
 
-                visitedRelPaths.Add(relPath);
+                if (visitedRelPaths != null)
+                {
+                    visitedRelPaths.Add(relPath);
+                }
 
                 if (cache.TryGetValue(relPath, out var cached)
                     && cached.LastWriteTimeUtcTicks == file.LastWriteTimeUtcTicks
@@ -235,75 +244,124 @@ namespace RimWorldOnlineCity.ClientHashCheck
                 }
             }
 
-            // ОПТИМІЗАЦІЯ: пул SHA-512 (1 екземпляр на потік процесора)
+            // Розрахунок відсутніх або змінених хешів
             if (misses.Count > 0)
             {
                 cacheDirty = true;
-                var newHashed = new ConcurrentBag<(ModelFileInfo Mfi, FileHashCacheEntry Entry)>();
 
-                Parallel.ForEach(
-                    misses,
-                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-                    () => SHA512.Create(),
-                    (item, loopState, sha) =>
+                if (misses.Count < 4)
+                {
+                    using (var sha = SHA512.Create())
                     {
-                        try
+                        for (int i = 0; i < misses.Count; i++)
                         {
-                            using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
+                            var item = misses[i];
+                            try
                             {
-                                var hash = sha.ComputeHash(stream);
-                                var size = stream.Length;
-
-                                var mfi = new ModelFileInfo
+                                using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan))
                                 {
-                                    FileName = item.RelPath,
-                                    Hash = hash,
-                                    Size = size
-                                };
+                                    var hash = sha.ComputeHash(stream);
+                                    var size = stream.Length;
 
-                                var entry = new FileHashCacheEntry
-                                {
-                                    RelativePath = item.RelPath,
-                                    LastWriteTimeUtcTicks = item.LastWriteTimeUtcTicks,
-                                    FileSize = size,
-                                    Hash = hash
-                                };
+                                    var mfi = new ModelFileInfo
+                                    {
+                                        FileName = item.RelPath,
+                                        Hash = hash,
+                                        Size = size
+                                    };
 
-                                newHashed.Add((mfi, entry));
+                                    var entry = new FileHashCacheEntry
+                                    {
+                                        RelativePath = item.RelPath,
+                                        LastWriteTimeUtcTicks = item.LastWriteTimeUtcTicks,
+                                        FileSize = size,
+                                        Hash = hash
+                                    };
+
+                                    resultList.Add(mfi);
+                                    cache[item.RelPath] = entry;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Loger.Log($"Error hashing file {item.FullPath}: {ex.Message}", Loger.LogLevel.WARNING);
                             }
                         }
-                        catch (Exception ex)
+                    }
+                }
+                else
+                {
+                    var newHashed = new ConcurrentBag<(ModelFileInfo Mfi, FileHashCacheEntry Entry)>();
+
+                    Parallel.ForEach(
+                        misses,
+                        new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
+                        () => SHA512.Create(),
+                        (item, loopState, sha) =>
                         {
-                            Loger.Log($"Error hashing file {item.FullPath}: {ex.Message}", Loger.LogLevel.WARNING);
-                        }
+                            try
+                            {
+                                using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan))
+                                {
+                                    var hash = sha.ComputeHash(stream);
+                                    var size = stream.Length;
 
-                        return sha;
-                    },
-                    sha => sha?.Dispose()
-                );
+                                    var mfi = new ModelFileInfo
+                                    {
+                                        FileName = item.RelPath,
+                                        Hash = hash,
+                                        Size = size
+                                    };
 
-                foreach (var pair in newHashed)
-                {
-                    resultList.Add(pair.Mfi);
-                    cache[pair.Entry.RelativePath] = pair.Entry;
+                                    var entry = new FileHashCacheEntry
+                                    {
+                                        RelativePath = item.RelPath,
+                                        LastWriteTimeUtcTicks = item.LastWriteTimeUtcTicks,
+                                        FileSize = size,
+                                        Hash = hash
+                                    };
+
+                                    newHashed.Add((mfi, entry));
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Loger.Log($"Error hashing file {item.FullPath}: {ex.Message}", Loger.LogLevel.WARNING);
+                            }
+
+                            return sha;
+                        },
+                        sha => sha?.Dispose()
+                    );
+
+                    foreach (var pair in newHashed)
+                    {
+                        resultList.Add(pair.Mfi);
+                        cache[pair.Entry.RelativePath] = pair.Entry;
+                    }
                 }
             }
 
-            var removedKeys = new List<string>();
-            foreach (var key in cache.Keys)
+            // Очищення видалених файлів з кешу
+            if (cache.Count > 0 && visitedRelPaths != null)
             {
-                if (!visitedRelPaths.Contains(key))
+                List<string> removedKeys = null;
+                foreach (var key in cache.Keys)
                 {
-                    removedKeys.Add(key);
+                    if (!visitedRelPaths.Contains(key))
+                    {
+                        if (removedKeys == null) removedKeys = new List<string>();
+                        removedKeys.Add(key);
+                    }
                 }
-            }
 
-            if (removedKeys.Count > 0)
-            {
-                cacheDirty = true;
-                for (int i = 0; i < removedKeys.Count; i++)
+                if (removedKeys != null && removedKeys.Count > 0)
                 {
-                    cache.Remove(removedKeys[i]);
+                    cacheDirty = true;
+                    for (int i = 0; i < removedKeys.Count; i++)
+                    {
+                        cache.Remove(removedKeys[i]);
+                    }
                 }
             }
 
@@ -332,10 +390,11 @@ namespace RimWorldOnlineCity.ClientHashCheck
             {
                 var cacheFilePath = GetCacheFilePath();
                 var cache = LoadCache(cacheFilePath);
-                var fileDict = new Dictionary<string, ModelFileInfo>(StringComparer.OrdinalIgnoreCase);
 
-                if (FilesHash != null)
+                Dictionary<string, ModelFileInfo> fileDict = null;
+                if (FilesHash != null && fileNames.Count > 4)
                 {
+                    fileDict = new Dictionary<string, ModelFileInfo>(FilesHash.Count, StringComparer.OrdinalIgnoreCase);
                     for (int i = 0; i < FilesHash.Count; i++)
                     {
                         if (FilesHash[i]?.FileName != null)
@@ -347,10 +406,31 @@ namespace RimWorldOnlineCity.ClientHashCheck
                 foreach (var fileName in fileNames)
                 {
                     var normRel = fileName.NormalizePath();
-                    if (normRel.StartsWith("\\") || normRel.StartsWith("/")) normRel = normRel.Substring(1);
+                    if (normRel.Length > 0 && (normRel[0] == '\\' || normRel[0] == '/'))
+                    {
+                        normRel = normRel.Substring(1);
+                    }
 
                     var fullPath = Path.Combine(FolderPath, normRel);
-                    if (File.Exists(fullPath) && fileDict.TryGetValue(normRel, out var mfi) && mfi.Hash != null)
+                    ModelFileInfo mfi = null;
+
+                    if (fileDict != null)
+                    {
+                        fileDict.TryGetValue(normRel, out mfi);
+                    }
+                    else if (FilesHash != null)
+                    {
+                        for (int j = 0; j < FilesHash.Count; j++)
+                        {
+                            if (string.Equals(FilesHash[j]?.FileName, normRel, StringComparison.OrdinalIgnoreCase))
+                            {
+                                mfi = FilesHash[j];
+                                break;
+                            }
+                        }
+                    }
+
+                    if (File.Exists(fullPath) && mfi != null && mfi.Hash != null)
                     {
                         var fi = new FileInfo(fullPath);
                         cache[normRel] = new FileHashCacheEntry
@@ -380,7 +460,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
         }
 
         /// <summary>
-        /// Швидкий рекурсивний збір файлів з одночасним зчитуванням метаданих з дескриптора каталогу.
+        /// Швидкий рекурсивний збір файлів за допомогою потокових ітераторів EnumerateFiles.
         /// </summary>
         private static void CollectFilesRecursiveFast(
             DirectoryInfo currentDir,
@@ -392,18 +472,18 @@ namespace RimWorldOnlineCity.ClientHashCheck
         {
             try
             {
-                var files = currentDir.GetFiles();
-                for (int i = 0; i < files.Length; i++)
+                foreach (var fi in currentDir.EnumerateFiles())
                 {
-                    var fi = files[i];
                     if (ApproveFileName(fi.Name))
                     {
                         var fullPath = fi.FullName;
-                        var relPath = fullPath.Substring(rootPrefixLen).NormalizePath();
-                        if (relPath.Length > 0 && (relPath[0] == '\\' || relPath[0] == '/'))
+                        int start = rootPrefixLen;
+                        while (start < fullPath.Length && (fullPath[start] == '\\' || fullPath[start] == '/'))
                         {
-                            relPath = relPath.Substring(1);
+                            start++;
                         }
+
+                        var relPath = (start < fullPath.Length ? fullPath.Substring(start) : string.Empty).NormalizePath();
 
                         collectedFiles.Add(new CandidateFileInfo(fullPath, relPath, fi.LastWriteTimeUtc.Ticks, fi.Length));
                     }
@@ -413,20 +493,24 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
             try
             {
-                var subDirs = currentDir.GetDirectories();
                 var isRoot = string.Equals(currentDir.FullName, rootDir, StringComparison.OrdinalIgnoreCase);
+                int dirIndex = 0;
 
-                for (int i = 0; i < subDirs.Length; i++)
+                foreach (var dir in currentDir.EnumerateDirectories())
                 {
-                    var dir = subDirs[i];
-                    if (FileChecker.IsIgnoreFolder(dir.FullName, ignoreFolders)) continue;
+                    if (FileChecker.IsIgnoreFolder(dir.FullName, ignoreFolders))
+                    {
+                        dirIndex++;
+                        continue;
+                    }
 
                     if (isRoot)
                     {
-                        onFolderChange?.Invoke(dir.FullName, i);
+                        onFolderChange?.Invoke(dir.FullName, dirIndex);
                     }
 
                     CollectFilesRecursiveFast(dir, rootDir, rootPrefixLen, ignoreFolders, collectedFiles, onFolderChange);
+                    dirIndex++;
                 }
             }
             catch { }
@@ -434,6 +518,8 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
         private static bool ApproveFileName(string fileName)
         {
+            if (fileName.IndexOf('.') < 0) return true;
+
             var ignored = FileChecker.IgnoredModFiles;
             for (int i = 0; i < ignored.Count; i++)
             {
