@@ -17,9 +17,9 @@ Build your own colony, develop it, and interact with other players. Keep an eye 
 **OnlineCity works with RimWorld versions 1.1–1.4.**
 
 To play, install **Harmony → Core → HugsLib → OnlineCity**.
-OnlineCity is compatible with most mods, but the specific set of mods supported may vary by server.
+OnlineCity is compatible with most mods, but the specific set of mods supported may vary by server. Definitely not compatible with the following mods: Save Our Ship 2 (SoS2) and RimWorld Multiplayer (Zetrith).
 
-**Synchronization** with the server occurs every 5 seconds, and a full save takes place every 15 minutes or when you exit via the menu.
+**Synchronization** with the server occurs every 5 seconds, and a full save takes place every 10 minutes or when you exit via the menu.
 Do not close the game by clicking the X button to avoid losing your progress since the last save.
 
 Good to know:
@@ -33,9 +33,9 @@ Good to know:
 **OnlineCity працює з RimWorld 1.1–1.4.**
 
 Для гри встановіть **Harmony → Core → HugsLib → OnlineCity**.
-OnlineCity сумісний із більшістю модів, але їхній набір може залежати від сервера.
+OnlineCity сумісний із більшістю модів, але їхній набір може залежати від сервера. Точно не сумісний з модами: Save Our Ship 2 (SoS2) та RimWorld Multiplayer (Zetrith).
 
-**Синхронізація** з сервером відбувається кожні 5 секунд, а повне збереження — кожні 15 хвилин або під час виходу через меню.
+**Синхронізація** з сервером відбувається кожні 5 секунд, а повне збереження — кожні 10 хвилин або під час виходу через меню.
 Не закривайте гру хрестиком щоб не втратити прогрес після останнього збереження.
 
 Корисно знати:
@@ -47,13 +47,12 @@ OnlineCity сумісний із більшістю модів, але їхні�
 
 
 # Information for Developers
-Projects
-* **Chat** — Authentication and communication in the general chat.
+Projects:
 * **Converter** — Conversion of world saves for newer versions.
 * **RimWorldOnlineCity** — The main mod library for the game.
-* **ServerConsole** — a shell for launching the server.
-* **ServerDll** — the server component that accepts player connections.
-* **UnionDll** — shared code and models for the client and server.
+* **DiscordChatBotServer** — A background service for integrating chat and server commands with Discord.
+* **Server** — the server component that accepts player connections.
+* **UnionDll (OCUnion)** — shared code and models for the client and server.
 
 Build
 The project is built into the **Build** folder, which is located next to **Source**. The `Source` folder must remain in the root of the repository, since the files for the build are taken from there.
@@ -68,13 +67,12 @@ Where to start:
 * **Dialog_MainOnlineCity.cs** — the main OnlineCity window and user interaction.
 
 # Інформація для розробників
-Проєкти
-* **Chat** — авторизація та спілкування в загальному чаті.
+Проєкти:
 * **Converter** — конвертація збережень світу для новіших версій.
 * **RimWorldOnlineCity** — основна бібліотека мода для гри.
-* **ServerConsole** — оболонка для запуску сервера.
-* **ServerDll** — серверна частина, що приймає підключення гравців.
-* **UnionDll** — спільний код і моделі для клієнта та сервера.
+* **DiscordChatBotServer** — фоновий сервіс для зв'язку чату та команд сервера з Discord.
+* **Server** — серверна частина, що приймає підключення гравців.
+* **UnionDll (OCUnion)** — спільний код і моделі для клієнта та сервера.
 
 Збірка
 Проєкт збирається у папку **Build**, яка знаходиться поруч із **Source**. Папка `Source` має залишатися в корені репозиторію, оскільки файли для збірки беруться саме звідти.
@@ -209,7 +207,7 @@ Once connected, `InitConnected` is triggered:
   * `SendToServer` sends changes to the planet to the server.
   * `LoadFromServer` retrieves the latest data about the world and other players.
 
-* **Every 15 minutes — save `BackgroundSaveGame()`**
+* **Every 10 minutes — save `BackgroundSaveGame()`**
   * `SaveGame` is executed, and the resulting save file is sent to the server during the next world synchronization.
 
 ### Циклічні події під час гри
@@ -222,5 +220,5 @@ Once connected, `InitConnected` is triggered:
   * `SendToServer` передає на сервер зміни планети.
   * `LoadFromServer` отримує актуальні дані про світ та інших гравців.
 
-* **Кожні 15 хвилин — збереження `BackgroundSaveGame()`**
+* **Кожні 10 хвилин — збереження `BackgroundSaveGame()`**
   * Виконується `SaveGame`, а отримане збереження передається на сервер під час наступної синхронізації світу.
