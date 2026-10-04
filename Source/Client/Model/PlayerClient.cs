@@ -9,13 +9,26 @@ namespace RimWorldOnlineCity
 {
     public class PlayerClient : IPlayerEx
     {
+        private const long CacheDurationTicks = 5L * TimeSpan.TicksPerSecond;
+
         public Player Public { get; set; }
 
-        public bool Online =>
-            Public.LastOnlineTime == DateTime.MinValue ? Public.LastSaveTime > DateTime.UtcNow.AddMinutes(-17) :
-            Public.LastOnlineTime > (DateTime.UtcNow + SessionClientController.Data.ServetTimeDelta).AddSeconds(-10);
+        public bool Online
+        {
+            get
+            {
+                if (Public == null) return false;
+                var now = DateTime.UtcNow;
+                if (Public.LastOnlineTime == DateTime.MinValue)
+                {
+                    return Public.LastSaveTime > now.AddMinutes(-17);
+                }
+                var serverTimeDelta = SessionClientController.Data != null ? SessionClientController.Data.ServetTimeDelta : TimeSpan.Zero;
+                return Public.LastOnlineTime > (now + serverTimeDelta).AddSeconds(-10);
+            }
+        }
 
-        public int MinutesIntervalBetweenPVP => SessionClientController.Data.MinutesIntervalBetweenPVP;
+        public int MinutesIntervalBetweenPVP => SessionClientController.Data != null ? SessionClientController.Data.MinutesIntervalBetweenPVP : 0;
 
         public List<CaravanOnline> WObjects;
 
@@ -24,13 +37,14 @@ namespace RimWorldOnlineCity
             UpdateTextInfoCalc();
             return TextInfo;
         }
+
         private string TextInfo = "";
         private string TextInfoExtended = "";
-        private DateTime TextInfoTime = DateTime.MinValue;
+        private long _textInfoTicks = 0;
 
         public PlayerClient Refrash()
         {
-            if (Public?.Login != null && SessionClientController.Data.Players.TryGetValue(Public.Login, out var player))
+            if (Public?.Login != null && SessionClientController.Data?.Players != null && SessionClientController.Data.Players.TryGetValue(Public.Login, out var player))
             {
                 return player;
             }
@@ -45,15 +59,17 @@ namespace RimWorldOnlineCity
 
         public WorldObjectsValues CostAllWorldObjects()
         {
-            if (AllWorldObjectsTime < DateTime.UtcNow.AddSeconds(-5))
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (nowTicks - _allWorldObjectsTicks > CacheDurationTicks)
             {
-                AllWorldObjectsTime = DateTime.UtcNow;
+                _allWorldObjectsTicks = nowTicks;
                 AllWorldObjects = CostWorldObjects();
             }
             return AllWorldObjects;
         }
+
         private WorldObjectsValues AllWorldObjects = null;
-        private DateTime AllWorldObjectsTime = DateTime.MinValue;
+        private long _allWorldObjectsTicks = 0;
 
         /// <summary>
         /// Розрахунок вартості з захистом від дублювання об'єктів за PlaceServerId.
@@ -65,7 +81,7 @@ namespace RimWorldOnlineCity
             {
                 var detailsSb = new StringBuilder(WObjects.Count * 64);
                 var detailsExtSb = new StringBuilder(WObjects.Count * 64);
-                var processedServerIds = new HashSet<long>();
+                var processedServerIds = new HashSet<long>(WObjects.Count);
 
                 for (int i = 0; i < WObjects.Count; i++)
                 {
@@ -105,27 +121,59 @@ namespace RimWorldOnlineCity
             return values;
         }
 
+        #region Статичне кешування локалізованих міток та шаблону
+        private static string _cachedTemplate;
+        private static string _cachedPositionLabel;
+        private static string _cachedInLabel;
+        private static string _cachedDiscordLabel;
+        private static string _cachedEmailLabel;
+        private static string _cachedAboutMyLabel;
+        private static string _cachedPvpInvolved;
+        private static string _cachedPvpNotInvolved;
+        private static TaggedString? _cachedLastSaveTimeNon;
+
+        private static string GetTemplate()
+        {
+            if (_cachedTemplate == null)
+            {
+                _cachedTemplate = "OCity_PlayerClient_LastTick".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_LastSaveTime".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_baseCount".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_caravanCount".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_marketValue".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_marketValuePawn".Translate() + Environment.NewLine
+                    + "OCity_PlayerClient_marketValueTrading".Translate();
+            }
+            return _cachedTemplate;
+        }
+        #endregion
+
         private void UpdateTextInfoCalc()
         {
-            if (TextInfoTime >= DateTime.UtcNow.AddSeconds(-5)) return;
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (nowTicks - _textInfoTicks < CacheDurationTicks) return;
+            if (Public == null) return;
 
             var sb = new StringBuilder(512);
             var sbExt = new StringBuilder(512);
 
             if (!string.IsNullOrEmpty(Public.StateName))
             {
+                if (_cachedInLabel == null) _cachedInLabel = "OC_PlayerClient_In".Translate().ToString();
+                if (_cachedPositionLabel == null) _cachedPositionLabel = "OC_PlayerClient_Position".Translate().ToString();
+
                 string statePos = string.IsNullOrEmpty(Public.StatePositionName)
                     ? string.Empty
-                    : " " + "OC_PlayerClient_Position".Translate().ToString() + " " + Public.StatePositionName;
+                    : " " + _cachedPositionLabel + " " + Public.StatePositionName;
 
-                sb.Append("OC_PlayerClient_In".Translate().ToString());
+                sb.Append(_cachedInLabel);
                 sb.Append(' ');
                 sb.Append(Public.StateName);
                 sb.Append(statePos);
                 sb.AppendLine();
 
                 sbExt.Append("<:world_map height=18:> ");
-                sbExt.Append("OC_PlayerClient_In".Translate().ToString());
+                sbExt.Append(_cachedInLabel);
                 sbExt.Append(" <@");
                 sbExt.Append(Public.StateName);
                 sbExt.Append('>');
@@ -133,53 +181,62 @@ namespace RimWorldOnlineCity
                 sbExt.AppendLine();
             }
 
-            var info2Sb = new StringBuilder(256);
-            if (SessionClientController.Data.GeneralSettings.EnablePVP)
+            // Додавання інформаційного блоку напряму без проміжного StringBuilder
+            if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.EnablePVP)
             {
-                info2Sb.AppendLine((Public.EnablePVP ? "OCity_PlayerClient_InvolvedInPVP".Translate() : "OCity_PlayerClient_NotInvolvedInPVP".Translate()).ToString());
+                if (_cachedPvpInvolved == null) _cachedPvpInvolved = "OCity_PlayerClient_InvolvedInPVP".Translate().ToString();
+                if (_cachedPvpNotInvolved == null) _cachedPvpNotInvolved = "OCity_PlayerClient_NotInvolvedInPVP".Translate().ToString();
+
+                string pvpStr = Public.EnablePVP ? _cachedPvpInvolved : _cachedPvpNotInvolved;
+                sb.AppendLine(pvpStr);
+                sbExt.AppendLine(pvpStr);
             }
 
             if (!string.IsNullOrEmpty(Public.DiscordUserName))
             {
-                info2Sb.Append("OCity_PlayerClient_Discord".Translate().ToString());
-                info2Sb.AppendLine(Public.DiscordUserName);
+                if (_cachedDiscordLabel == null) _cachedDiscordLabel = "OCity_PlayerClient_Discord".Translate().ToString();
+                sb.Append(_cachedDiscordLabel);
+                sb.AppendLine(Public.DiscordUserName);
+                sbExt.Append(_cachedDiscordLabel);
+                sbExt.AppendLine(Public.DiscordUserName);
             }
 
             if (!string.IsNullOrEmpty(Public.EMail))
             {
-                info2Sb.Append("OCity_PlayerClient_Email".Translate().ToString());
-                info2Sb.AppendLine(Public.EMail);
+                if (_cachedEmailLabel == null) _cachedEmailLabel = "OCity_PlayerClient_Email".Translate().ToString();
+                sb.Append(_cachedEmailLabel);
+                sb.AppendLine(Public.EMail);
+                sbExt.Append(_cachedEmailLabel);
+                sbExt.AppendLine(Public.EMail);
             }
 
             if (!string.IsNullOrEmpty(Public.AboutMyText))
             {
-                info2Sb.AppendLine("OCity_PlayerClient_AboutMyself".Translate().ToString());
-                info2Sb.AppendLine(Public.AboutMyText);
+                if (_cachedAboutMyLabel == null) _cachedAboutMyLabel = "OCity_PlayerClient_AboutMyself".Translate().ToString();
+                sb.AppendLine(_cachedAboutMyLabel);
+                sb.AppendLine(Public.AboutMyText);
+                sbExt.AppendLine(_cachedAboutMyLabel);
+                sbExt.AppendLine(Public.AboutMyText);
             }
-            info2Sb.AppendLine();
+            sb.AppendLine();
+            sbExt.AppendLine();
 
-            string info2 = info2Sb.ToString();
-            sb.Append(info2);
-            sbExt.Append(info2);
-
-            AllWorldObjectsTime = DateTime.UtcNow;
+            _allWorldObjectsTicks = nowTicks;
             AllWorldObjects = CostWorldObjects();
 
-            string s = "OCity_PlayerClient_LastTick".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_LastSaveTime".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_baseCount".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_caravanCount".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_marketValue".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_marketValuePawn".Translate() + Environment.NewLine
-                + "OCity_PlayerClient_marketValueTrading".Translate();
+            if (_cachedLastSaveTimeNon == null)
+            {
+                _cachedLastSaveTimeNon = "OCity_PlayerClient_LastSaveTimeNon".Translate();
+            }
 
             TaggedString lastSaveStr = Public.LastSaveTime == DateTime.MinValue
-                ? "OCity_PlayerClient_LastSaveTimeNon".Translate()
+                ? _cachedLastSaveTimeNon.Value
                 : new TaggedString(Public.LastSaveTime.ToGoodUtcString());
 
             float totalTrading = AllWorldObjects.MarketValueBalance + AllWorldObjects.MarketValueStorage;
+            string template = GetTemplate();
 
-            string info3 = s.Translate(
+            string info3 = template.Translate(
                 Public.LastTick / 3600000,
                 Public.LastTick / 60000,
                 lastSaveStr,
@@ -190,7 +247,7 @@ namespace RimWorldOnlineCity
                 totalTrading.ToStringMoney()
             ).ToString();
 
-            string info3Extended = s.Translate(
+            string info3Extended = template.Translate(
                 Public.LastTick / 3600000,
                 Public.LastTick / 60000,
                 lastSaveStr,
@@ -209,7 +266,7 @@ namespace RimWorldOnlineCity
 
             TextInfo = sb.ToString();
             TextInfoExtended = ChatController.PrepareShortTag(sbExt.ToString());
-            TextInfoTime = DateTime.UtcNow;
+            _textInfoTicks = DateTime.UtcNow.Ticks;
         }
     }
 }
