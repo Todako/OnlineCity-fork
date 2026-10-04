@@ -23,6 +23,7 @@ namespace ServerOnlineCity.Mechanics
 
         public ConcurrentDictionary<int, HashSet<TradeOrder>> OrdersByTile; // calc from Data.Orders
 
+        private readonly object _tradeSync = new object();
         private bool ImplementTradeCalcing = false;
 
         private ConcurrentDictionary<string, ConcurrentDictionary<int, TradeThingStorage>> CacheStorage =
@@ -49,7 +50,10 @@ namespace ServerOnlineCity.Mechanics
                     OrdersById.TryAdd(order.Id, order);
 
                     var set = OrdersByTile.GetOrAdd(order.Tile, _ => new HashSet<TradeOrder>());
-                    set.Add(order);
+                    lock (set)
+                    {
+                        set.Add(order);
+                    }
 
                     if (order.SellThings != null)
                     {
@@ -68,13 +72,20 @@ namespace ServerOnlineCity.Mechanics
 
         public bool OrderAdd(TradeOrder order)
         {
+            if (order == null || order.Owner == null) return false;
+
             if (GetFromStorage(order.Tile, order.Owner.GetPlayerServer(), order.SellThings, order.CountReady) == null) return false;
 
             order.Id = ChatManager.Instance.GetChatId();
             order.UpdateTime = DateTime.UtcNow;
             Data.Orders.Add(order);
             OrdersById.TryAdd(order.Id, order);
-            OrdersByTile.GetOrAdd(order.Tile, _ => new HashSet<TradeOrder>()).Add(order);
+
+            var set = OrdersByTile.GetOrAdd(order.Tile, _ => new HashSet<TradeOrder>());
+            lock (set)
+            {
+                set.Add(order);
+            }
 
             if (order.SellThings != null)
             {
@@ -103,14 +114,19 @@ namespace ServerOnlineCity.Mechanics
 
         public void OrderRemove(TradeOrder order)
         {
+            if (order == null) return;
+
             order.UpdateTime = DateTime.UtcNow;
             Data.Orders.Remove(order);
             OrdersById.TryRemove(order.Id, out _);
 
             if (OrdersByTile.TryGetValue(order.Tile, out var obt))
             {
-                obt.Remove(order);
-                if (obt.Count == 0) OrdersByTile.TryRemove(order.Tile, out _);
+                lock (obt)
+                {
+                    obt.Remove(order);
+                    if (obt.Count == 0) OrdersByTile.TryRemove(order.Tile, out _);
+                }
             }
 
             for (int i = 0; i < TradeWorldObjects.Count; i++)
@@ -124,19 +140,24 @@ namespace ServerOnlineCity.Mechanics
                 }
             }
 
-            // Переміщуємо речі до торгового сховища
-            if (order.SellThings != null)
+            // Повертаємо речі до торгового сховища лише якщо залишився невикуплений залишок
+            if (order.SellThings != null && order.CountReady > 0)
             {
                 for (int i = 0; i < order.SellThings.Count; i++)
                 {
-                    order.SellThings[i].Count *= order.CountReady;
+                    if (order.SellThings[i] != null)
+                    {
+                        order.SellThings[i].Count *= order.CountReady;
+                    }
                 }
-                SendToStorage(order.Tile, order.Owner.GetPlayerServer(), order.SellThings);
+                SendToStorage(order.Tile, order.Owner?.GetPlayerServer(), order.SellThings);
             }
         }
 
         public bool OrderUpdate(TradeOrder newOrder, TradeOrder oldOrder)
         {
+            if (newOrder == null || oldOrder == null) return false;
+
             var newThings = newOrder.SellThings.OrderByDescendingCost();
             var oldThings = oldOrder.SellThings.OrderByCost();
             var newThingsOrig = new List<ThingTrade>(newThings.Count);
@@ -176,7 +197,7 @@ namespace ServerOnlineCity.Mechanics
                 }
             }
 
-            var playerServer = oldOrder.Owner.GetPlayerServer();
+            var playerServer = oldOrder.Owner?.GetPlayerServer();
             if (newThingsOrig.Count > 0 && GetFromStorage(oldOrder.Tile, playerServer, newThingsOrig) == null) return false;
             if (oldThings.Count > 0) SendToStorage(oldOrder.Tile, playerServer, oldThings);
 
@@ -187,8 +208,11 @@ namespace ServerOnlineCity.Mechanics
             OrdersById[newOrder.Id] = newOrder;
             if (OrdersByTile.TryGetValue(newOrder.Tile, out var obt))
             {
-                obt.Remove(oldOrder);
-                obt.Add(newOrder);
+                lock (obt)
+                {
+                    obt.Remove(oldOrder);
+                    obt.Add(newOrder);
+                }
             }
 
             if (newOrder.SellThings != null)
@@ -264,13 +288,23 @@ namespace ServerOnlineCity.Mechanics
 
         public TradeThingStorage GetStorage(int tile, Player player, bool needAdd)
         {
+            if (player?.Login == null) return null;
+
             var dicPl = CacheStorage.GetOrAdd(player.Login, login =>
             {
                 var pl = Repository.GetPlayerByLogin(login);
-                var dict = new ConcurrentDictionary<int, TradeThingStorage>(Environment.ProcessorCount, Math.Max(8, pl.TradeThingStorages.Count));
-                for (int i = 0; i < pl.TradeThingStorages.Count; i++)
+                int count = pl?.TradeThingStorages?.Count ?? 0;
+                var dict = new ConcurrentDictionary<int, TradeThingStorage>(Environment.ProcessorCount, Math.Max(8, count));
+                if (pl?.TradeThingStorages != null)
                 {
-                    dict[pl.TradeThingStorages[i].Tile] = pl.TradeThingStorages[i];
+                    lock (pl.TradeThingStorages)
+                    {
+                        for (int i = 0; i < pl.TradeThingStorages.Count; i++)
+                        {
+                            var st = pl.TradeThingStorages[i];
+                            if (st != null) dict[st.Tile] = st;
+                        }
+                    }
                 }
                 return dict;
             });
@@ -290,7 +324,14 @@ namespace ServerOnlineCity.Mechanics
                         UpdateTime = DateTime.UtcNow
                     };
                     var pl = Repository.GetPlayerByLogin(player.Login);
-                    pl.TradeThingStorages.Add(ns);
+                    if (pl != null)
+                    {
+                        if (pl.TradeThingStorages == null) pl.TradeThingStorages = new List<TradeThingStorage>();
+                        lock (pl.TradeThingStorages)
+                        {
+                            pl.TradeThingStorages.Add(ns);
+                        }
+                    }
                     return ns;
                 });
             }
@@ -301,22 +342,32 @@ namespace ServerOnlineCity.Mechanics
 
         public void SendToStorage(int tile, PlayerServer player, List<ThingTrade> things)
         {
+            if (player?.Public == null || things == null || things.Count == 0) return;
+
             things = things.OrderByDescendingCost();
             if (things.Count == 0) return;
 
-            Loger.Log($"Server SendToStorage tile={tile} pl={player.Public.Login} things=" + things.ToStringLabel());
+            if (Loger.Enable)
+            {
+                Loger.Log($"Server SendToStorage tile={tile} pl={player.Public.Login} things=" + things.ToStringLabel());
+            }
 
             var storage = GetStorage(tile, player.Public, true);
+            if (storage == null) return;
+
             var storageRead = storage.Things.OrderByCost();
 
             for (int bi = 0; bi < things.Count; bi++)
             {
                 var thing = things[bi];
+                if (thing == null) continue;
+
                 if (thing.DefName == MainHelper.CashlessThingDefName)
                 {
                     player.CashlessBalance += thing.Count;
                     continue;
                 }
+
                 ThingTrade found = null;
                 for (int si = 0; si < storageRead.Count; si++)
                 {
@@ -340,7 +391,13 @@ namespace ServerOnlineCity.Mechanics
 
         public List<ThingTrade> GetFromStorage(int tile, PlayerServer player, List<ThingTrade> filter, int filterRate = 1)
         {
-            Loger.Log($"Server GetFromStorage tile={tile} pl={player.Public.Login} rate={filterRate} filter=" + filter?.ToStringThing());
+            if (player?.Public == null || filter == null || filter.Count == 0) return null;
+            if (filterRate <= 0) filterRate = 1;
+
+            if (Loger.Enable)
+            {
+                Loger.Log($"Server GetFromStorage tile={tile} pl={player.Public.Login} rate={filterRate} filter=" + filter.ToStringThing());
+            }
 
             filter = filter.OrderByDescendingCost();
             var storage = GetStorage(tile, player.Public, false);
@@ -354,6 +411,7 @@ namespace ServerOnlineCity.Mechanics
             for (int bi = 0; bi < filter.Count; bi++)
             {
                 var need = filter[bi];
+                if (need == null) continue;
                 var countSelected = 0;
 
                 if (need.DefName == MainHelper.CashlessThingDefName)
@@ -374,6 +432,7 @@ namespace ServerOnlineCity.Mechanics
                     for (int si = 0; si < storageRead.Count; si++)
                     {
                         var item = storageRead[si];
+                        if (item == null) continue;
 
                         if (!newCountStorage.TryGetValue(item, out var itemCount)) itemCount = item.Count;
                         if (itemCount == 0) continue;
@@ -446,7 +505,7 @@ namespace ServerOnlineCity.Mechanics
                         if (sellRepeat != 1 || buyRepeat != 1) continue;
 
                         var cnt = NOK(sell.Count, buy.Count);
-                        if (sellAllCount * sell.Count < cnt || buyAllCount * buy.Count < cnt) continue;
+                        if ((long)sellAllCount * sell.Count < cnt || (long)buyAllCount * buy.Count < cnt) continue;
 
                         sellRepeat = cnt / sell.Count;
                         buyRepeat = cnt / buy.Count;
@@ -478,9 +537,6 @@ namespace ServerOnlineCity.Mechanics
             return excess;
         }
 
-        /// <summary>
-        /// Швидкий НСД без виділення об'єктів BigInteger в купі.
-        /// </summary>
         public static int NOD(int a, int b)
         {
             a = Math.Abs(a);
@@ -494,9 +550,6 @@ namespace ServerOnlineCity.Mechanics
             return a == 0 ? 1 : a;
         }
 
-        /// <summary>
-        /// Швидкий НСК із захистом від переповнення.
-        /// </summary>
         public static int NOK(int a, int b)
         {
             if (a == 0 || b == 0) return 0;
@@ -519,143 +572,165 @@ namespace ServerOnlineCity.Mechanics
 
         private void ImplementTrade(TradeOrder o1)
         {
-            if (ImplementTradeCalcing) return;
-            ImplementTradeCalcing = true;
-            if (!OrdersByTile.TryGetValue(o1.Tile, out var to)) return;
+            if (o1 == null) return;
 
-            var tradeOrders = new List<TradeOrder>(to);
-            tradeOrders.Remove(o1);
-
-            ImplementSelectTrade best;
-            do
+            lock (_tradeSync)
             {
-                best = null;
-                for (int io = 0; io < tradeOrders.Count; io++)
+                if (ImplementTradeCalcing) return;
+                ImplementTradeCalcing = true;
+
+                try
                 {
-                    var o2 = tradeOrders[io];
-                    if (o1.SellThingsHash != o2.BuyThingsHash
-                        || o2.SellThingsHash != o1.BuyThingsHash) continue;
+                    if (!OrdersByTile.TryGetValue(o1.Tile, out var to) || to == null) return;
 
-                    int repeat1 = 1;
-                    int repeat2 = 1;
-                    var sellEnd1 = CompareListTrade(o1.SellThings, o2.BuyThings, ref repeat1, ref repeat2, o1.CountReady, o2.CountReady, out var thingsFor2);
-                    if (sellEnd1 == null) continue;
-                    var sellEnd2 = CompareListTrade(o2.SellThings, o1.BuyThings, ref repeat2, ref repeat1, o2.CountReady, o1.CountReady, out var thingsFor1);
-                    if (sellEnd2 == null) continue;
-
-                    var repeatRepeat = o1.CountReady / repeat1 < o2.CountReady / repeat2 ? o1.CountReady / repeat1 : o2.CountReady / repeat2;
-
-                    if (repeatRepeat > 1)
+                    List<TradeOrder> tradeOrders;
+                    lock (to)
                     {
-                        for (int k = 0; k < sellEnd1.Count; k++) sellEnd1[k].Count *= repeatRepeat;
-                        for (int k = 0; k < sellEnd2.Count; k++) sellEnd2[k].Count *= repeatRepeat;
-                        for (int k = 0; k < thingsFor1.Count; k++) thingsFor1[k].Count *= repeatRepeat;
-                        for (int k = 0; k < thingsFor2.Count; k++) thingsFor2[k].Count *= repeatRepeat;
+                        tradeOrders = new List<TradeOrder>(to);
                     }
+                    tradeOrders.Remove(o1);
 
-                    float cost = 0f;
-                    for (int k = 0; k < sellEnd1.Count; k++)
+                    ImplementSelectTrade best;
+                    do
                     {
-                        cost += sellEnd1[k].Count * sellEnd1[k].GameCost;
-                    }
+                        best = null;
+                        for (int io = 0; io < tradeOrders.Count; io++)
+                        {
+                            var o2 = tradeOrders[io];
+                            if (o2 == null) continue;
+                            if (o1.SellThingsHash != o2.BuyThingsHash
+                                || o2.SellThingsHash != o1.BuyThingsHash) continue;
 
-                    var that = new ImplementSelectTrade
-                    {
-                        Cost = cost,
-                        Count1 = repeat1 * repeatRepeat,
-                        Count2 = repeat2 * repeatRepeat,
-                        Order1 = o1,
-                        Order2 = o2,
-                        SellEnd1 = sellEnd1,
-                        SellEnd2 = sellEnd2,
-                        ThingsFor1 = thingsFor1,
-                        ThingsFor2 = thingsFor2
-                    };
+                            int repeat1 = 1;
+                            int repeat2 = 1;
+                            var sellEnd1 = CompareListTrade(o1.SellThings, o2.BuyThings, ref repeat1, ref repeat2, o1.CountReady, o2.CountReady, out var thingsFor2);
+                            if (sellEnd1 == null) continue;
+                            var sellEnd2 = CompareListTrade(o2.SellThings, o1.BuyThings, ref repeat2, ref repeat1, o2.CountReady, o1.CountReady, out var thingsFor1);
+                            if (sellEnd2 == null) continue;
 
-                    if (best == null || best.Cost < that.Cost) best = that;
+                            var repeatRepeat = o1.CountReady / repeat1 < o2.CountReady / repeat2 ? o1.CountReady / repeat1 : o2.CountReady / repeat2;
+
+                            if (repeatRepeat > 1)
+                            {
+                                for (int k = 0; k < sellEnd1.Count; k++) sellEnd1[k].Count *= repeatRepeat;
+                                for (int k = 0; k < sellEnd2.Count; k++) sellEnd2[k].Count *= repeatRepeat;
+                                for (int k = 0; k < thingsFor1.Count; k++) thingsFor1[k].Count *= repeatRepeat;
+                                for (int k = 0; k < thingsFor2.Count; k++) thingsFor2[k].Count *= repeatRepeat;
+                            }
+
+                            float cost = 0f;
+                            for (int k = 0; k < sellEnd1.Count; k++)
+                            {
+                                cost += sellEnd1[k].Count * sellEnd1[k].GameCost;
+                            }
+
+                            var that = new ImplementSelectTrade
+                            {
+                                Cost = cost,
+                                Count1 = repeat1 * repeatRepeat,
+                                Count2 = repeat2 * repeatRepeat,
+                                Order1 = o1,
+                                Order2 = o2,
+                                SellEnd1 = sellEnd1,
+                                SellEnd2 = sellEnd2,
+                                ThingsFor1 = thingsFor1,
+                                ThingsFor2 = thingsFor2
+                            };
+
+                            if (best == null || best.Cost < that.Cost) best = that;
+                        }
+
+                        if (best != null)
+                        {
+                            if (Loger.Enable)
+                            {
+                                Loger.Log("Server Trade! " + Environment.NewLine
+                                    + "trade x" + best.Count1 + " " + best.Order1.ToString() + Environment.NewLine
+                                    + "trade x" + best.Count2 + " " + best.Order2.ToString());
+                            }
+
+                            var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}";
+                            var msg1 = string.Format(msg0
+                                , best.Count1
+                                , best.Order1.CountReady == best.Count1 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order1.CountReady - best.Count1).ToString()
+                                , best.ThingsFor1.ToStringLabel());
+                            var msg2 = string.Format(msg0
+                                , best.Count2
+                                , best.Order2.CountReady == best.Count2 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order2.CountReady - best.Count2).ToString()
+                                , best.ThingsFor2.ToStringLabel());
+
+                            var playerServer1 = best.Order1.Owner?.GetPlayerServer();
+                            var playerServer2 = best.Order2.Owner?.GetPlayerServer();
+
+                            SendToStorage(o1.Tile, playerServer1, best.ThingsFor1);
+                            SendToStorage(o1.Tile, playerServer2, best.ThingsFor2);
+
+                            msg0 = "OC_ExchengeOperator_OrderClosedBetter";
+                            if (best.SellEnd1.Count > 0)
+                            {
+                                msg1 += Environment.NewLine + msg0 + best.SellEnd1.ToStringLabel();
+                                SendToStorage(o1.Tile, playerServer1, best.SellEnd1);
+                            }
+                            if (best.SellEnd2.Count > 0)
+                            {
+                                msg1 += Environment.NewLine + msg0 + best.SellEnd2.ToStringLabel();
+                                SendToStorage(o1.Tile, playerServer2, best.SellEnd2);
+                            }
+
+                            best.Order1.CountReady -= best.Count1;
+                            best.Order2.CountReady -= best.Count2;
+
+                            if (best.Order2.CountReady <= 0)
+                            {
+                                OrderRemove(best.Order2);
+                                tradeOrders.Remove(best.Order2);
+                            }
+                            if (best.Order1.CountReady <= 0)
+                            {
+                                OrderRemove(best.Order1);
+                                break;
+                            }
+
+                            var pl1 = best.Order1.Owner?.GetPlayerServer();
+                            var pl2 = best.Order2.Owner?.GetPlayerServer();
+
+                            HelperMailMessadge.Send(
+                                Repository.GetData.PlayerSystem,
+                                pl1,
+                                "OC_ExchengeOperator_OrderDone",
+                                msg1,
+                                ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                                best.Order1.Tile);
+
+                            HelperMailMessadge.Send(
+                                Repository.GetData.PlayerSystem,
+                                pl2,
+                                "OC_ExchengeOperator_OrderDone",
+                                msg2,
+                                ModelMailMessadge.MessadgeTypes.GoldenLetter,
+                                best.Order1.Tile);
+                        }
+                    } while (best != null);
                 }
-
-                if (best != null)
+                finally
                 {
-                    Loger.Log("Server Trade! " + Environment.NewLine
-                        + "trade x" + best.Count1 + " " + best.Order1.ToString() + Environment.NewLine
-                        + "trade x" + best.Count2 + " " + best.Order2.ToString());
-
-                    var msg0 = "OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}";
-                    var msg1 = string.Format(msg0
-                        , best.Count1
-                        , best.Order1.CountReady == best.Count1 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order1.CountReady - best.Count1).ToString()
-                        , best.ThingsFor1.ToStringLabel());
-                    var msg2 = string.Format(msg0
-                        , best.Count2
-                        , best.Order2.CountReady == best.Count2 ? "OC_ExchengeOperator_Closed" : "OC_ExchengeOperator_left" + (best.Order2.CountReady - best.Count2).ToString()
-                        , best.ThingsFor2.ToStringLabel());
-
-                    var playerServer1 = best.Order1.Owner.GetPlayerServer();
-                    var playerServer2 = best.Order2.Owner.GetPlayerServer();
-
-                    SendToStorage(o1.Tile, playerServer1, best.ThingsFor1);
-                    SendToStorage(o1.Tile, playerServer2, best.ThingsFor2);
-
-                    msg0 = "OC_ExchengeOperator_OrderClosedBetter";
-                    if (best.SellEnd1.Count > 0)
-                    {
-                        msg1 += Environment.NewLine + msg0 + best.SellEnd1.ToStringLabel();
-                        SendToStorage(o1.Tile, playerServer1, best.SellEnd1);
-                    }
-                    if (best.SellEnd2.Count > 0)
-                    {
-                        msg1 += Environment.NewLine + msg0 + best.SellEnd2.ToStringLabel();
-                        SendToStorage(o1.Tile, playerServer2, best.SellEnd2);
-                    }
-
-                    best.Order1.CountReady -= best.Count1;
-                    best.Order2.CountReady -= best.Count2;
-
-                    if (best.Order2.CountReady == 0)
-                    {
-                        OrderRemove(best.Order2);
-                        tradeOrders.Remove(best.Order2);
-                    }
-                    if (best.Order1.CountReady == 0)
-                    {
-                        OrderRemove(best.Order1);
-                        break;
-                    }
-
-                    var pl1 = best.Order1.Owner.GetPlayerServer();
-                    var pl2 = best.Order2.Owner.GetPlayerServer();
-
-                    HelperMailMessadge.Send(
-                        Repository.GetData.PlayerSystem,
-                        pl1,
-                        "OC_ExchengeOperator_OrderDone",
-                        msg1,
-                        ModelMailMessadge.MessadgeTypes.GoldenLetter,
-                        best.Order1.Tile);
-
-                    HelperMailMessadge.Send(
-                        Repository.GetData.PlayerSystem,
-                        pl2,
-                        "OC_ExchengeOperator_OrderDone",
-                        msg2,
-                        ModelMailMessadge.MessadgeTypes.GoldenLetter,
-                        best.Order1.Tile);
+                    ImplementTradeCalcing = false;
                 }
-            } while (best != null);
-
-            ImplementTradeCalcing = false;
+            }
         }
 
         public bool ImplementTradeByStorage(TradeOrder order, PlayerServer player, int needRepeat)
         {
-            if (order.CountReady < needRepeat) return false;
+            if (order == null || player == null || order.CountReady < needRepeat) return false;
             var thingsForOrder = GetFromStorage(order.Tile, player, order.BuyThings, needRepeat);
             if (thingsForOrder == null) return false;
 
-            Loger.Log("Server Trade! " + player.Public.Login + " x" + needRepeat + " buy " + order.ToString());
+            if (Loger.Enable)
+            {
+                Loger.Log("Server Trade! " + player.Public?.Login + " x" + needRepeat + " buy " + order.ToString());
+            }
 
-            var orderPlayer = order.Owner.GetPlayerServer();
+            var orderPlayer = order.Owner?.GetPlayerServer();
             SendToStorage(order.Tile, orderPlayer, thingsForOrder);
 
             var msg1 = string.Format("OC_ExchengeOperator_tradeSold0 {0} OC_ExchengeOperator_tradeSold1 {1}. OC_ExchengeOperator_tradeSold2 {2}"
@@ -679,7 +754,7 @@ namespace ServerOnlineCity.Mechanics
 
             order.CountReady -= needRepeat;
 
-            if (order.CountReady == 0)
+            if (order.CountReady <= 0)
             {
                 OrderRemove(order);
             }
@@ -703,6 +778,59 @@ namespace ServerOnlineCity.Mechanics
             return true;
         }
 
+        /// <summary>
+        /// Швидкий підрахунок балансу товарів у сховищах та активних ордерах без алокацій Tuple та LINQ Sum.
+        /// </summary>
+        public float CalcStorageBalance(PlayerServer player)
+        {
+            if (player == null) return 0f;
+            float balance = 0f;
+
+            var storages = player.TradeThingStorages;
+            if (storages != null)
+            {
+                for (int i = 0; i < storages.Count; i++)
+                {
+                    var st = storages[i];
+                    var things = st?.Things;
+                    if (things == null) continue;
+
+                    for (int j = 0; j < things.Count; j++)
+                    {
+                        var t = things[j];
+                        if (t != null)
+                        {
+                            balance += t.GameCost * t.Count;
+                        }
+                    }
+                }
+            }
+
+            var orders = Data?.Orders;
+            string login = player.Public?.Login;
+            if (orders != null && login != null)
+            {
+                for (int i = 0; i < orders.Count; i++)
+                {
+                    var o = orders[i];
+                    if (o != null && o.Owner?.Login == login && o.SellThings != null)
+                    {
+                        int ready = o.CountReady;
+                        for (int j = 0; j < o.SellThings.Count; j++)
+                        {
+                            var t = o.SellThings[j];
+                            if (t != null)
+                            {
+                                balance += t.GameCost * t.Count * ready;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return balance;
+        }
+
         internal IEnumerable<Tuple<ThingTrade, int>> GetThingsInServer(PlayerServer player)
         {
             var result = new List<Tuple<ThingTrade, int>>();
@@ -714,7 +842,11 @@ namespace ServerOnlineCity.Mechanics
                     if (st?.Things == null) continue;
                     for (int j = 0; j < st.Things.Count; j++)
                     {
-                        result.Add(new Tuple<ThingTrade, int>(st.Things[j], 1));
+                        var t = st.Things[j];
+                        if (t != null)
+                        {
+                            result.Add(new Tuple<ThingTrade, int>(t, 1));
+                        }
                     }
                 }
             }
@@ -726,9 +858,14 @@ namespace ServerOnlineCity.Mechanics
                     var o = Data.Orders[i];
                     if (o != null && o.Owner?.Login == player.Public.Login && o.SellThings != null)
                     {
+                        int ready = o.CountReady;
                         for (int j = 0; j < o.SellThings.Count; j++)
                         {
-                            result.Add(new Tuple<ThingTrade, int>(o.SellThings[j], o.CountReady));
+                            var t = o.SellThings[j];
+                            if (t != null)
+                            {
+                                result.Add(new Tuple<ThingTrade, int>(t, ready));
+                            }
                         }
                     }
                 }
