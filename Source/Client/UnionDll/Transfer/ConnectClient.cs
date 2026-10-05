@@ -32,12 +32,15 @@ namespace Transfer
         private readonly byte[] _headerSendBuffer = new byte[4];
         private readonly byte[] _headerReceiveBuffer = new byte[4];
 
-        // Буфер для малих повідомлень до 4 КБ (усуває new byte[msgLen + 4] на кожен запит)
-        private const int SmallMessageThreshold = 4096;
+        // ОПТИМІЗАЦІЯ: буфер до 64 КБ (строго нижче межі LOH 85 КБ) для відправки одним пакетом без фрагментації Nagle
+        private const int SmallMessageThreshold = 64 * 1024;
         private readonly byte[] _smallSendBuffer = new byte[SmallMessageThreshold + 4];
 
         private readonly object _sendLock = new object();
         private readonly object _receiveLock = new object();
+        private bool _disposed = false;
+
+        public bool Connected => !_disposed && Client?.Connected == true && ClientStream != null;
 
         public ConnectClient(string addr, int port)
             : this(new TcpClient(addr, port))
@@ -72,6 +75,9 @@ namespace Transfer
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
             try
             {
                 ClientStream?.Close();
@@ -82,13 +88,14 @@ namespace Transfer
             try
             {
                 Client?.Close();
+                (Client as IDisposable)?.Dispose();
             }
             catch { }
         }
 
         /// <summary>
         /// Відправка повідомлення із 4-байтовим префіксом загальної довжини.
-        /// ОПТИМІЗАЦІЯ: для малих пакетів корисне навантаження записується в постійний буфер без виділення нових масивів.
+        /// ОПТИМІЗАЦІЯ: для пакетів до 64 КБ заголовок і тіло записуються в сокет одним викликом Write.
         /// </summary>
         public void SendMessage(byte[] message)
         {
@@ -208,6 +215,28 @@ namespace Transfer
                 catch (IOException ex) when (ex.InnerException is SocketException se && se.SocketErrorCode == SocketError.TimedOut)
                 {
                     throw new ConnectSilenceTimeOutException();
+                }
+                catch (IOException ex) when (ex.InnerException is SocketException se &&
+                    (se.SocketErrorCode == SocketError.ConnectionReset
+                    || se.SocketErrorCode == SocketError.ConnectionAborted
+                    || se.SocketErrorCode == SocketError.NotConnected
+                    || se.SocketErrorCode == SocketError.Shutdown
+                    || se.SocketErrorCode == SocketError.NetworkReset))
+                {
+                    throw new ConnectNotConnectedException();
+                }
+                catch (SocketException se) when (se.SocketErrorCode == SocketError.TimedOut)
+                {
+                    throw new ConnectSilenceTimeOutException();
+                }
+                catch (SocketException se) when (
+                    se.SocketErrorCode == SocketError.ConnectionReset
+                    || se.SocketErrorCode == SocketError.ConnectionAborted
+                    || se.SocketErrorCode == SocketError.NotConnected
+                    || se.SocketErrorCode == SocketError.Shutdown
+                    || se.SocketErrorCode == SocketError.NetworkReset)
+                {
+                    throw new ConnectNotConnectedException();
                 }
 
                 if (numberOfBytesRead <= 0)
