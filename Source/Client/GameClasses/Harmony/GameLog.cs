@@ -46,9 +46,16 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 var delegates = handler.GetInvocationList();
                 for (int i = 0; i < delegates.Length; i++)
                 {
-                    if (!((Func<string, bool>)delegates[i])(text))
+                    try
                     {
-                        res = false;
+                        if (!((Func<string, bool>)delegates[i])(text))
+                        {
+                            res = false;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("GameLog.OnError subscriber error: " + ex.Message, Loger.LogLevel.ERROR);
                     }
                 }
             }
@@ -64,6 +71,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         private static string GetStackTrace()
         {
             var stackTrace = StackTraceUtility.ExtractStackTrace();
+            if (string.IsNullOrEmpty(stackTrace)) return string.Empty;
+
             var i = stackTrace.IndexOf("RimWorldOnlineCity.GameClasses.Harmony.Log_Error_Patch", StringComparison.Ordinal);
             if (i > 0)
             {

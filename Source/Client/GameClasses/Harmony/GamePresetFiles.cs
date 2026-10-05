@@ -34,7 +34,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
                 if (startOk && endOk) return true;
 
-                idx += key.Length;
+                idx++;
             }
             return false;
         }
@@ -86,7 +86,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 __result = false;
                 if (Current.Game == null) return true;
                 if (SessionClient.Get?.IsLogined != true) return true;
-                if (SessionClientController.Data?.DisableDevMode != true) return true;
+                if (SessionClientController.Data == null || !SessionClientController.Data.DisableDevMode) return true;
 
                 try
                 {
@@ -99,8 +99,11 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     var list = ModBaseData.GlobalData?.LastCash?.Value ?? string.Empty;
                     if (IsKeyInList(list, key)) return true;
 
-                    var msg = "OCity_GamePresetFiles_IdeologyNotCreatedDuringANetworkGame".Translate();
-                    Find.WindowStack.Add(new Dialog_Input("OCity_Dialog_CreateWorld_BtnCancel".Translate(), msg, true));
+                    if (Find.WindowStack != null)
+                    {
+                        var msg = "OCity_GamePresetFiles_IdeologyNotCreatedDuringANetworkGame".Translate();
+                        Find.WindowStack.Add(new Dialog_Input("OCity_Dialog_CreateWorld_BtnCancel".Translate(), msg, true));
+                    }
                     return false;
                 }
                 catch
@@ -145,7 +148,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 __result = false;
                 if (Current.Game == null) return true;
                 if (SessionClient.Get?.IsLogined != true) return true;
-                if (SessionClientController.Data?.DisableDevMode != true) return true;
+                if (SessionClientController.Data == null || !SessionClientController.Data.DisableDevMode) return true;
 
                 try
                 {
@@ -158,8 +161,11 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     var list = ModBaseData.GlobalData?.LastCash?.Value ?? string.Empty;
                     if (IsKeyInList(list, key)) return true;
 
-                    var msg = "OCity_GamePresetFiles_XenotypeNotCreatedDuringANetworkGame".Translate();
-                    Find.WindowStack.Add(new Dialog_Input("OCity_Dialog_CreateWorld_BtnCancel".Translate(), msg, true));
+                    if (Find.WindowStack != null)
+                    {
+                        var msg = "OCity_GamePresetFiles_XenotypeNotCreatedDuringANetworkGame".Translate();
+                        Find.WindowStack.Add(new Dialog_Input("OCity_Dialog_CreateWorld_BtnCancel".Translate(), msg, true));
+                    }
                     return false;
                 }
                 catch

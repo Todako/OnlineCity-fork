@@ -4,8 +4,10 @@ using RimWorld;
 using RimWorld.Planet;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
+using System.Threading;
 using UnityEngine.SceneManagement;
 using Verse;
 
@@ -24,6 +26,17 @@ namespace RimWorldOnlineCity
         public static Action AfterStart = null;
         public static List<Pawn> SetPawns = null;
 
+        private static readonly FieldInfo QuickStartedField;
+
+        static GameStarter()
+        {
+            var quickStarterType = typeof(Root).Assembly.GetType("Verse.QuickStarter");
+            if (quickStarterType != null)
+            {
+                QuickStartedField = AccessTools.Field(quickStarterType, "quickStarted");
+            }
+        }
+
         public static void GoToMainMenu()
         {
             SceneManager.LoadScene("Entry");
@@ -31,20 +44,13 @@ namespace RimWorldOnlineCity
 
         public static void GameGeneration(bool withStart = true)
         {
-            var quickStarterType = typeof(Root).Assembly.GetType("Verse.QuickStarter");
-            if (quickStarterType == null)
-            {
-                Loger.Log("Client Verse.QuickStarter type not found");
-                return;
-            }
-            var quickStartedField = AccessTools.Field(quickStarterType, "quickStarted");
-            if (quickStartedField == null)
+            if (QuickStartedField == null)
             {
                 Loger.Log("Client QuickStarter.quickStarted field not found");
                 return;
             }
 
-            quickStartedField.SetValue(null, true);
+            QuickStartedField.SetValue(null, true);
 
             if (withStart)
             {
@@ -147,10 +153,9 @@ namespace RimWorldOnlineCity
         [HarmonyPostfix]
         public static void Postfix()
         {
-            var action = GameStarter.AfterStart;
+            var action = Interlocked.Exchange(ref GameStarter.AfterStart, null);
             if (action != null)
             {
-                GameStarter.AfterStart = null;
                 Loger.Log("Client HarmonyPatch Game.InitNewGame()");
                 try
                 {
@@ -186,10 +191,9 @@ namespace RimWorldOnlineCity
         [HarmonyPostfix]
         public static void Postfix()
         {
-            var action = GameStarter.AfterStart;
+            var action = Interlocked.Exchange(ref GameStarter.AfterStart, null);
             if (action != null)
             {
-                GameStarter.AfterStart = null;
                 Loger.Log("Client HarmonyPatch Root_Play.SetupForQuickTestPlay()");
                 try
                 {

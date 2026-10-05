@@ -1,6 +1,7 @@
 ﻿using HarmonyLib;
 using OCUnion;
 using System;
+using System.Threading;
 using Verse;
 
 namespace RimWorldOnlineCity
@@ -9,12 +10,14 @@ namespace RimWorldOnlineCity
     {
         public static Action AfterLoad = null;
 
+        /// <summary>
+        /// Потокобезпечний одноразовий виклик делегата після завантаження карти.
+        /// </summary>
         public static void TriggerAfterLoad()
         {
-            var action = AfterLoad;
+            var action = Interlocked.Exchange(ref AfterLoad, null);
             if (action == null) return;
 
-            AfterLoad = null;
             try
             {
                 action();

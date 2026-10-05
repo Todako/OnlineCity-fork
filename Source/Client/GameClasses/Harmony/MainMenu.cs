@@ -21,23 +21,31 @@ namespace RimWorldOnlineCity
             if (checkers == null)
             {
                 Loger.Log("Message wait UpdateModsWindow");
-                Find.WindowStack.Add(new UpdateModsWindow());
+                if (Find.WindowStack != null && !Find.WindowStack.IsOpen<UpdateModsWindow>())
+                {
+                    Find.WindowStack.Add(new UpdateModsWindow());
+                }
                 return;
             }
 
-            // ВИПРАВЛЕНО CS1061: checkers.Length замість checkers.Count
             for (int i = 0; i < checkers.Length; i++)
             {
                 var c = checkers[i];
                 if (c == null || !c.Complete)
                 {
                     Loger.Log("Message wait UpdateModsWindow");
-                    Find.WindowStack.Add(new UpdateModsWindow());
+                    if (Find.WindowStack != null && !Find.WindowStack.IsOpen<UpdateModsWindow>())
+                    {
+                        Find.WindowStack.Add(new UpdateModsWindow());
+                    }
                     return;
                 }
             }
 
-            Find.WindowStack.Add(new Dialog_LoginForm());
+            if (Find.WindowStack != null && !Find.WindowStack.IsOpen<Dialog_LoginForm>())
+            {
+                Find.WindowStack.Add(new Dialog_LoginForm());
+            }
         }
     }
 
@@ -49,7 +57,7 @@ namespace RimWorldOnlineCity
         public static bool Inited = false;
         public static DateTime DontDisconnectTime;
 
-        // Кешовані рядки кнопок для ліквідації перекладів на кожному кадрі OnGUI
+        // Кешовані рядки кнопок для ліквідації викликів перекладу на кожному кадрі OnGUI
         private static string CachedSave;
         private static string CachedLoadGame;
         private static string CachedReviewScenario;
@@ -89,7 +97,7 @@ namespace RimWorldOnlineCity
         {
             EnsureStrings();
 
-            if (optList.Count > 0 && optList[0].GetType() == typeof(ListableOption))
+            if (optList != null && optList.Count > 0 && optList[0].GetType() == typeof(ListableOption))
             {
                 if (Current.ProgramState == ProgramState.Entry)
                 {
@@ -101,11 +109,25 @@ namespace RimWorldOnlineCity
                         SessionClientController.Disconnected(null);
                     }
 
-                    var item = new ListableOption(CachedLanBtn, delegate
+                    // Запобігаємо дублюванню кнопки під час багаторазових проходів лейаута
+                    bool hasLanBtn = false;
+                    for (int i = 0; i < optList.Count; i++)
                     {
-                        MainMenu.OnMainMenuNetClick();
-                    }, null);
-                    optList.Insert(0, item);
+                        if (optList[i].label == CachedLanBtn)
+                        {
+                            hasLanBtn = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasLanBtn)
+                    {
+                        var item = new ListableOption(CachedLanBtn, delegate
+                        {
+                            MainMenu.OnMainMenuNetClick();
+                        }, null);
+                        optList.Insert(0, item);
+                    }
                 }
                 else
                 {

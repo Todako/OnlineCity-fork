@@ -1,6 +1,7 @@
 ﻿using HarmonyLib;
 using OCUnion;
 using System;
+using System.Threading;
 using Verse;
 using Verse.Profile;
 
@@ -11,14 +12,13 @@ namespace RimWorldOnlineCity
         public static Action BeforeExit = null;
 
         /// <summary>
-        /// Безпечний одноразовий виклик делегата виходу з ізоляцією винятків.
+        /// Потокобезпечний одноразовий виклик делегата виходу з ізоляцією винятків.
         /// </summary>
         public static void TriggerBeforeExit()
         {
-            var action = BeforeExit;
+            var action = Interlocked.Exchange(ref BeforeExit, null);
             if (action == null) return;
 
-            BeforeExit = null; // Захист від повторних каскадних викликів під час одного виходу
             try
             {
                 action();
