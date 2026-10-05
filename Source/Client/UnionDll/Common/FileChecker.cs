@@ -118,7 +118,7 @@ namespace OCUnion.Common
         private static int nnnn = 0;
 
         /// <summary>
-        /// Розрахунок хешу XML без створення дублікатів масивів при обрізанні BOM.
+        /// Однопрохідний розрахунок хешу XML без генерації масиву проміжних рядків.
         /// </summary>
         private static ModelFileInfo GenerateHashXMLString(string XML, List<string> ignoreTag)
         {
@@ -134,31 +134,23 @@ namespace OCUnion.Common
                     if (item.StartsWith("{lineWith}", StringComparison.OrdinalIgnoreCase))
                     {
                         var lineKey = item.Substring("{lineWith}".Length);
-                        if (lineKey.Length > 0)
+                        if (lineKey.Length > 0 && XML.IndexOf(lineKey, StringComparison.Ordinal) >= 0)
                         {
-                            int pos;
-                            while ((pos = XML.IndexOf(lineKey, StringComparison.Ordinal)) >= 0)
+                            var sb = new StringBuilder(XML.Length);
+                            int currentPos = 0;
+                            while (currentPos < XML.Length)
                             {
-                                var posB = XML.LastIndexOf('\n', pos);
-                                if (posB < 0) posB = 0;
-                                else posB++;
+                                int lineEnd = XML.IndexOf('\n', currentPos);
+                                int nextPos = lineEnd >= 0 ? lineEnd + 1 : XML.Length;
+                                int lineLen = lineEnd >= 0 ? lineEnd - currentPos : XML.Length - currentPos;
 
-                                var posE = XML.IndexOf('\n', pos + lineKey.Length);
-                                if (posE >= 0)
+                                if (XML.IndexOf(lineKey, currentPos, lineLen, StringComparison.Ordinal) < 0)
                                 {
-                                    posE++;
+                                    sb.Append(XML, currentPos, nextPos - currentPos);
                                 }
-                                else
-                                {
-                                    posE = XML.Length;
-                                    if (posB > 0)
-                                    {
-                                        posB--;
-                                        if (posB > 0 && XML[posB] == '\r') posB--;
-                                    }
-                                }
-                                XML = XML.Remove(posB, posE - posB);
+                                currentPos = nextPos;
                             }
+                            XML = sb.ToString();
                         }
                     }
                     else
@@ -192,9 +184,6 @@ namespace OCUnion.Common
             return result;
         }
 
-        /// <summary>
-        /// ОПТИМІЗАЦІЯ: прямий розрахунок хешу з байтів без декодування у рядок, якщо теги ігнорування відсутні.
-        /// </summary>
         public static ModelFileInfo GenerateHashXML(byte[] XMLByte, List<string> ignoreTag)
         {
             if (XMLByte == null || XMLByte.Length == 0) return new ModelFileInfo { FileName = "" };
@@ -244,23 +233,41 @@ namespace OCUnion.Common
                 var f = ignoreFolder[i];
                 if (string.IsNullOrEmpty(f)) continue;
 
-                var trimmed = f.Trim('/', '\\');
-                if (trimmed.Length == 0) continue;
+                int start = 0;
+                int end = f.Length;
+                while (start < end && (f[start] == '/' || f[start] == '\\')) start++;
+                while (end > start && (f[end - 1] == '/' || f[end - 1] == '\\')) end--;
+                int len = end - start;
+                if (len == 0) continue;
 
                 int index = 0;
-                while ((index = path.IndexOf(trimmed, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+                while ((index = IndexOfSegment(path, f, start, len, index)) >= 0)
                 {
                     bool startOk = index == 0 || path[index - 1] == sep || path[index - 1] == altSep;
-                    int endIdx = index + trimmed.Length;
+                    int endIdx = index + len;
                     bool endOk = endIdx == path.Length || path[endIdx] == sep || path[endIdx] == altSep;
 
                     if (startOk && endOk) return true;
 
-                    index += trimmed.Length;
+                    index += len;
                 }
             }
 
             return false;
+        }
+
+        private static int IndexOfSegment(string source, string target, int targetStart, int targetLen, int startIndex)
+        {
+            if (startIndex + targetLen > source.Length) return -1;
+            int max = source.Length - targetLen;
+            for (int i = startIndex; i <= max; i++)
+            {
+                if (string.Compare(source, i, target, targetStart, targetLen, StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    return i;
+                }
+            }
+            return -1;
         }
 
         public static List<ModelFileInfo> GenerateHashFiles(string rootFolder, Action<string, int> onStartUpdateFolder, List<string> ignoreFolder)
@@ -329,9 +336,6 @@ namespace OCUnion.Common
             }
         }
 
-        /// <summary>
-        /// Сканування та розрахунок контрольних сум файлів через EnumerateDirectories / EnumerateFiles.
-        /// </summary>
         private static void generateHashFiles(List<ModelFileInfo> result, ref string rootFolder, string folder, List<string> ignoreFolder, bool level0 = false)
         {
             if (!level0)
@@ -465,11 +469,17 @@ namespace OCUnion.Common
 
         private static bool ApproveExt(string fileName)
         {
+            if (string.IsNullOrEmpty(fileName)) return false;
+
             var ext = Path.GetExtension(fileName);
             if (!string.IsNullOrEmpty(ext) && IgnoredModFilesSet.Contains(ext)) return false;
 
+            // ОПТИМІЗАЦІЯ: перевіряємо повне ім'я лише якщо воно не збігається з розширенням
             var name = Path.GetFileName(fileName);
-            if (!string.IsNullOrEmpty(name) && IgnoredModFilesSet.Contains(name)) return false;
+            if (!string.IsNullOrEmpty(name) && !string.Equals(ext, name, StringComparison.OrdinalIgnoreCase) && IgnoredModFilesSet.Contains(name))
+            {
+                return false;
+            }
 
             return true;
         }

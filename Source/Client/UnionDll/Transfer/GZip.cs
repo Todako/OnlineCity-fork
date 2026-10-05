@@ -24,30 +24,29 @@ namespace Util
         private static MemoryStream t_SerializeStream;
 
         /// <summary>
-        /// Евристичний розрахунок початкового розміру буфера на основі попереднього пакета.
-        /// Запобігає подвоєнню ємності MemoryStream під час запису.
+        /// Початковий розмір буфера: для звичайних пакетів встановлюється 8–64 КБ (строго нижче межі LOH 85 КБ).
         /// </summary>
         private static int GetInitialCapacity()
         {
-            if (LastSizeObj <= 0) return 4096;
-            if (LastSizeObj > 1024 * 1024 * 16) return 1024 * 1024 * 16; // Обмежуємо початкову планку 16 МБ
+            if (LastSizeObj <= 0) return 8192;
+            if (LastSizeObj > 64 * 1024) return 64 * 1024;
             return (int)LastSizeObj;
         }
 
         /// <summary>
-        /// Отримує готовий очищений потік для поточного потоку виконання.
+        /// Отримує готовий очищений потік для поточного потоку виконання із захистом від LOH-витоків.
         /// </summary>
         private static MemoryStream GetSerializeStream()
         {
-            if (t_SerializeStream == null)
+            if (t_SerializeStream == null || !t_SerializeStream.CanWrite)
             {
                 t_SerializeStream = new MemoryStream(GetInitialCapacity());
             }
             else
             {
-                // Якщо потік розрісся понад 16 МБ після важкого збереження карти, перестворюємо його,
+                // Якщо потік розрісся понад 8 МБ після важкого збереження карти, скидаємо його,
                 // щоб не тримати зайву пам'ять у фоні
-                if (t_SerializeStream.Capacity > 16 * 1024 * 1024)
+                if (t_SerializeStream.Capacity > 8 * 1024 * 1024)
                 {
                     t_SerializeStream.Dispose();
                     t_SerializeStream = new MemoryStream(GetInitialCapacity());
