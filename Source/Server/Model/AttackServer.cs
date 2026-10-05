@@ -3,7 +3,6 @@ using OCUnion;
 using OCUnion.Transfer.Model;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Transfer.ModelMails;
 
 namespace ServerOnlineCity.Model
@@ -11,14 +10,13 @@ namespace ServerOnlineCity.Model
     public class AttackServer
     {
         /*
-         *      
-         * А0: 0 в 1 Атакующий пересылает айди объектов
-         * А1: Атакующий посылает запрос пока статус не придет 2
-         * Н2: 1 в 2 Хосту приходит сигнал об атаки и он запрашивает айди 
-         * А2: Посылает атакующих пешек
-         * А3: Посылает запрос пока статус не придет больше 3. Ответ со статусом 4 содержит данные для создания карты. Создает карту вообще без пешек и запускает таймер
-         * Н4: 2 в 4 Посылает данные для создания карты
-         * Н5: 4 в 5 Считывает атакующих пешек, повторяет пока не придут данные пешек. После создает пешек и запускает таймер
+         * А0: 0 в 1 Атакуючий пересилає айді об'єктів
+         * А1: Атакуючий посилає запит, поки статус не прийде 2
+         * Н2: 1 в 2 Хосту приходить сигнал про атаку і він запитує айді 
+         * А2: Посилає атакуючих пішаків
+         * А3: Посилає запит, поки статус не прийде більше 3. Відповідь зі статусом 4 містить дані для створення карти
+         * Н4: 2 в 4 Посилає дані для створення карти
+         * Н5: 4 в 5 Зчитує атакуючих пішаків, повторює, поки не прийдуть дані пішаків
         */
         public int State { get; set; }
 
@@ -29,7 +27,7 @@ namespace ServerOnlineCity.Model
         public PlayerServer Host { get; set; }
 
         /// <summary>
-        /// Признак победы. Вычисляется и принимается от Хоста. После передачи этого значение Атакующему вызывается завершение.
+        /// Ознака перемоги. Обчислюється і приймається від Хоста.
         /// </summary>
         public bool? VictoryAttacker { get; set; }
 
@@ -62,21 +60,27 @@ namespace ServerOnlineCity.Model
         public bool TerribleFatalError { get; set; }
         public long AttackUpdateTick { get; set; }
 
-        private object SyncObj = new Object();
+        private readonly object SyncObj = new object();
 
         public string New(PlayerServer player, PlayerServer hostPlayer, AttackInitiatorToSrv fromClient, bool testMode)
         {
             if (!ServerManager.ServerSettings.GeneralSettings.EnablePVP) return "PVP online disable on this server";
-            if (!player.Online || !hostPlayer.Online)
+
+            string playerLogin = player?.Public?.Login ?? "-";
+            string hostLogin = hostPlayer?.Public?.Login ?? "-";
+
+            if (player == null || hostPlayer == null || !player.Online || !hostPlayer.Online)
             {
-                Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} canceled: Attack not possible: player offline");
+                Loger.Log($"Server AttackServer {playerLogin} -> {hostLogin} canceled: Attack not possible: player offline");
                 return "Attack not possible: player offline";
             }
-            var err = AttackUtils.CheckPossibilityAttack(player, hostPlayer, fromClient.InitiatorPlaceServerId, fromClient.HostPlaceServerId
-                , ServerManager.ServerSettings.ProtectingNovice);
+
+            var err = AttackUtils.CheckPossibilityAttack(player, hostPlayer, fromClient.InitiatorPlaceServerId, fromClient.HostPlaceServerId,
+                ServerManager.ServerSettings.ProtectingNovice);
+
             if (err != null)
             {
-                Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} canceled: {err}");
+                Loger.Log($"Server AttackServer {playerLogin} -> {hostLogin} canceled: {err}");
                 return err;
             }
 
@@ -87,9 +91,23 @@ namespace ServerOnlineCity.Model
             Host.AttackData = this;
             HostPlaceServerId = fromClient.HostPlaceServerId;
             InitiatorPlaceServerId = fromClient.InitiatorPlaceServerId;
+
             var data = Repository.GetData;
-            var woip = data.WorldObjects.FirstOrDefault(wo => wo.PlaceServerId == InitiatorPlaceServerId);
-            if (woip != null) InitiatorPlaceTile = woip.Tile;
+            if (data?.WorldObjects != null)
+            {
+                lock (data)
+                {
+                    for (int i = 0; i < data.WorldObjects.Count; i++)
+                    {
+                        var wo = data.WorldObjects[i];
+                        if (wo != null && wo.PlaceServerId == InitiatorPlaceServerId)
+                        {
+                            InitiatorPlaceTile = wo.Tile;
+                            break;
+                        }
+                    }
+                }
+            }
 
             NewPawns = new List<ThingEntry>();
             NewPawnsId = new List<int>();
@@ -104,7 +122,7 @@ namespace ServerOnlineCity.Model
             CreateTime = DateTime.UtcNow;
             AttackUpdateTick = 0;
 
-            if (!TestMode)
+            if (!TestMode && Host.Public != null)
             {
                 Host.Public.LastPVPTime = DateTime.UtcNow;
             }
@@ -115,36 +133,35 @@ namespace ServerOnlineCity.Model
 
         public AttackHostFromSrv RequestHost(AttackHostToSrv fromClient)
         {
-            //Loger.Log($"Server AttackOnlineHost RequestHost State: {State} -> {fromClient.State}");
+            if (fromClient == null) return new AttackHostFromSrv { State = State, ErrorText = "No request" };
+
             lock (SyncObj)
             {
-                //первые 5 минут не проверяем на отключения, т.к. загрузка может быть долгой (а дисконектит уже после 10 сек)
+                // Перші 5-8 хвилин не перевіряємо на відключення, оскільки створення карти може тривати довго
                 if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
                     && CheckConnect(false))
                 {
-                    return new AttackHostFromSrv()
-                    {
-                        State = State
-                    };
+                    return new AttackHostFromSrv { State = State };
                 }
+
                 if (fromClient.State < State)
                 {
-                    return new AttackHostFromSrv()
+                    return new AttackHostFromSrv
                     {
-                        ErrorText = "Unexpected request " + fromClient.State.ToString() + ". Was expected" + State.ToString()
+                        ErrorText = "Unexpected request " + fromClient.State + ". Was expected " + State
                     };
                 }
 
                 if (fromClient.State == 2)
                 {
                     State = 2;
-                    return new AttackHostFromSrv()
+                    return new AttackHostFromSrv
                     {
                         State = State,
                         HostPlaceServerId = HostPlaceServerId,
                         InitiatorPlaceServerId = InitiatorPlaceServerId,
-                        StartInitiatorPlayer = Attacker.Public.Login,
-                        TestMode = TestMode,
+                        StartInitiatorPlayer = Attacker?.Public?.Login,
+                        TestMode = TestMode
                     };
                 }
 
@@ -156,16 +173,13 @@ namespace ServerOnlineCity.Model
                     Thing = fromClient.Thing;
                     ThingCell = fromClient.ThingCell;
                     State = 4;
-                    return new AttackHostFromSrv()
-                    {
-                        State = State,
-                    };
+                    return new AttackHostFromSrv { State = State };
                 }
 
                 if (fromClient.State == 5)
                 {
                     State = 5;
-                    return new AttackHostFromSrv()
+                    return new AttackHostFromSrv
                     {
                         State = State,
                         Pawns = Pawns
@@ -178,77 +192,123 @@ namespace ServerOnlineCity.Model
 
                     if (VictoryAttacker == null) VictoryAttacker = fromClient.VictoryAttacker;
 
-                    if (fromClient.NewPawnsId.Count > 0
-                        || fromClient.NewThingsId.Count > 0
-                        || fromClient.NewCorpses.Count > 0
-                        || fromClient.Delete.Count > 0)
-                    {
-                        //удаляем из Delete если сейчас команда добавить с таким id
-                        foreach (var n in fromClient.NewPawnsId)
-                        {
-                            var index = Delete.IndexOf(n);
-                            if (index >= 0) Delete.RemoveAt(index);
-                        }
-                        foreach (var n in fromClient.NewThingsId)
-                        {
-                            var index = Delete.IndexOf(n);
-                            if (index >= 0) Delete.RemoveAt(index);
-                        }
-                        foreach (var corps in fromClient.NewCorpses)
-                        {
-                            var index = Delete.IndexOf(corps.CorpseId);
-                            if (index >= 0) Delete.RemoveAt(index);
-                        }
+                    bool hasNewEntities = (fromClient.NewPawnsId != null && fromClient.NewPawnsId.Count > 0)
+                        || (fromClient.NewThingsId != null && fromClient.NewThingsId.Count > 0)
+                        || (fromClient.NewCorpses != null && fromClient.NewCorpses.Count > 0)
+                        || (fromClient.Delete != null && fromClient.Delete.Count > 0);
 
-                        //объединяем
-                        for (int i = 0; i < fromClient.NewPawnsId.Count; i++)
+                    if (hasNewEntities)
+                    {
+                        // Видаляємо зі списку Delete, якщо надходить команда додати цей ID
+                        if (fromClient.NewPawnsId != null)
                         {
-                            if (NewPawnsId.Contains(fromClient.NewPawnsId[i])) continue;
-                            NewPawnsId.Add(fromClient.NewPawnsId[i]);
-                            NewPawns.Add(fromClient.NewPawns[i]);
-                        }
-                        for (int i = 0; i < fromClient.NewThingsId.Count; i++)
-                        {
-                            if (NewThingsId.Contains(fromClient.NewThingsId[i])) continue;
-                            NewThingsId.Add(fromClient.NewThingsId[i]);
-                            NewThings.Add(fromClient.NewThings[i]);
-                        }
-                        for (int i = 0; i < NewCorpses.Count; i++)
-                        {
-                            if (fromClient.NewCorpses.Any(c => c.PawnId == NewCorpses[i].PawnId || c.CorpseId == NewCorpses[i].CorpseId))
+                            for (int i = 0; i < fromClient.NewPawnsId.Count; i++)
                             {
-                                NewCorpses.RemoveAt(i--);
+                                Delete.Remove(fromClient.NewPawnsId[i]);
                             }
                         }
-                        for (int i = 0; i < fromClient.NewCorpses.Count; i++)
+                        if (fromClient.NewThingsId != null)
                         {
-                            NewCorpses.Add(fromClient.NewCorpses[i]);
+                            for (int i = 0; i < fromClient.NewThingsId.Count; i++)
+                            {
+                                Delete.Remove(fromClient.NewThingsId[i]);
+                            }
                         }
-                        for (int i = 0; i < fromClient.Delete.Count; i++)
+                        if (fromClient.NewCorpses != null)
                         {
-                            if (Delete.Contains(fromClient.Delete[i])) continue;
-                            Delete.Add(fromClient.Delete[i]);
-                        }
-                        for (int i = 0; i < fromClient.NewCorpses.Count; i++)
-                        {
-                            if (Delete.Contains(fromClient.NewCorpses[i].PawnId)) continue;
-                            Delete.Add(fromClient.NewCorpses[i].PawnId);
+                            for (int i = 0; i < fromClient.NewCorpses.Count; i++)
+                            {
+                                Delete.Remove(fromClient.NewCorpses[i].CorpseId);
+                            }
                         }
 
-                        //на всякий случай корректируем: удаляем из добавляемых те, что на удаление
-                        foreach (var n in Delete)
+                        // Об'єднуємо нових пішаків
+                        if (fromClient.NewPawnsId != null && fromClient.NewPawns != null)
                         {
-                            var index = NewPawnsId.IndexOf(n);
+                            for (int i = 0; i < fromClient.NewPawnsId.Count; i++)
+                            {
+                                int id = fromClient.NewPawnsId[i];
+                                if (NewPawnsId.Contains(id)) continue;
+                                NewPawnsId.Add(id);
+                                if (i < fromClient.NewPawns.Count) NewPawns.Add(fromClient.NewPawns[i]);
+                            }
+                        }
+
+                        // Об'єднуємо нові предмети
+                        if (fromClient.NewThingsId != null && fromClient.NewThings != null)
+                        {
+                            for (int i = 0; i < fromClient.NewThingsId.Count; i++)
+                            {
+                                int id = fromClient.NewThingsId[i];
+                                if (NewThingsId.Contains(id)) continue;
+                                NewThingsId.Add(id);
+                                if (i < fromClient.NewThings.Count) NewThings.Add(fromClient.NewThings[i]);
+                            }
+                        }
+
+                        // Об'єднуємо трупи без виділення лямбда-делегатів LINQ
+                        if (fromClient.NewCorpses != null)
+                        {
+                            for (int i = 0; i < NewCorpses.Count; i++)
+                            {
+                                var existing = NewCorpses[i];
+                                bool found = false;
+                                for (int j = 0; j < fromClient.NewCorpses.Count; j++)
+                                {
+                                    var incoming = fromClient.NewCorpses[j];
+                                    if (incoming != null && (incoming.PawnId == existing.PawnId || incoming.CorpseId == existing.CorpseId))
+                                    {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (found)
+                                {
+                                    NewCorpses.RemoveAt(i--);
+                                }
+                            }
+
+                            for (int i = 0; i < fromClient.NewCorpses.Count; i++)
+                            {
+                                NewCorpses.Add(fromClient.NewCorpses[i]);
+                            }
+                        }
+
+                        // Об'єднуємо видалення
+                        if (fromClient.Delete != null)
+                        {
+                            for (int i = 0; i < fromClient.Delete.Count; i++)
+                            {
+                                int id = fromClient.Delete[i];
+                                if (!Delete.Contains(id)) Delete.Add(id);
+                            }
+                        }
+
+                        if (fromClient.NewCorpses != null)
+                        {
+                            for (int i = 0; i < fromClient.NewCorpses.Count; i++)
+                            {
+                                int pawnId = fromClient.NewCorpses[i].PawnId;
+                                if (!Delete.Contains(pawnId)) Delete.Add(pawnId);
+                            }
+                        }
+
+                        // Запобіжне коригування: прибираємо з доданих ті, що стоять у черзі на видалення
+                        for (int d = 0; d < Delete.Count; d++)
+                        {
+                            int n = Delete[d];
+                            int index = NewPawnsId.IndexOf(n);
                             if (index >= 0)
                             {
                                 NewPawnsId.RemoveAt(index);
-                                NewPawns.RemoveAt(index);
+                                if (index < NewPawns.Count) NewPawns.RemoveAt(index);
                             }
+
                             index = NewThingsId.IndexOf(n);
                             if (index >= 0)
                             {
                                 NewThingsId.RemoveAt(index);
-                                NewThings.RemoveAt(index);
+                                if (index < NewThings.Count) NewThings.RemoveAt(index);
                             }
 
                             for (int i = 0; i < NewCorpses.Count; i++)
@@ -261,116 +321,112 @@ namespace ServerOnlineCity.Model
                         }
                     }
 
-
-                    if (fromClient.UpdateState.Count > 0)
+                    if (fromClient.UpdateState != null && fromClient.UpdateState.Count > 0)
                     {
-                        //объединяем
                         for (int i = 0; i < fromClient.UpdateState.Count; i++)
                         {
-                            var id = fromClient.UpdateState[i].HostThingID;
-                            UpdateState[id] = fromClient.UpdateState[i];
+                            var stateItem = fromClient.UpdateState[i];
+                            if (stateItem != null)
+                            {
+                                UpdateState[stateItem.HostThingID] = stateItem;
+                            }
                         }
                     }
 
-                    var res = new AttackHostFromSrv()
+                    var res = new AttackHostFromSrv
                     {
                         State = State,
-                        UpdateCommand = UpdateCommand.Values.ToList(),
-                        NeedNewThingIDs = NeedNewThingIDs.ToList(),
-                        SetPauseOnTime = SetPauseOnTimeToHost == null ? DateTime.MinValue : SetPauseOnTimeToHost.Value,
+                        UpdateCommand = UpdateCommand.Count > 0 ? new List<AttackPawnCommand>(UpdateCommand.Values) : new List<AttackPawnCommand>(0),
+                        NeedNewThingIDs = NeedNewThingIDs.Count > 0 ? new List<int>(NeedNewThingIDs) : new List<int>(0),
+                        SetPauseOnTime = SetPauseOnTimeToHost ?? DateTime.MinValue,
                         VictoryHost = VictoryHostToHost,
-                        TerribleFatalError = TerribleFatalError,
+                        TerribleFatalError = TerribleFatalError
                     };
 
-                    UpdateCommand = new Dictionary<int, AttackPawnCommand>();
-                    NeedNewThingIDs = new HashSet<int>();
+                    // ОПТИМІЗАЦІЯ: замість перестворення нових словників очищаємо наявні (0 байт GC)
+                    UpdateCommand.Clear();
+                    NeedNewThingIDs.Clear();
 
-                    if (SetPauseOnTimeToHost != null) Loger.Log("Server Send SetPauseOnTimeToHost=" + SetPauseOnTimeToHost.Value.ToGoodUtcString());
+                    if (SetPauseOnTimeToHost != null)
+                    {
+                        Loger.Log("Server Send SetPauseOnTimeToHost=" + SetPauseOnTimeToHost.Value.ToGoodUtcString());
+                    }
 
-                    Host.PVPHostLastTime = DateTime.UtcNow;
+                    if (Host?.Public != null) Host.PVPHostLastTime = DateTime.UtcNow;
                     SetPauseOnTimeToHost = null;
                     VictoryHostToHost = false;
                     return res;
                 }
 
-                return new AttackHostFromSrv()
+                return new AttackHostFromSrv
                 {
-                    ErrorText = "Unexpected request " + fromClient.State.ToString() + "! Was expected" + State.ToString()
+                    ErrorText = "Unexpected request " + fromClient.State + "! Was expected " + State
                 };
             }
         }
 
         public AttackInitiatorFromSrv RequestInitiator(AttackInitiatorToSrv fromClient)
         {
+            if (fromClient == null) return new AttackInitiatorFromSrv { State = State, ErrorText = "No request" };
+
             lock (SyncObj)
             {
-                //первые 5 минут не проверяем на отключения, т.к. загрузка может быть долгой (а дисконектит уже после 10 сек)
                 if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
                     && CheckConnect(true))
                 {
-                    return new AttackInitiatorFromSrv()
-                    {
-                        State = State
-                    };
+                    return new AttackInitiatorFromSrv { State = State };
                 }
+
                 if (fromClient.State == 0 && fromClient.StartHostPlayer != null)
                 {
                     State = 1;
                     TestMode = fromClient.TestMode;
-                    return new AttackInitiatorFromSrv()
-                    {
-                        State = State
-                    };
+                    return new AttackInitiatorFromSrv { State = State };
                 }
+
                 if (fromClient.State == 1)
                 {
-                    return new AttackInitiatorFromSrv()
-                    {
-                        State = State
-                    };
+                    return new AttackInitiatorFromSrv { State = State };
                 }
+
                 if (fromClient.State == 2 && State >= 2 && fromClient.Pawns != null && fromClient.Pawns.Count > 0)
                 {
                     Pawns = fromClient.Pawns;
-                    //После передачи своих пешек, в ответ передаются данные карты и начинается её длительное создание
-                    //в это время включаем на хосте обязательную паузу
-                    //После загрузки пауза обновлется на 1 минуту, чтобы атакующий огляделся (ищи SetPauseOnTimeToHost в GameAttacker)
                     SetPauseOnTimeToHost = DateTime.UtcNow.AddMinutes(8);
                     Loger.Log("Server Set 1 SetPauseOnTimeToHost=" + SetPauseOnTimeToHost.Value.ToGoodUtcString());
 
-                    return new AttackInitiatorFromSrv()
+                    return new AttackInitiatorFromSrv
                     {
                         State = State,
-                        TestMode = TestMode,
+                        TestMode = TestMode
                     };
                 }
+
                 if (fromClient.State == 3 && State >= 3)
                 {
-                    return new AttackInitiatorFromSrv()
+                    return new AttackInitiatorFromSrv
                     {
                         State = State,
                         MapSize = MapSize,
                         TerrainDefNameCell = TerrainDefNameCell,
                         TerrainDefName = TerrainDefName,
                         Thing = Thing,
-                        ThingCell = ThingCell,
+                        ThingCell = ThingCell
                     };
                 }
 
                 if (fromClient.State == 10 && State < 10)
                 {
-                    return new AttackInitiatorFromSrv()
-                    {
-                        State = State,
-                    };
+                    return new AttackInitiatorFromSrv { State = State };
                 }
+
                 if (fromClient.State == 10)
                 {
                     AttackUpdateTick++;
 
                     if (StartTime == DateTime.MinValue)
                     {
-                        Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} Start");
+                        Loger.Log($"Server AttackServer {Attacker?.Public?.Login} -> {Host?.Public?.Login} Start");
                         StartTime = DateTime.UtcNow;
                     }
 
@@ -384,14 +440,11 @@ namespace ServerOnlineCity.Model
                         Loger.Log($"Server AttackServer TerribleFatalError {AttackUpdateTick}");
                         if (AttackUpdateTick != 2)
                         {
-                            //такая ошибка с отменой атаки возможна только на 2 обновлении (на 1 создаются все пешки, на 2 проверка, что все переданы)
-                            //если это не 2, то считаем, что атакующий жульничает
                             VictoryHostToHost = true;
                         }
                         else
                         {
                             TerribleFatalError = fromClient.TerribleFatalError;
-
                             SendAttackCancel();
                             Finish();
                         }
@@ -405,93 +458,92 @@ namespace ServerOnlineCity.Model
 
                     if (fromClient.UpdateCommand != null && fromClient.UpdateCommand.Count > 0)
                     {
-                        //объединяем
                         for (int i = 0; i < fromClient.UpdateCommand.Count; i++)
                         {
-                            var id = fromClient.UpdateCommand[i].HostPawnID;
-                            UpdateCommand[id] = fromClient.UpdateCommand[i];
+                            var cmd = fromClient.UpdateCommand[i];
+                            if (cmd != null)
+                            {
+                                UpdateCommand[cmd.HostPawnID] = cmd;
+                            }
                         }
                     }
 
                     if (fromClient.NeedNewThingIDs != null && fromClient.NeedNewThingIDs.Count > 0)
                     {
-                        //объединяем
                         for (int i = 0; i < fromClient.NeedNewThingIDs.Count; i++)
                         {
                             NeedNewThingIDs.Add(fromClient.NeedNewThingIDs[i]);
                         }
                     }
 
-                    var res = new AttackInitiatorFromSrv()
+                    var res = new AttackInitiatorFromSrv
                     {
                         State = State,
-                        NewPawns = NewPawns,
-                        NewPawnsId = NewPawnsId,
-                        NewThings = NewThings,
-                        NewThingsId = NewThingsId,
-                        NewCorpses = NewCorpses,
-                        Delete = Delete,
-                        UpdateState = UpdateState.Values.ToList(),
+                        NewPawns = NewPawns.Count > 0 ? NewPawns : new List<ThingEntry>(0),
+                        NewPawnsId = NewPawnsId.Count > 0 ? NewPawnsId : new List<int>(0),
+                        NewThings = NewThings.Count > 0 ? NewThings : new List<ThingTrade>(0),
+                        NewThingsId = NewThingsId.Count > 0 ? NewThingsId : new List<int>(0),
+                        NewCorpses = NewCorpses.Count > 0 ? NewCorpses : new List<AttackCorpse>(0),
+                        Delete = Delete.Count > 0 ? Delete : new List<int>(0),
+                        UpdateState = UpdateState.Count > 0 ? new List<AttackThingState>(UpdateState.Values) : new List<AttackThingState>(0),
                         Finishing = VictoryAttacker != null,
-                        VictoryAttacker = VictoryAttacker != null ? VictoryAttacker.Value : false,
+                        VictoryAttacker = VictoryAttacker ?? false
                     };
-                    NewPawns = new List<ThingEntry>();
-                    NewPawnsId = new List<int>();
-                    NewThings = new List<ThingTrade>();
-                    NewThingsId = new List<int>();
-                    NewCorpses = new List<AttackCorpse>();
-                    Delete = new List<int>();
-                    UpdateState = new Dictionary<int, AttackThingState>();
+
+                    // ОПТИМІЗАЦІЯ: створюємо нові списки тільки якщо передані непорожні дані
+                    if (NewPawns.Count > 0) NewPawns = new List<ThingEntry>();
+                    if (NewPawnsId.Count > 0) NewPawnsId = new List<int>();
+                    if (NewThings.Count > 0) NewThings = new List<ThingTrade>();
+                    if (NewThingsId.Count > 0) NewThingsId = new List<int>();
+                    if (NewCorpses.Count > 0) NewCorpses = new List<AttackCorpse>();
+                    if (Delete.Count > 0) Delete = new List<int>();
+
+                    UpdateState.Clear();
 
                     if (VictoryAttacker != null) Finish();
 
                     return res;
                 }
 
-                return new AttackInitiatorFromSrv()
+                return new AttackInitiatorFromSrv
                 {
-                    ErrorText = "Unexpected request " + fromClient.State.ToString() + "! Was expected" + State.ToString()
+                    ErrorText = "Unexpected request " + fromClient.State + "! Was expected " + State
                 };
+            }
+        }
+
+        private static void AddMail(PlayerServer player, ModelMail mail)
+        {
+            if (player?.Mails == null || mail == null) return;
+            lock (player.Mails)
+            {
+                player.Mails.Add(mail);
             }
         }
 
         private void SendAttackCancel()
         {
-            var data = Repository.GetData;
-            //команда хосту
-            var packet = new ModelMailAttackCancel()
+            var systemPlayer = Repository.GetData?.PlayerSystem?.Public;
+
+            AddMail(Host, new ModelMailAttackCancel
             {
-                From = data.PlayerSystem.Public,
-                To = Host.Public,
-            };
-            lock (Host)
+                From = systemPlayer,
+                To = Host?.Public
+            });
+
+            AddMail(Attacker, new ModelMailAttackCancel
             {
-                Host.Mails.Add(packet);
-            }
-            //команда атакующему
-            packet = new ModelMailAttackCancel()
-            {
-                From = data.PlayerSystem.Public,
-                To = Attacker.Public,
-            };
-            lock (Attacker)
-            {
-                Attacker.Mails.Add(packet);
-            }
+                From = systemPlayer,
+                To = Attacker?.Public
+            });
         }
 
         /// <summary>
-        /// Проверка и действия при сбоях.
-        /// Если отключился атакующий до State == 10 или меньше 1 мин, то отмена.
-        /// Если отключился атакующий при State == 10 и больше 1 мин, то уничтожение каравана, поселение остается как есть.
-        /// Если отключился хост до State == 10, то уничтожение поселения хоста и отмена у атакующего.
-        /// Если отключился хост после State == 10, то уничтожение поселения хоста и поселение переходит к атакующему.
+        /// Перевірка та дії при збоях зв'язку під час активного бою.
         /// </summary>
-        /// <param name="attacker">Это запрос атакующего, иначе хоста</param>
-        /// <returns></returns>
         private bool CheckConnect(bool attacker)
         {
-            if (!TestMode)
+            if (!TestMode && Host?.Public != null)
             {
                 Host.Public.LastPVPTime = DateTime.UtcNow;
             }
@@ -499,139 +551,105 @@ namespace ServerOnlineCity.Model
             bool fail = false;
             bool asTestMode = TestMode;
             string logDet;
+
             if (attacker)
             {
                 logDet = " (is attacker)";
-                fail = !Host.Online;
+                fail = Host == null || !Host.Online;
             }
             else
             {
                 logDet = " (is host)";
-                //атакующий может подвиснуть при создании карты, но когда максимум ожидания (=пауза у хоста) кончилось, то всё равно проверяем
                 if (StartTime != DateTime.MinValue
-                    || SetPauseOnTimeToHost != DateTime.MinValue && SetPauseOnTimeToHost < DateTime.UtcNow)
+                    || (SetPauseOnTimeToHost.HasValue && SetPauseOnTimeToHost.Value != DateTime.MinValue && SetPauseOnTimeToHost.Value < DateTime.UtcNow))
                 {
-                    fail = !Attacker.Online;
+                    fail = Attacker == null || !Attacker.Online;
                 }
             }
-            if (!fail)
+
+            if (!fail && State < 10 && (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
             {
-                if (State < 10 && (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
-                {
-                    fail = true;
-                    asTestMode = true;
-                    logDet = " Loading too long.";
-                }
+                fail = true;
+                asTestMode = true;
+                logDet = " Loading too long.";
             }
 
             if (fail)
             {
-                var data = Repository.GetData;
+                var systemPlayer = Repository.GetData?.PlayerSystem?.Public;
 
                 if (asTestMode)
-                {   //При тестовом режиме всех участников отключаем
-                    if (TestMode) Loger.Log("Server AttackServer Fail and back. TestMode" + logDet);
-                    else Loger.Log("Server AttackServer Fail and back. " + logDet);
-
+                {
+                    Loger.Log("Server AttackServer Fail and back." + (TestMode ? " TestMode" : "") + logDet);
                     SendAttackCancel();
                 }
                 else if (!attacker)
-                {   //Если отключился атакующий
-                    //до State == 10 или меньше 1 мин, то отмена 
-                    if (StartTime == DateTime.MinValue || (DateTime.UtcNow - StartTime).TotalSeconds < 60) // State == 10 проверяется косвенно: StartTime устанавливается только при State == 10
+                {
+                    // Відключився атакуючий
+                    if (StartTime == DateTime.MinValue || (DateTime.UtcNow - StartTime).TotalSeconds < 60)
                     {
                         Loger.Log("Server AttackServer Fail attacker off in start" + logDet);
-
                         SendAttackCancel();
                     }
-                    //при State == 10 и больше 1 мин, то уничтожение каравана, поселение остается как есть.
                     else
                     {
                         Loger.Log("Server AttackServer Fail attacker off in progress" + logDet);
 
-                        //команда хосту
-                        ModelMail packet = new ModelMailAttackTechnicalVictory()
+                        AddMail(Host, new ModelMailAttackTechnicalVictory
                         {
-                            From = data.PlayerSystem.Public,
-                            To = Host.Public,
-                        };
-                        lock (Host)
+                            From = systemPlayer,
+                            To = Host?.Public
+                        });
+
+                        AddMail(Attacker, new ModelMailAttackCancel
                         {
-                            Host.Mails.Add(packet);
-                        }
-                        //команда атакующему
-                        packet = new ModelMailAttackCancel()
+                            From = systemPlayer,
+                            To = Attacker?.Public
+                        });
+
+                        AddMail(Attacker, new ModelMailDeleteWO
                         {
-                            From = data.PlayerSystem.Public,
-                            To = Attacker.Public,
-                        };
-                        var packet2 = new ModelMailDeleteWO()
-                        {
-                            From = data.PlayerSystem.Public,
-                            To = Attacker.Public,
+                            From = systemPlayer,
+                            To = Attacker?.Public,
                             PlaceServerId = InitiatorPlaceServerId,
-                            Tile = InitiatorPlaceTile,
-                        };
-                        lock (Attacker)
-                        {
-                            Attacker.Mails.Add(packet);
-                            Attacker.Mails.Add(packet2);
-                        }
+                            Tile = InitiatorPlaceTile
+                        });
                     }
                 }
                 else
-                {   //Если отключился хост
-                    //то уничтожение поселения хоста
-                    var packet1 = new ModelMailAttackCancel()
+                {
+                    // Відключився хост
+                    AddMail(Host, new ModelMailAttackCancel
                     {
-                        From = data.PlayerSystem.Public,
-                        To = Host.Public,
-                    };
-                    var packet2 = new ModelMailDeleteWO()
-                    {
-                        From = data.PlayerSystem.Public,
-                        To = Host.Public,
-                        PlaceServerId = HostPlaceServerId,
-                    };
-                    lock (Host)
-                    {
-                        Host.Mails.Add(packet1);
-                        Host.Mails.Add(packet2);
-                    }
+                        From = systemPlayer,
+                        To = Host?.Public
+                    });
 
-                    //до State == 10, отмена у атакующего
-                    if (StartTime == DateTime.MinValue) // State == 10 проверяется косвенно: StartTime устанавливается только при State == 10
+                    AddMail(Host, new ModelMailDeleteWO
+                    {
+                        From = systemPlayer,
+                        To = Host?.Public,
+                        PlaceServerId = HostPlaceServerId
+                    });
+
+                    if (StartTime == DateTime.MinValue)
                     {
                         Loger.Log("Server AttackServer Fail host off in start" + logDet);
-
-                        //команда атакующему
-                        var packet = new ModelMailAttackCancel()
+                        AddMail(Attacker, new ModelMailAttackCancel
                         {
-                            From = data.PlayerSystem.Public,
-                            To = Attacker.Public,
-                        };
-                        lock (Attacker)
-                        {
-                            Attacker.Mails.Add(packet);
-                        }
+                            From = systemPlayer,
+                            To = Attacker?.Public
+                        });
                     }
-                    //после State == 10, поселение переходит к атакующему
                     else
                     {
                         Loger.Log("Server AttackServer Fail host off in progress" + logDet);
-
-                        //команда атакующему
-                        var packet = new ModelMailAttackTechnicalVictory()
+                        AddMail(Attacker, new ModelMailAttackTechnicalVictory
                         {
-                            From = data.PlayerSystem.Public,
-                            To = Attacker.Public,
-                        };
-                        lock (Attacker)
-                        {
-                            Attacker.Mails.Add(packet);
-                        }
+                            From = systemPlayer,
+                            To = Attacker?.Public
+                        });
                     }
-
                 }
                 Finish();
             }
@@ -641,13 +659,14 @@ namespace ServerOnlineCity.Model
 
         public void Finish()
         {
-            Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} Finish StartTime sec = "
+            Loger.Log($"Server AttackServer {Attacker?.Public?.Login ?? "-"} -> {Host?.Public?.Login ?? "-"} Finish StartTime sec = "
                 + (StartTime == DateTime.MinValue ? "-" : (DateTime.UtcNow - StartTime).TotalSeconds.ToString())
                 + (VictoryAttacker == null ? "" : VictoryAttacker.Value ? " VictoryAttacker" : " VictoryHost")
                 + (TestMode ? " TestMode" : "")
                 + (TerribleFatalError ? " TerribleFatalError" : ""));
-            Attacker.AttackData = null;
-            Host.AttackData = null;
+
+            if (Attacker != null) Attacker.AttackData = null;
+            if (Host != null) Host.AttackData = null;
         }
     }
 }
