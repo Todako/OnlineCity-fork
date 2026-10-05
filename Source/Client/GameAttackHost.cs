@@ -6,6 +6,7 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Verse;
 using Verse.AI;
 
@@ -35,7 +36,6 @@ namespace RimWorldOnlineCity
         public Dictionary<int, int> SendedState { get; set; }
         public Dictionary<int, int> SendedXP { get; set; }
 
-        // ОПТИМІЗАЦІЯ: швидкий HashSet для O(1) перевірок замість List<int>
         public HashSet<int> ToUpdateStateId { get; set; }
         public List<Thing> ToUpdateState { get; set; }
 
@@ -60,7 +60,7 @@ namespace RimWorldOnlineCity
 
         private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
 
-        // Постійні змінні для усунення 20 алокацій new HashSet<Thing>() на секунду (Double-Buffering)
+        // Постійні змінні для усунення алокацій new HashSet<Thing>() на секунду (Double-Buffering)
         private HashSet<Thing> ThingPrepareChange1 = new HashSet<Thing>();
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
@@ -111,20 +111,23 @@ namespace RimWorldOnlineCity
 
         private void PauseMessage()
         {
-            GameUtils.ShowDialodOKCancel(
-                TestMode
-                    ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                    : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                TestMode
-                    ? "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
-                        + "OCity_GameAttack_Host_Cancel_Action".Translate() + Environment.NewLine
-                        + "OCity_GameAttack_Host_Surrender".Translate()
-                    : "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
-                        + "OCity_GameAttack_Host_GameSpeed_Lock_Dialog2".Translate() + Environment.NewLine
-                        + "OCity_GameAttack_Host_Surrender".Translate(),
-                () => { },
-                null
-            );
+            ModBaseData.RunMainThread(() =>
+            {
+                GameUtils.ShowDialodOKCancel(
+                    TestMode
+                        ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                        : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                    TestMode
+                        ? "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
+                            + "OCity_GameAttack_Host_Cancel_Action".Translate() + Environment.NewLine
+                            + "OCity_GameAttack_Host_Surrender".Translate()
+                        : "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
+                            + "OCity_GameAttack_Host_GameSpeed_Lock_Dialog2".Translate() + Environment.NewLine
+                            + "OCity_GameAttack_Host_Surrender".Translate(),
+                    () => { },
+                    null
+                );
+            });
         }
 
         public void Start(SessionClient connect)
@@ -182,7 +185,6 @@ namespace RimWorldOnlineCity
                     SendedActual = new Dictionary<int, Thing>(2048);
                     FireList = new HashSet<Thing>();
 
-                    // ОПТИМІЗАЦІЯ: об'єднання збору рельєфу та речей карти в один прохід замість двох повних обходів
                     foreach (IntVec3 current in cellRect)
                     {
                         var terr = GameMap.terrainGrid.TerrainAt(current);
@@ -235,6 +237,7 @@ namespace RimWorldOnlineCity
                                 ErrorBreak("Timeout");
                                 return;
                             }
+                            Thread.Sleep(100);
                         }
 
                         SendedPawnsId = new HashSet<int>();
@@ -319,10 +322,6 @@ namespace RimWorldOnlineCity
             SessionClientController.Disconnected("OCity_GameAttacker_Dialog_ErrorMessage".Translate());
         }
 
-        /// <summary>
-        /// Основний 50-мс цикл синхронізації дій на стороні хоста.
-        /// ОПТИМІЗАЦІЯ: пул списків і масивів, double-buffering для запобігання алокаціям.
-        /// </summary>
         private void AttackUpdate()
         {
             bool inTimerEvent = false;
@@ -330,7 +329,7 @@ namespace RimWorldOnlineCity
             {
                 if (WaitOrErrorExit)
                 {
-                    Find.TickManager.Pause();
+                    ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
                     if (WaitOrErrorExitStart == DateTime.MinValue)
                     {
                         WaitOrErrorExitStart = DateTime.UtcNow;
@@ -343,7 +342,7 @@ namespace RimWorldOnlineCity
                 }
                 if (TerribleFatalError)
                 {
-                    Find.TickManager.Pause();
+                    ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
                     return;
                 }
 
@@ -356,18 +355,30 @@ namespace RimWorldOnlineCity
                 {
                     if (!Find.TickManager.Paused)
                     {
-                        Find.TickManager.Pause();
-                        GameAttackTrigger_Patch.ForceSpeed = 0f;
-                        PauseMessage();
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            if (Find.TickManager != null && !Find.TickManager.Paused)
+                            {
+                                Find.TickManager.Pause();
+                                GameAttackTrigger_Patch.ForceSpeed = 0f;
+                                PauseMessage();
+                            }
+                        });
                     }
                 }
                 else
                 {
                     if (Find.TickManager.Paused || Find.TickManager.CurTimeSpeed != TimeSpeed.Normal)
                     {
-                        Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
-                        GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
-                        if (TimeStartGameAttack == DateTime.MinValue) TimeStartGameAttack = DateTime.UtcNow;
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            if (Find.TickManager != null)
+                            {
+                                Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
+                                if (TimeStartGameAttack == DateTime.MinValue) TimeStartGameAttack = DateTime.UtcNow;
+                            }
+                        });
                     }
                 }
 
@@ -444,7 +455,6 @@ namespace RimWorldOnlineCity
 
                                 foreach (var fire in FireList)
                                 {
-                                    // ОПТИМІЗАЦІЯ: O(1) перевірка через HashSet замість перебору списку
                                     if (ToUpdateStateId.Add(fire.thingIDNumber))
                                     {
                                         ToUpdateState.Add(fire);
@@ -567,7 +577,6 @@ namespace RimWorldOnlineCity
                                 _toSendStateBuffer.Add(new AttackThingState(mp));
                             }
 
-                            // Double-buffering замість нових алокацій кожні 50 мс
                             ThingPrepareChange0.Clear();
                             var tempSet = ThingPrepareChange0;
                             ThingPrepareChange0 = ThingPrepareChange1;
@@ -622,16 +631,25 @@ namespace RimWorldOnlineCity
 
                         if (toClient.UpdateCommand != null && toClient.UpdateCommand.Count > 0)
                         {
-                            UIEventNewJobDisable = true;
-                            for (int ii = 0; ii < toClient.UpdateCommand.Count; ii++)
+                            ModBaseData.RunMainThreadSync(() =>
                             {
-                                var comm = toClient.UpdateCommand[ii];
-                                if (!AllPawns.TryGetValue(comm.HostPawnID, out Pawn pawn)) continue;
+                                UIEventNewJobDisable = true;
+                                try
+                                {
+                                    for (int ii = 0; ii < toClient.UpdateCommand.Count; ii++)
+                                    {
+                                        var comm = toClient.UpdateCommand[ii];
+                                        if (!AllPawns.TryGetValue(comm.HostPawnID, out Pawn pawn)) continue;
 
-                                AttackingPawnJobDic[comm.HostPawnID] = comm;
-                                ApplyAttackingPawnJob(pawn);
-                            }
-                            UIEventNewJobDisable = false;
+                                        AttackingPawnJobDic[comm.HostPawnID] = comm;
+                                        ApplyAttackingPawnJob(pawn);
+                                    }
+                                }
+                                finally
+                                {
+                                    UIEventNewJobDisable = false;
+                                }
+                            });
                         }
 
                         if (toClient.NeedNewThingIDs != null && toClient.NeedNewThingIDs.Count > 0)
@@ -863,25 +881,28 @@ namespace RimWorldOnlineCity
             {
                 var pawnId = pawn.thingIDNumber;
 
-                if (ThingPrepareChange2.TryGetValue(pawnId, out Thing jobThing) && !ThingPrepareChange1.Contains(jobThing))
+                lock (ToSendListsSync)
                 {
-                    ThingPrepareChange1.Add(jobThing);
-                    ThingPrepareChange2.Remove(pawnId);
-                }
-                if (job != null && job.targetA.HasThing && !(job.targetA.Thing is Pawn))
-                {
-                    ThingPrepareChange2[pawnId] = job.targetA.Thing;
-                }
-                if (job != null && pawn.RaceProps != null && pawn.RaceProps.Humanlike
-                    && (job.def == JobDefOf.Equip
-                    || job.def == JobDefOf.TakeInventory
-                    || job.def == JobDefOf.Wear
-                    || job.def == JobDefOf.DropEquipment
-                    || job.def == JobDefOf.RemoveApparel
-                    || job.def == JobDefOf.Ingest
-                    || job.def == JobDefOf.TendPatient))
-                {
-                    ThingPrepareChange2[pawnId] = pawn;
+                    if (ThingPrepareChange2.TryGetValue(pawnId, out Thing jobThing) && !ThingPrepareChange1.Contains(jobThing))
+                    {
+                        ThingPrepareChange1.Add(jobThing);
+                        ThingPrepareChange2.Remove(pawnId);
+                    }
+                    if (job != null && job.targetA.HasThing && !(job.targetA.Thing is Pawn))
+                    {
+                        ThingPrepareChange2[pawnId] = job.targetA.Thing;
+                    }
+                    if (job != null && pawn.RaceProps != null && pawn.RaceProps.Humanlike
+                        && (job.def == JobDefOf.Equip
+                        || job.def == JobDefOf.TakeInventory
+                        || job.def == JobDefOf.Wear
+                        || job.def == JobDefOf.DropEquipment
+                        || job.def == JobDefOf.RemoveApparel
+                        || job.def == JobDefOf.Ingest
+                        || job.def == JobDefOf.TendPatient))
+                    {
+                        ThingPrepareChange2[pawnId] = pawn;
+                    }
                 }
 
                 if (UIEventNewJobDisable) return;
@@ -892,7 +913,10 @@ namespace RimWorldOnlineCity
                 ApplyAttackingPawnJob(pawn);
             }
             catch { }
-            UIEventNewJobDisable = false;
+            finally
+            {
+                UIEventNewJobDisable = false;
+            }
         }
 
         public void UIEventChange(Thing thing, bool distroy = false, bool newSpawn = false)
@@ -985,58 +1009,61 @@ namespace RimWorldOnlineCity
 
         public void Finish(bool victoryAttacker)
         {
-            Find.TickManager.Pause();
-            Clear();
+            ModBaseData.RunMainThreadSync(() =>
+            {
+                Find.TickManager.Pause();
+                Clear();
 
-            if (TestMode)
-            {
-                GameUtils.ShowDialodOKCancel(
-                    TestMode
-                        ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                        : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                    victoryAttacker
-                        ? "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate()
-                        : "OCity_GameAttack_Host_Training_Attack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate(),
-                    () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
-                    null
-                );
-                return;
-            }
-
-            if (victoryAttacker)
-            {
-                Find.WorldObjects.Remove(GameMap.Parent);
-            }
-            else
-            {
-                var pawnsToDestroy = new List<Pawn>();
-                foreach (var pawn in AttackingPawns)
+                if (TestMode)
                 {
-                    if (!pawn.Dead && !pawn.Downed &&
-                        (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
-                         || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
+                    GameUtils.ShowDialodOKCancel(
+                        TestMode
+                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                        victoryAttacker
+                            ? "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate()
+                            : "OCity_GameAttack_Host_Training_Attack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate(),
+                        () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
+                        null
+                    );
+                    return;
+                }
+
+                if (victoryAttacker)
+                {
+                    Find.WorldObjects.Remove(GameMap.Parent);
+                }
+                else
+                {
+                    var pawnsToDestroy = new List<Pawn>();
+                    foreach (var pawn in AttackingPawns)
                     {
-                        pawnsToDestroy.Add(pawn);
+                        if (!pawn.Dead && !pawn.Downed &&
+                            (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
+                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
+                        {
+                            pawnsToDestroy.Add(pawn);
+                        }
+                    }
+                    for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
+                    {
+                        GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
                     }
                 }
-                for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
-                {
-                    GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
-                }
-            }
 
-            SessionClientController.SaveGameNow(true, () =>
-            {
-                GameUtils.ShowDialodOKCancel(
-                    TestMode
-                        ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                        : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                    victoryAttacker
-                        ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
-                        : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
-                    () => { },
-                    null
-                );
+                SessionClientController.SaveGameNow(true, () =>
+                {
+                    GameUtils.ShowDialodOKCancel(
+                        TestMode
+                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                        victoryAttacker
+                            ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
+                            : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
+                        () => { },
+                        null
+                    );
+                });
             });
         }
     }

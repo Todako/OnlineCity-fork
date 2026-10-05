@@ -6,6 +6,7 @@ using RimWorld.Planet;
 using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Verse;
 using Verse.AI;
 
@@ -92,7 +93,7 @@ namespace RimWorldOnlineCity
                 Find.TickManager.Pause();
 
                 Loger.Log("Client GameAttack State 0");
-                var res = connect.AttackOnlineInitiator(new AttackInitiatorToSrv()
+                var res = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
                 {
                     State = 0,
                     StartHostPlayer = attackedBase.Player.Public.Login,
@@ -128,6 +129,7 @@ namespace RimWorldOnlineCity
                         ErrorBreak("Timeout");
                         return;
                     }
+                    Thread.Sleep(100);
                 }
 
                 var pawnsToSend = GetPawnsAndDeleteCaravan(caravan);
@@ -166,6 +168,7 @@ namespace RimWorldOnlineCity
                         ErrorBreak("Timeout");
                         return;
                     }
+                    Thread.Sleep(100);
                 }
 
                 Find.TickManager.Pause();
@@ -176,7 +179,6 @@ namespace RimWorldOnlineCity
                 {
                     GameMap = map;
 
-                    // ОПТИМІЗАЦІЯ: кешування TerrainDef для уникнення тисяч викликів DefDatabase.GetNamed
                     var terrainDefCache = new Dictionary<string, TerrainDef>(32, StringComparer.Ordinal);
                     for (int i = 0; i < response.TerrainDefNameCell.Count; i++)
                     {
@@ -289,9 +291,6 @@ namespace RimWorldOnlineCity
             return sendThings;
         }
 
-        /// <summary>
-        /// Застосовує оновлені стани та видаляє знищені об'єкти без створення тимчасових лямбда-делегатів.
-        /// </summary>
         private void ApplyStateAndDeletions(AttackInitiatorFromSrv toClient)
         {
             if (toClient.UpdateState != null)
@@ -325,10 +324,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Основний високочастотний цикл онлайн-битви (кожні 50 мс).
-        /// ОПТИМІЗАЦІЯ: повністю ліквідовано створення лямбда-делегатів і списків.
-        /// </summary>
         private void AttackUpdate()
         {
             bool inTimerEvent = false;
@@ -336,19 +331,25 @@ namespace RimWorldOnlineCity
             {
                 if (TerribleFatalError)
                 {
-                    Find.TickManager.Pause();
+                    ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
                     return;
                 }
 
                 if (!Find.TickManager.Paused)
                 {
-                    Find.TickManager.Pause();
-                    GameUtils.ShowDialodOKCancel(
-                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
-                        "OCity_GameAttacker_Main_Dialog".Translate() + Environment.NewLine + "OCity_GameAttacker_Withdraw".Translate(),
-                        () => { },
-                        null
-                    );
+                    ModBaseData.RunMainThread(() =>
+                    {
+                        if (Find.TickManager != null && !Find.TickManager.Paused)
+                        {
+                            Find.TickManager.Pause();
+                            GameUtils.ShowDialodOKCancel(
+                                "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                                "OCity_GameAttacker_Main_Dialog".Translate() + Environment.NewLine + "OCity_GameAttacker_Withdraw".Translate(),
+                                () => { },
+                                null
+                            );
+                        }
+                    });
                 }
 
                 if (InTimer) return;
@@ -364,15 +365,18 @@ namespace RimWorldOnlineCity
                 {
                     SessionClientController.Data.DontCheckTimerFail = false;
 
-                    var findLabel = "LetterLabelAreaRevealed".Translate();
-                    var letters = Find.LetterStack.LettersListForReading;
-                    for (int i = letters.Count - 1; i >= 0; i--)
+                    ModBaseData.RunMainThreadSync(() =>
                     {
-                        if (letters[i].Label == findLabel)
+                        var findLabel = "LetterLabelAreaRevealed".Translate();
+                        var letters = Find.LetterStack.LettersListForReading;
+                        for (int i = letters.Count - 1; i >= 0; i--)
                         {
-                            Find.LetterStack.RemoveLetter(letters[i]);
+                            if (letters[i].Label == findLabel)
+                            {
+                                Find.LetterStack.RemoveLetter(letters[i]);
+                            }
                         }
-                    }
+                    });
 
                     bool terribleFatalError = AttackerOriginalPawnLabels.Count != AttackerPawns.Count;
                     if (!terribleFatalError)
@@ -415,14 +419,17 @@ namespace RimWorldOnlineCity
 
                 if (AttackUpdateTick == 3)
                 {
-                    GameUtils.ShowDialodOKCancel(
-                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
-                        "OCity_GameAttacker_Main_Preparation_Dialog".Translate() + Environment.NewLine
-                            + "OCity_GameAttacker_Main_Dialog".Translate() + Environment.NewLine
-                            + "OCity_GameAttacker_Withdraw".Translate(),
-                        () => { },
-                        null
-                    );
+                    ModBaseData.RunMainThread(() =>
+                    {
+                        GameUtils.ShowDialodOKCancel(
+                            "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                            "OCity_GameAttacker_Main_Preparation_Dialog".Translate() + Environment.NewLine
+                                + "OCity_GameAttacker_Main_Dialog".Translate() + Environment.NewLine
+                                + "OCity_GameAttacker_Withdraw".Translate(),
+                            () => { },
+                            null
+                        );
+                    });
                 }
 
                 inTimerEvent = true;
@@ -441,7 +448,8 @@ namespace RimWorldOnlineCity
                                 {
                                     try
                                     {
-                                        checkSpawn.Value.Destroy();
+                                        var thingToDestroy = checkSpawn.Value;
+                                        ModBaseData.RunMainThreadSync(() => thingToDestroy.Destroy());
                                     }
                                     catch (Exception ext2)
                                     {
@@ -489,128 +497,128 @@ namespace RimWorldOnlineCity
                         {
                             try
                             {
-                                if (hasNewPawns && toClient.NewPawnsId != null)
+                                ModBaseData.RunMainThreadSync(() =>
                                 {
-                                    for (int i = 0; i < toClient.NewPawnsId.Count; i++)
+                                    if (hasNewPawns && toClient.NewPawnsId != null)
                                     {
-                                        var hostid = toClient.NewPawnsId[i];
-                                        Thing thing = GetThingByHostId(hostid);
-                                        if (thing != null) DestroyThing(thing, hostid);
-                                    }
-
-                                    GameUtils.SpawnList(GameMap, toClient.NewPawns, false,
-                                        p => p.TransportID == 0,
-                                        (th, te) =>
+                                        for (int i = 0; i < toClient.NewPawnsId.Count; i++)
                                         {
-                                            CheckDestroy.Remove(th.thingIDNumber);
-                                            var p = th as Pawn;
-                                            if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                            var hostid = toClient.NewPawnsId[i];
+                                            Thing thing = GetThingByHostId(hostid);
+                                            if (thing != null) DestroyThing(thing, hostid);
+                                        }
+
+                                        GameUtils.SpawnList(GameMap, toClient.NewPawns, false,
+                                            p => p.TransportID == 0,
+                                            (th, te) =>
                                             {
-                                                ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
-                                                ThingsIDDic[th.thingIDNumber] = te.OriginalID;
-                                                ThingsObjDic[th.thingIDNumber] = th;
-
-                                                if (te.TransportID != 0 && p != null)
+                                                CheckDestroy.Remove(th.thingIDNumber);
+                                                var p = th as Pawn;
+                                                if (te.OriginalID != 0 && th.thingIDNumber != 0)
                                                 {
-                                                    AttackerPawns[p] = te.OriginalID;
-                                                    if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
-                                                    if (p.drafter != null) p.drafter.Drafted = true;
-                                                    p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                    ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
+                                                    ThingsIDDic[th.thingIDNumber] = te.OriginalID;
+                                                    ThingsObjDic[th.thingIDNumber] = th;
+
+                                                    if (te.TransportID != 0 && p != null)
                                                     {
-                                                        playerForced = true,
-                                                        expiryInterval = int.MaxValue,
-                                                        checkOverrideOnExpire = false,
-                                                    }, JobCondition.InterruptForced);
-                                                }
-                                                else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
-                                                {
-                                                    p.SetFaction(null);
-                                                }
-                                            }
-                                        });
-                                }
-
-                                if (hasNewCorpses)
-                                {
-                                    for (int i = 0; i < toClient.NewCorpses.Count; i++)
-                                    {
-                                        var hostid = toClient.NewCorpses[i].PawnId;
-                                        Thing thing = GetThingByHostId(hostid);
-                                        if (thing != null) DestroyThing(thing, hostid);
-
-                                        var corpseHostId = toClient.NewCorpses[i].CorpseId;
-                                        Thing cThing = GetThingByHostId(corpseHostId);
-                                        if (cThing != null) DestroyThing(cThing, corpseHostId);
-                                    }
-
-                                    _corpseListBuffer.Clear();
-                                    for (int i = 0; i < toClient.NewCorpses.Count; i++)
-                                    {
-                                        _corpseListBuffer.Add(toClient.NewCorpses[i].CorpseWithPawn);
-                                    }
-
-                                    GameUtils.SpawnList(GameMap, _corpseListBuffer, false,
-                                        p => p.TransportID == 0,
-                                        (th, te) =>
-                                        {
-                                            int corpsId = 0;
-                                            lock (CheckSpawnDestroySync)
-                                            {
-                                                foreach (var cs in CheckSpawn)
-                                                {
-                                                    if (cs.Value is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.thingIDNumber == th.thingIDNumber)
+                                                        AttackerPawns[p] = te.OriginalID;
+                                                        if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
+                                                        if (p.drafter != null) p.drafter.Drafted = true;
+                                                        p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                        {
+                                                            playerForced = true,
+                                                            expiryInterval = int.MaxValue,
+                                                            checkOverrideOnExpire = false,
+                                                        }, JobCondition.InterruptForced);
+                                                    }
+                                                    else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
                                                     {
-                                                        corpsId = cs.Key;
-                                                        break;
+                                                        p.SetFaction(null);
                                                     }
                                                 }
-                                                CheckDestroy.Remove(th.thingIDNumber);
-                                                if (corpsId != 0) CheckDestroy.Remove(corpsId);
-                                            }
-
-                                            if (te.OriginalID != 0 && corpsId != 0)
-                                            {
-                                                ThingsIDDicRev[te.OriginalID] = corpsId;
-                                                ThingsIDDic[corpsId] = te.OriginalID;
-                                                ThingsObjDic[corpsId] = th;
-                                            }
-                                        });
-                                }
-
-                                if (hasNewThings && toClient.NewThingsId != null)
-                                {
-                                    for (int i = 0; i < toClient.NewThingsId.Count; i++)
-                                    {
-                                        var hostid = toClient.NewThingsId[i];
-                                        Thing thing = GetThingByHostId(hostid);
-                                        if (thing != null) DestroyThing(thing, hostid);
+                                            });
                                     }
 
-                                    GameUtils.SpawnList(GameMap, toClient.NewThings, false,
-                                        p => false,
-                                        (th, te) =>
+                                    if (hasNewCorpses)
+                                    {
+                                        for (int i = 0; i < toClient.NewCorpses.Count; i++)
                                         {
-                                            CheckDestroy.Remove(th.thingIDNumber);
-                                            if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                            var hostid = toClient.NewCorpses[i].PawnId;
+                                            Thing thing = GetThingByHostId(hostid);
+                                            if (thing != null) DestroyThing(thing, hostid);
+
+                                            var corpseHostId = toClient.NewCorpses[i].CorpseId;
+                                            Thing cThing = GetThingByHostId(corpseHostId);
+                                            if (cThing != null) DestroyThing(cThing, corpseHostId);
+                                        }
+
+                                        _corpseListBuffer.Clear();
+                                        for (int i = 0; i < toClient.NewCorpses.Count; i++)
+                                        {
+                                            _corpseListBuffer.Add(toClient.NewCorpses[i].CorpseWithPawn);
+                                        }
+
+                                        GameUtils.SpawnList(GameMap, _corpseListBuffer, false,
+                                            p => p.TransportID == 0,
+                                            (th, te) =>
                                             {
-                                                ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
-                                                ThingsIDDic[th.thingIDNumber] = te.OriginalID;
-                                                ThingsObjDic[th.thingIDNumber] = th;
-                                            }
-                                        });
-                                }
+                                                int corpsId = 0;
+                                                lock (CheckSpawnDestroySync)
+                                                {
+                                                    foreach (var cs in CheckSpawn)
+                                                    {
+                                                        if (cs.Value is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.thingIDNumber == th.thingIDNumber)
+                                                        {
+                                                            corpsId = cs.Key;
+                                                            break;
+                                                        }
+                                                    }
+                                                    CheckDestroy.Remove(th.thingIDNumber);
+                                                    if (corpsId != 0) CheckDestroy.Remove(corpsId);
+                                                }
 
-                                ApplyStateAndDeletions(toClient);
+                                                if (te.OriginalID != 0 && corpsId != 0)
+                                                {
+                                                    ThingsIDDicRev[te.OriginalID] = corpsId;
+                                                    ThingsIDDic[corpsId] = te.OriginalID;
+                                                    ThingsObjDic[corpsId] = th;
+                                                }
+                                            });
+                                    }
 
-                                if (AttackUpdateTick == 1)
-                                {
-                                    ModBaseData.RunMainThreadSync(() =>
+                                    if (hasNewThings && toClient.NewThingsId != null)
+                                    {
+                                        for (int i = 0; i < toClient.NewThingsId.Count; i++)
+                                        {
+                                            var hostid = toClient.NewThingsId[i];
+                                            Thing thing = GetThingByHostId(hostid);
+                                            if (thing != null) DestroyThing(thing, hostid);
+                                        }
+
+                                        GameUtils.SpawnList(GameMap, toClient.NewThings, false,
+                                            p => false,
+                                            (th, te) =>
+                                            {
+                                                CheckDestroy.Remove(th.thingIDNumber);
+                                                if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                                {
+                                                    ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
+                                                    ThingsIDDic[th.thingIDNumber] = te.OriginalID;
+                                                    ThingsObjDic[th.thingIDNumber] = th;
+                                                }
+                                            });
+                                    }
+
+                                    ApplyStateAndDeletions(toClient);
+
+                                    if (AttackUpdateTick == 1)
                                     {
                                         FloodFillerFog.DebugRefogMap(GameMap);
                                         CameraJumper.TryJump(GameMap.Center, GameMap);
-                                    });
-                                    GameAttackTrigger_Patch.ActiveAttacker.Add(GameMap, this);
-                                }
+                                        GameAttackTrigger_Patch.ActiveAttacker.Add(GameMap, this);
+                                    }
+                                });
                             }
                             catch (Exception ext)
                             {
@@ -620,7 +628,7 @@ namespace RimWorldOnlineCity
                         }
                         else
                         {
-                            ApplyStateAndDeletions(toClient);
+                            ModBaseData.RunMainThreadSync(() => ApplyStateAndDeletions(toClient));
                             InTimer = false;
                         }
 
@@ -642,13 +650,12 @@ namespace RimWorldOnlineCity
 
         public void UIEventNewJob(Pawn pawn, Job job)
         {
-            if (job == null) return;
+            if (job == null || pawn == null) return;
 
             try
             {
                 if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
 
-                // ОПТИМІЗАЦІЯ: перевірка валідності типу команди до виділення об'єкта AttackPawnCommand
                 AttackPawnCommand.PawnCommand cmdType;
                 if (job.def == JobDefOf.Goto) cmdType = AttackPawnCommand.PawnCommand.Goto;
                 else if (job.def == JobDefOf.AttackStatic) cmdType = AttackPawnCommand.PawnCommand.Attack;
@@ -814,27 +821,27 @@ namespace RimWorldOnlineCity
 
         public void Finish(bool victoryAttacker)
         {
-            Find.TickManager.Pause();
-            Loger.Log("Client AttackerFinish");
-
-            Clear();
-
-            if (TestMode)
+            ModBaseData.RunMainThreadSync(() =>
             {
-                GameUtils.ShowDialodOKCancel(
-                    "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
-                    victoryAttacker
-                        ? "Ocity_GameAttacker_TrainingFight_Won".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate()
-                        : "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate(),
-                    () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
-                    null
-                );
-                return;
-            }
+                Find.TickManager.Pause();
+                Loger.Log("Client AttackerFinish");
 
-            if (victoryAttacker)
-            {
-                ModBaseData.RunMainThreadSync(() =>
+                Clear();
+
+                if (TestMode)
+                {
+                    GameUtils.ShowDialodOKCancel(
+                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                        victoryAttacker
+                            ? "Ocity_GameAttacker_TrainingFight_Won".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate()
+                            : "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate(),
+                        () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
+                        null
+                    );
+                    return;
+                }
+
+                if (victoryAttacker)
                 {
                     var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
                     for (int i = 0; i < mapPawnsA.Count; i++)
@@ -843,47 +850,47 @@ namespace RimWorldOnlineCity
                         if (!pawn.def.CanHaveFaction || pawn.RaceProps.Humanlike || pawn.Faction == null || pawn.Faction.IsPlayer) continue;
                         pawn.SetFaction(null);
                     }
+                }
+                else
+                {
+                    var listPawn = new List<Pawn>(AttackerPawns.Count);
+                    foreach (var pawn in AttackerPawns.Keys)
+                    {
+                        if (!pawn.Dead && !pawn.Downed &&
+                            (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
+                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
+                        {
+                            listPawn.Add(pawn);
+                        }
+                    }
+
+                    CaravanMaker.MakeCaravan(listPawn, Faction.OfPlayer, GameMap.Tile, false);
+                    Find.WorldObjects.Remove(GameMap.Parent);
+
+                    for (int i = 0; i < listPawn.Count; i++)
+                    {
+                        var pawn = listPawn[i];
+                        if (!pawn.IsWorldPawn())
+                        {
+                            Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
+                        }
+                    }
+                }
+
+                SessionClientController.SaveGameNow(true, () =>
+                {
+                    GameUtils.ShowDialodOKCancel(
+                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                        victoryAttacker
+                            ? "OCity_GameAttacker_Settlement_TakenOver".Translate()
+                            : "OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate(),
+                        () => { },
+                        null
+                    );
                 });
-            }
-            else
-            {
-                var listPawn = new List<Pawn>(AttackerPawns.Count);
-                foreach (var pawn in AttackerPawns.Keys)
-                {
-                    if (!pawn.Dead && !pawn.Downed &&
-                        (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
-                         || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
-                    {
-                        listPawn.Add(pawn);
-                    }
-                }
 
-                CaravanMaker.MakeCaravan(listPawn, Faction.OfPlayer, GameMap.Tile, false);
-                Find.WorldObjects.Remove(GameMap.Parent);
-
-                for (int i = 0; i < listPawn.Count; i++)
-                {
-                    var pawn = listPawn[i];
-                    if (!pawn.IsWorldPawn())
-                    {
-                        Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
-                    }
-                }
-            }
-
-            SessionClientController.SaveGameNow(true, () =>
-            {
-                GameUtils.ShowDialodOKCancel(
-                    "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
-                    victoryAttacker
-                        ? "OCity_GameAttacker_Settlement_TakenOver".Translate()
-                        : "OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate(),
-                    () => { },
-                    null
-                );
+                Loger.Log("Client AttackerFinish end");
             });
-
-            Loger.Log("Client AttackerFinish end");
         }
     }
 }
