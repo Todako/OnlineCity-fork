@@ -2,6 +2,7 @@
 using OCUnion;
 using RimWorld;
 using RimWorld.Planet;
+using RimWorldOnlineCity.GameClasses;
 using RimWorldOnlineCity.Services;
 using System;
 using System.Collections.Generic;
@@ -66,6 +67,8 @@ namespace RimWorldOnlineCity.UI
         private static float CachedPercentMeasureWidth = 0f;
         private string CachedPlaneTitle = "";
 
+        private static readonly Vector2 BtnSize = new Vector2(140f, 35f);
+
         // Кешування тексту інтерфейсу для усунення перекладів на кожному кадрі OnGUI
         private static string _cachedBtnClose;
         private static string _cachedLabelThingsTab;
@@ -84,25 +87,73 @@ namespace RimWorldOnlineCity.UI
         private static string _cachedLabelLocation;
         private static string _cachedLabelSeller;
 
+        private static string _cachedActiveOrdersTitle = null;
+        private static int _cachedActiveOrdersCount = -1;
+
         // Кешовані об'єкти закладок для ліквідації щокадрових алокацій
         private List<TabRecord> _tabsList;
         private TabRecord _tabThings;
         private TabRecord _tabDeal;
 
-        // Кеш ширини числових значень лічильників
+        // Кеш числових рядків і ширини тексту для нуль-алокаційного рендерингу
         private static readonly Dictionary<int, float> CountWidthCache = new Dictionary<int, float>(128);
+        private static readonly Dictionary<int, string> CountStringCache = new Dictionary<int, string>(128);
+        private static readonly Dictionary<long, string> OrderLocationTextCache = new Dictionary<long, string>(64);
+        private static readonly Dictionary<string, string> OwnerLabelCache = new Dictionary<string, string>(64);
 
         private static readonly List<WorldObject> s_RawTileObjectsBuffer = new List<WorldObject>(16);
+
+        private static string GetCountString(int count)
+        {
+            if (!CountStringCache.TryGetValue(count, out string s))
+            {
+                s = count.ToString();
+                if (CountStringCache.Count > 500) CountStringCache.Clear();
+                CountStringCache[count] = s;
+            }
+            return s;
+        }
 
         private static float GetCountWidth(int count)
         {
             if (!CountWidthCache.TryGetValue(count, out float w))
             {
-                w = Text.CalcSize(count.ToString()).x;
+                w = Text.CalcSize(GetCountString(count)).x;
                 if (CountWidthCache.Count > 500) CountWidthCache.Clear();
                 CountWidthCache[count] = w;
             }
             return w;
+        }
+
+        private static string GetOrderLocationText(TradeOrder item)
+        {
+            if (!OrderLocationTextCache.TryGetValue(item.Id, out string text))
+            {
+                if (item.Place.DayPath > 0)
+                {
+                    text = "OCity_Dialog_Exchenge_Tile".TranslateCache() + " " + ((int)item.Place.DayPath).ToString() + " "
+                        + "OCity_Dialog_Exchenge_To".TranslateCache() + " " + item.Place.Name;
+                }
+                else
+                {
+                    text = item.Place.Name ?? string.Empty;
+                }
+                if (OrderLocationTextCache.Count > 500) OrderLocationTextCache.Clear();
+                OrderLocationTextCache[item.Id] = text;
+            }
+            return text;
+        }
+
+        private static string GetOwnerLabel(string ownerLogin)
+        {
+            if (string.IsNullOrEmpty(ownerLogin)) return string.Empty;
+            if (!OwnerLabelCache.TryGetValue(ownerLogin, out string label))
+            {
+                label = ownerLogin + (ownerLogin == SessionClientController.My?.Login ? CachedYouSuffix : "");
+                if (OwnerLabelCache.Count > 500) OwnerLabelCache.Clear();
+                OwnerLabelCache[ownerLogin] = label;
+            }
+            return label;
         }
 
         private static void EnsureStaticTranslations()
@@ -195,7 +246,10 @@ namespace RimWorldOnlineCity.UI
                 {
                     ModBaseData.RunMainThread(() =>
                     {
-                        Find.WindowStack.Add(new Dialog_MessageBox("OC_PlayerClient_EnemiesOnMap".Translate()));
+                        if (Find.WindowStack != null)
+                        {
+                            Find.WindowStack.Add(new Dialog_MessageBox("OC_PlayerClient_EnemiesOnMap".Translate()));
+                        }
                     });
                 });
             }
@@ -415,6 +469,8 @@ namespace RimWorldOnlineCity.UI
             StatusLoadOrders = null;
             LoaderOrders = null;
             OrdersGrid = null;
+            OrderLocationTextCache.Clear();
+            OwnerLabelCache.Clear();
         }
 
         public override void PostClose()
@@ -431,7 +487,7 @@ namespace RimWorldOnlineCity.UI
                 EnsureStaticTranslations();
 
                 float margin = 5f;
-                var btnSize = new Vector2(140f, 35f);
+                var btnSize = BtnSize;
                 Text.Font = GameFont.Small;
 
                 if (Widgets.ButtonText(new Rect(inRect.width - btnSize.x, 0, btnSize.x, btnSize.y), _cachedBtnClose))
@@ -443,10 +499,15 @@ namespace RimWorldOnlineCity.UI
                 Text.Font = GameFont.Medium;
                 Text.Anchor = TextAnchor.MiddleCenter;
 
-                Widgets.Label(rect,
-                    (StatusLoadOrders != null) ? "OCity_Dialog_Exchenge_Trade_OrdersLoad".TranslateCache() + " " + StatusLoadOrders
-                    : (Orders == null || Orders.Count == 0) ? "OCity_Dialog_Exchenge_No_Warrants".TranslateCache()
-                    : "OCity_Dialog_Exchenge_Active_Orders".TranslateCache(Orders.Count.ToString()));
+                string ordersTitle = (StatusLoadOrders != null)
+                    ? "OCity_Dialog_Exchenge_Trade_OrdersLoad".TranslateCache() + " " + StatusLoadOrders
+                    : (Orders == null || Orders.Count == 0)
+                        ? "OCity_Dialog_Exchenge_No_Warrants".TranslateCache()
+                        : _cachedActiveOrdersCount == (Orders?.Count ?? -1) && _cachedActiveOrdersTitle != null
+                            ? _cachedActiveOrdersTitle
+                            : (_cachedActiveOrdersTitle = "OCity_Dialog_Exchenge_Active_Orders".TranslateCache((_cachedActiveOrdersCount = Orders.Count).ToString()));
+
+                Widgets.Label(rect, ordersTitle);
 
                 Text.Font = GameFont.Tiny;
                 Text.Anchor = TextAnchor.UpperLeft;
@@ -462,7 +523,6 @@ namespace RimWorldOnlineCity.UI
                 var screenRect = new Rect(regionRectOut.x, regionRectOut.y + 31f, 400f, 0);
                 var tabRect = new Rect(regionRectOut.x, regionRectOut.y + 31f, regionRectOut.width, regionRectOut.height - 31f);
 
-                // ОПТИМІЗАЦІЯ: кешування списку закладок без виділення пам'яті щокадрово
                 if (_tabsList == null)
                 {
                     _tabThings = new TabRecord(_cachedLabelThingsTab, () => { TabIndex = 0; }, TabIndex == 0);
@@ -542,7 +602,7 @@ namespace RimWorldOnlineCity.UI
                         float currentWidth = rectLine.width;
 
                         // Галочка приватного ордера
-                        var rect2 = new Rect(rectLine.x + rectLine.width - 24f, rectLine.y, 24f, rectLine.height);
+                        var rect2 = new Rect(rectLine.width - 24f, 0f, 24f, rectLine.height);
                         currentWidth -= 24f;
                         var flag = item.PrivatPlayers == null || item.PrivatPlayers.Count == 0;
                         if (Mouse.IsOver(rect2))
@@ -554,10 +614,13 @@ namespace RimWorldOnlineCity.UI
                         Widgets.Checkbox(rect2.position, ref flag, 24f, false);
 
                         // Нік продавця
-                        rect2 = new Rect(rectLine.x + currentWidth - 200f, rectLine.y, 200f, rectLine.height);
+                        rect2 = new Rect(currentWidth - 200f, 0f, 200f, rectLine.height);
                         currentWidth -= 200f;
                         var rect2p = new Rect(rect2.x, 0f, 24f, 24f);
-                        if (Widgets.ButtonImage(rect2p, GeneralTexture.Get.ByName("pl_" + item.Owner.Login)))
+
+                        // ОПТИМІЗАЦІЯ: кешована іконка замість string concat
+                        var playerIcon = GameInterfaceHelper.GetPlayerIcon(item.Owner.Login);
+                        if (Widgets.ButtonImage(rect2p, playerIcon ?? GeneralTexture.Null))
                         {
                             Dialog_InfoPlayer.ShowInfo(item.Owner.Login);
                         }
@@ -566,10 +629,11 @@ namespace RimWorldOnlineCity.UI
                         {
                             TooltipHandler.TipRegion(rect2p, item.Owner.Login + Environment.NewLine + "OCity_Dialog_Exchenge_BeenOnline".TranslateCache() + item.Owner.LastSaveTime.ToGoodUtcString());
                         }
-                        Widgets.Label(rect2p, item.Owner.Login + (item.Owner.Login == SessionClientController.My?.Login ? CachedYouSuffix : ""));
+                        // ОПТИМІЗАЦІЯ: нуль-алокаційний кеш мітки власника
+                        Widgets.Label(rect2p, GetOwnerLabel(item.Owner.Login));
 
                         // Відстань та локація
-                        rect2 = new Rect(rectLine.x + currentWidth - 200f, rectLine.y, 200f, rectLine.height);
+                        rect2 = new Rect(currentWidth - 200f, 0f, 200f, rectLine.height);
                         currentWidth -= 200f;
 
                         rect2p = new Rect(rect2.x, 0f, 24f, rect2.height);
@@ -584,43 +648,38 @@ namespace RimWorldOnlineCity.UI
                         }
                         GUI.color = Color.white;
 
-                        string text = "";
-                        if (item.Place.DayPath > 0)
-                        {
-                            text = "OCity_Dialog_Exchenge_Tile".TranslateCache() + " " + ((int)item.Place.DayPath).ToString() + " "
-                                + "OCity_Dialog_Exchenge_To".TranslateCache() + " ";
-                        }
-                        text += item.Place.Name;
+                        // ОПТИМІЗАЦІЯ: кешований текст локації замість щокадрової конкатенації
+                        string locationText = GetOrderLocationText(item);
                         rect2p = new Rect(rect2.x + 24f, 0f, rect2.width - 24f, rect2.height);
                         if (Mouse.IsOver(rect2p))
                         {
-                            TooltipHandler.TipRegion(rect2p, "OCity_Dialog_Exchenge_Location_Goods".TranslateCache() + Environment.NewLine + text);
+                            TooltipHandler.TipRegion(rect2p, "OCity_Dialog_Exchenge_Location_Goods".TranslateCache() + Environment.NewLine + locationText);
                         }
-                        Widgets.Label(rect2p, text);
+                        Widgets.Label(rect2p, locationText);
 
                         // Кількість повторів
-                        rect2 = new Rect(rectLine.x + currentWidth - 60f, rectLine.y, 60f, rectLine.height);
+                        rect2 = new Rect(currentWidth - 60f, 0f, 60f, rectLine.height);
                         currentWidth -= 60f;
-                        text = item.CountReady.ToString();
+                        string countStr = GetCountString(item.CountReady);
                         if (Mouse.IsOver(rect2))
                         {
-                            TooltipHandler.TipRegion(rect2, "OCity_Dialog_Exchenge_Max_Repetition_Transaction".TranslateCache() + Environment.NewLine + text);
+                            TooltipHandler.TipRegion(rect2, "OCity_Dialog_Exchenge_Max_Repetition_Transaction".TranslateCache() + Environment.NewLine + countStr);
                         }
-                        Widgets.Label(rect2, text);
+                        Widgets.Label(rect2, countStr);
 
                         // Іконки продажу
-                        rect2 = new Rect(rectLine.x, rectLine.y, currentWidth / 2f, rectLine.height);
-                        var rect3 = new Rect(rect2.x, rect2.y, rectLine.height, rectLine.height);
+                        rect2 = new Rect(0f, 0f, currentWidth / 2f, rectLine.height);
+                        var rect3 = new Rect(rect2.x, 0f, rectLine.height, rectLine.height);
                         for (int i = 0; i < item.SellThings.Count; i++)
                         {
                             var th = item.SellThings[i];
                             GameUtils.DravLineThing(rect3, th, false);
                             int cnt = th.Count;
                             float textCntW = GetCountWidth(cnt);
-                            var labelRect = new Rect(rect3.xMax, rect3.y, textCntW, rect3.height);
-                            Widgets.Label(labelRect, cnt.ToString());
+                            var labelRect = new Rect(rect3.xMax, 0f, textCntW, rect3.height);
+                            Widgets.Label(labelRect, GetCountString(cnt));
 
-                            var totalItemRect = new Rect(rect3.x, rect3.y, rect3.width + textCntW, rect3.height);
+                            var totalItemRect = new Rect(rect3.x, 0f, rect3.width + textCntW, rect3.height);
                             if (Mouse.IsOver(totalItemRect))
                             {
                                 TooltipHandler.TipRegion(totalItemRect, th.LabelText);
@@ -629,18 +688,18 @@ namespace RimWorldOnlineCity.UI
                         }
 
                         // Іконки запитуваного (купівлі)
-                        rect2 = new Rect(rectLine.x + rect2.width, rectLine.y, currentWidth - rect2.width, rectLine.height);
-                        rect3 = new Rect(rect2.x, rect2.y, rectLine.height, rectLine.height);
+                        rect2 = new Rect(rect2.width, 0f, currentWidth - rect2.width, rectLine.height);
+                        rect3 = new Rect(rect2.x, 0f, rectLine.height, rectLine.height);
                         for (int i = 0; i < item.BuyThings.Count; i++)
                         {
                             var th = item.BuyThings[i];
                             GameUtils.DravLineThing(rect3, th, false);
                             int cnt = th.Count;
                             float textCntW = GetCountWidth(cnt);
-                            var labelRect = new Rect(rect3.xMax, rect3.y, textCntW, rect3.height);
-                            Widgets.Label(labelRect, cnt.ToString());
+                            var labelRect = new Rect(rect3.xMax, 0f, textCntW, rect3.height);
+                            Widgets.Label(labelRect, GetCountString(cnt));
 
-                            var totalItemRect = new Rect(rect3.x, rect3.y, rect3.width + textCntW, rect3.height);
+                            var totalItemRect = new Rect(rect3.x, 0f, rect3.width + textCntW, rect3.height);
                             if (Mouse.IsOver(totalItemRect))
                             {
                                 TooltipHandler.TipRegion(totalItemRect, th.LabelText);
@@ -758,7 +817,7 @@ namespace RimWorldOnlineCity.UI
                 }
                 catch (Exception e)
                 {
-                    Log.Error("UpdateWorldAndOrdersList " + e.ToString());
+                    Log.Error("UpdateWorldAndOrdersList " + e);
                 }
                 ActiveElementBlock = false;
             };
@@ -853,7 +912,7 @@ namespace RimWorldOnlineCity.UI
                     int maxCnt = t.MaxCount;
                     rowDataDic[t] = new ThingRowData
                     {
-                        MaxCountStr = maxCnt.ToString(),
+                        MaxCountStr = GetCountString(maxCnt),
                         MarketValueStr = t.AnyThing.MarketValue.ToStringMoney(),
                         Component = new TextFieldNumericBox(t, () => !ActiveElementBlock, AddThingGridValueChanged) { Max = maxCnt }
                     };
@@ -1166,7 +1225,7 @@ namespace RimWorldOnlineCity.UI
 
         private void ThrowThingList()
         {
-            if (AddThingGrid.DataSource == null) return;
+            if (AddThingGrid?.DataSource == null) return;
 
             float dropCost = 0f;
             var ds = AddThingGrid.DataSource;
@@ -1175,7 +1234,6 @@ namespace RimWorldOnlineCity.UI
                 var item = ds[i];
                 if (item.CountToTransfer == 0) continue;
 
-                // ОПТИМІЗАЦІЯ: перевірка напряму по Thing без створення непотрібного ThingTrade
                 var thing = item.AnyThing;
                 if (thing is Pawn || thing is Corpse) return;
                 float marketValue = thing.MarketValue;
@@ -1186,11 +1244,8 @@ namespace RimWorldOnlineCity.UI
 
             if (dropCost == 0f) return;
 
-            if (ExchengeUtils.MoveSelectThings(WorldObjectCurrent, null, AddThingGrid.DataSource, () =>
-            {
-                SetPlaceCurrent(WorldObjectCurrent);
-                AddThingGrid = null;
-            }))
+            ActiveElementBlock = true;
+            if (!ExchengeUtils.MoveSelectThings(WorldObjectCurrent, null, AddThingGrid.DataSource, () =>
             {
                 int summ = (int)(dropCost * 10f / 100f);
                 if (WorldObjectCurrent is TradeThingsOnline)
@@ -1216,15 +1271,18 @@ namespace RimWorldOnlineCity.UI
                         ExchengeUtils.SpawnThings(ths, s.Map);
                     }
                 }
+                SetPlaceCurrent(WorldObjectCurrent);
+                AddThingGrid = null;
+                ActiveElementBlock = false;
+            }))
+            {
+                ActiveElementBlock = false;
             }
-
-            SetPlaceCurrent(WorldObjectCurrent);
-            AddThingGrid = null;
         }
 
         private void TransferThingList()
         {
-            if (AddThingGrid.DataSource == null || !(WorldObjectCurrent is TradeThingsOnline)) return;
+            if (AddThingGrid?.DataSource == null || !(WorldObjectCurrent is TradeThingsOnline)) return;
 
             var select = AddThingGrid.DataSource.TransferableOneWaysToDictionary();
             var toTargetEntry = new List<ThingTrade>(select.Count);
@@ -1783,8 +1841,11 @@ namespace RimWorldOnlineCity.UI
 
             if (CachedHitPointsMeasureWidth == 0f)
             {
+                var font = Text.Font;
+                Text.Font = GameFont.Tiny;
                 CachedHitPointsMeasureWidth = Text.CalcSize("888/888 ").x;
                 CachedPercentMeasureWidth = Text.CalcSize("188% ").x;
+                Text.Font = font;
             }
 
             int maxHp = th.MaxHitPoints > 0 ? th.MaxHitPoints : 1;
@@ -1820,6 +1881,8 @@ namespace RimWorldOnlineCity.UI
             try
             {
                 OrdersGrid = null;
+                OrderLocationTextCache.Clear();
+                OwnerLabelCache.Clear();
 
                 SessionClientController.Command((connect) =>
                 {
@@ -1853,6 +1916,8 @@ namespace RimWorldOnlineCity.UI
 
                     Loger.Log("LoaderOrdersStart " + (orders?.Count ?? 0));
 
+                    // ОПТИМІЗАЦІЯ: дедуплікація хешів перед передачею в чергу AnyLoad
+                    var addedHashes = new HashSet<long>();
                     var tasks = new List<AnyLoadTask>(orders.Count * 2);
                     for (int i = 0; i < orders.Count; i++)
                     {
@@ -1861,7 +1926,11 @@ namespace RimWorldOnlineCity.UI
                         {
                             for (int j = 0; j < sts.Count; j++)
                             {
-                                tasks.Add(new AnyLoadTask { Hash = sts[j].DataHash });
+                                long h = sts[j].DataHash;
+                                if (h != 0 && addedHashes.Add(h))
+                                {
+                                    tasks.Add(new AnyLoadTask { Hash = h });
+                                }
                             }
                         }
                     }
@@ -1900,6 +1969,7 @@ namespace RimWorldOnlineCity.UI
                             StatusLoadOrders = null;
                             LoaderOrders = null;
                             OrdersGrid = null;
+                            OrderLocationTextCache.Clear();
                         }
                     },
                     (loader, precent) =>
