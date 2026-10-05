@@ -6,7 +6,6 @@ using ServerOnlineCity.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading;
@@ -32,7 +31,14 @@ namespace ServerOnlineCity
         public readonly WorkTimer Timer;
 
         public string SaveFileName;
-        public string SaveFolderDataPlayers => Path.Combine(Path.GetDirectoryName(SaveFileName.NormalizePath()), "DataPlayers");
+        public string SaveFolderDataPlayers
+        {
+            get
+            {
+                var dir = !string.IsNullOrEmpty(SaveFileName) ? Path.GetDirectoryName(SaveFileName.NormalizePath()) : null;
+                return Path.Combine(dir ?? AppDomain.CurrentDomain.BaseDirectory, "DataPlayers");
+            }
+        }
 
         private readonly RepositorySaveData RepSaveData;
         private readonly RepositoryFileSharing RepFileSharing;
@@ -217,7 +223,7 @@ namespace ServerOnlineCity
                                             add.Add(itemKey);
                                         }
                                     }
-                                    if (add.Count > 0) AddIntruder(add, $" auto add by login {pl.Public.Login}");
+                                    if (add.Count > 0) AddIntruder(add, $" auto add by login {pl.Public?.Login}");
                                 }
                             }
                         }
@@ -238,6 +244,8 @@ namespace ServerOnlineCity
 
         public static void AddIntruder(List<string> keys, string comment)
         {
+            if (keys == null || keys.Count == 0) return;
+
             lock (BlockkeyLock)
             {
                 if (Blockkey == null) CheckIsIntruder("");
@@ -245,20 +253,26 @@ namespace ServerOnlineCity
                 var sb = new StringBuilder();
                 for (int i = 0; i < keys.Count; i++)
                 {
-                    var k = keys[i].Replace("@@@", "").Trim();
-                    if (k.Length > 0 && (Blockkey == null || !Blockkey.Contains(k)))
+                    var k = keys[i]?.Replace("@@@", "").Trim();
+                    if (!string.IsNullOrEmpty(k) && (Blockkey == null || !Blockkey.Contains(k)))
                     {
-                        sb.AppendLine(k + " //" + comment.Replace("\r", "").Replace("\n", " "));
+                        sb.AppendLine(k + " //" + (comment ?? "").Replace("\r", "").Replace("\n", " "));
+                        Blockkey?.Add(k);
                     }
                 }
 
                 if (sb.Length > 0)
                 {
                     var fileName = Loger.PathLog + "blockkey.txt";
-                    File.AppendAllText(fileName, sb.ToString(), Encoding.UTF8);
-
-                    BlockkeyUpdate = DateTime.MinValue;
-                    CheckIsIntruder("");
+                    try
+                    {
+                        File.AppendAllText(fileName, sb.ToString(), Encoding.UTF8);
+                        BlockkeyLastWriteTime = File.GetLastWriteTimeUtc(fileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("AddIntruder write error: " + ex.Message, Loger.LogLevel.ERROR);
+                    }
                 }
             }
         }
@@ -315,7 +329,7 @@ namespace ServerOnlineCity
                                         var b = lines[idx];
                                         var bb = b.Trim();
                                         var comment = "";
-                                        var ic = bb.IndexOf(" ");
+                                        var ic = bb.IndexOf(' ');
                                         if (ic > 0)
                                         {
                                             comment = bb.Substring(ic);
@@ -334,9 +348,9 @@ namespace ServerOnlineCity
                                         }
                                         if (!validChars) continue;
 
-                                        var ls = bb.LastIndexOf("/");
+                                        var ls = bb.LastIndexOf('/');
                                         if (ls < 0) { expanded.Add(bb + comment); continue; }
-                                        var lp = bb.LastIndexOf(".");
+                                        var lp = bb.LastIndexOf('.');
                                         if (lp <= 0) continue;
                                         if (!int.TryParse(bb.Substring(lp + 1, ls - (lp + 1)), out int ib) ||
                                             !int.TryParse(bb.Substring(ls + 1), out int ie)) continue;
@@ -390,50 +404,62 @@ namespace ServerOnlineCity
                 if (data.WorldObjectsDeleted == null) data.WorldObjectsDeleted = new List<WorldObjectEntry>();
 
                 var now = DateTime.UtcNow;
-                for (int i = data.WorldObjects.Count - 1; i >= 0; i--)
+                if (data.WorldObjects != null)
                 {
-                    var item = data.WorldObjects[i];
-                    if (item.LoginOwner != login) continue;
-
-                    item.UpdateTime = now;
-                    data.WorldObjects.RemoveAt(i);
-                    data.WorldObjectsDeleted.Add(item);
-                }
-
-                for (int i = data.Orders.Count - 1; i >= 0; i--)
-                {
-                    var item = data.Orders[i];
-                    if (item.Owner.Login != login) continue;
-                    data.OrderOperator.OrderRemove(item);
-                }
-
-                var folderName = Get.RepFileSharing.GetFolderName(FileSharingCategory.ColonyScreen);
-                if (Directory.Exists(folderName))
-                {
-                    var files = Directory.GetFiles(folderName, login + "_*_*.png");
-                    for (int i = 0; i < files.Length; i++)
+                    for (int i = data.WorldObjects.Count - 1; i >= 0; i--)
                     {
-                        try
+                        var item = data.WorldObjects[i];
+                        if (item.LoginOwner != login) continue;
+
+                        item.UpdateTime = now;
+                        data.WorldObjects.RemoveAt(i);
+                        data.WorldObjectsDeleted.Add(item);
+                    }
+                }
+
+                if (data.Orders != null && data.OrderOperator != null)
+                {
+                    for (int i = data.Orders.Count - 1; i >= 0; i--)
+                    {
+                        var item = data.Orders[i];
+                        if (item.Owner?.Login != login) continue;
+                        data.OrderOperator.OrderRemove(item);
+                    }
+                }
+
+                var folderName = Get.RepFileSharing?.GetFolderName(FileSharingCategory.ColonyScreen);
+                if (!string.IsNullOrEmpty(folderName) && Directory.Exists(folderName))
+                {
+                    try
+                    {
+                        var files = Directory.GetFiles(folderName, login + "_*_*.png");
+                        for (int i = 0; i < files.Length; i++)
                         {
                             if (File.Exists(files[i])) File.Delete(files[i]);
                         }
-                        catch { }
                     }
+                    catch { }
                 }
 
-                for (int i = 0; i < data.PlayersAll.Count; i++)
+                if (data.PlayersAll != null)
                 {
-                    var fMails = data.PlayersAll[i].FunctionMails;
-                    if (fMails == null) continue;
-
-                    for (int ii = fMails.Count - 1; ii >= 0; ii--)
+                    for (int i = 0; i < data.PlayersAll.Count; i++)
                     {
-                        if (fMails[ii] is FMailIncident fmail && fmail.Mail?.From?.Login == login)
+                        var fMails = data.PlayersAll[i].FunctionMails;
+                        if (fMails == null) continue;
+
+                        for (int ii = fMails.Count - 1; ii >= 0; ii--)
                         {
-                            fMails.RemoveAt(ii);
+                            if (fMails[ii] is FMailIncident fmail && fmail.Mail?.From?.Login == login)
+                            {
+                                fMails.RemoveAt(ii);
+                            }
                         }
                     }
                 }
+
+                // Обов'язкова позначка для збереження видалених даних на диск
+                Get.ChangeData = true;
             }
         }
 
@@ -462,8 +488,23 @@ namespace ServerOnlineCity
                 if (!File.Exists(fileToLoad))
                 {
                     Data = new BaseContainer();
-                    Save();
                     Data.PostLoad();
+
+                    Chat firstChat = null;
+                    if (Data.PlayerSystem?.Chats != null)
+                    {
+                        foreach (var chat in Data.PlayerSystem.Chats.Keys)
+                        {
+                            firstChat = chat;
+                            break;
+                        }
+                    }
+                    if (firstChat != null)
+                    {
+                        ChatManager.Instance.NewChatManager(Data.MaxIdChat, firstChat);
+                    }
+
+                    Save();
                     Loger.Log("Server Create Data");
                 }
                 else
@@ -484,10 +525,22 @@ namespace ServerOnlineCity
 
                         Data.PostLoad();
 
-                        Loger.Log("Server Load done. Users " + Data.GetPlayersAll.Count + ": "
-                            + string.Join(", ", Data.GetPlayerLoginsAll));
+                        Loger.Log("Server Load done. Users " + (Data.GetPlayersAll?.Count ?? 0) + ": "
+                            + (Data.GetPlayerLoginsAll != null ? string.Join(", ", Data.GetPlayerLoginsAll) : ""));
 
-                        ChatManager.Instance.NewChatManager(Data.MaxIdChat, Data.PlayerSystem.Chats.Keys.First());
+                        Chat firstChat = null;
+                        if (Data.PlayerSystem?.Chats != null)
+                        {
+                            foreach (var chat in Data.PlayerSystem.Chats.Keys)
+                            {
+                                firstChat = chat;
+                                break;
+                            }
+                        }
+                        if (firstChat != null)
+                        {
+                            ChatManager.Instance.NewChatManager(Data.MaxIdChat, firstChat);
+                        }
                     }
 
                     Loger.Log($"Server local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss.ffff}");
@@ -507,6 +560,8 @@ namespace ServerOnlineCity
             lock (SaveLock)
             {
                 if (onlyChangeData && !ChangeData) return;
+                if (Data == null || string.IsNullOrEmpty(SaveFileName)) return;
+
                 Loger.Log("Server Saving");
 
                 var tempFileName = SaveFileName + ".tmp";
@@ -514,13 +569,17 @@ namespace ServerOnlineCity
 
                 try
                 {
-                    Data.MaxIdChat = ChatManager.Instance.MaxChatId;
-
-                    using (var fs = new FileStream(tempFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                    // Блокування Data унеможливлює збій "Collection was modified" під час бінарної серіалізації
+                    lock (Data)
                     {
-                        var bf = new BinaryFormatter();
-                        bf.Serialize(fs, Data);
-                        fs.Flush();
+                        Data.MaxIdChat = ChatManager.Instance.MaxChatId;
+
+                        using (var fs = new FileStream(tempFileName, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                        {
+                            var bf = new BinaryFormatter();
+                            bf.Serialize(fs, Data);
+                            fs.Flush();
+                        }
                     }
 
                     if (File.Exists(SaveFileName))
