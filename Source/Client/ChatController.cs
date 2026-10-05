@@ -54,7 +54,7 @@ namespace RimWorldOnlineCity
 
         private static readonly Func<string, string> ShortTagDefFunc = c => (c == "Human" ? "<img IconHuman />" : $"<img defName={c} />") + $"<l>{c}.label</l>";
 
-        private static readonly Func<int, string> ShortTagTileFunc = t =>
+        private static string GenerateTileTag(int t)
         {
             if (Find.WorldGrid == null || t < 0 || t >= Find.WorldGrid.tiles.Count) return null;
             var tileObj = Find.WorldGrid[t];
@@ -68,7 +68,7 @@ namespace RimWorldOnlineCity
             }
 
             return $"<btn name=tile{t} class=tile d={t} arg={t}>{msg}</btn>";
-        };
+        }
 
         public static void Init(bool inOnlineGame)
         {
@@ -279,9 +279,15 @@ namespace RimWorldOnlineCity
         private static string ShortTagTile(string content)
         {
             if (!int.TryParse(content, out int tile)) return null;
-            if (Find.WorldGrid == null || tile < 0 || tile >= Find.WorldGrid.tiles.Count) return null;
 
-            return ShortTagTileCache.GetOrAdd(tile, ShortTagTileFunc);
+            if (ShortTagTileCache.TryGetValue(tile, out var cached)) return cached;
+
+            var result = GenerateTileTag(tile);
+            if (result != null)
+            {
+                ShortTagTileCache[tile] = result;
+            }
+            return result;
         }
 
         private static string ShortTagDef(string content)
@@ -291,7 +297,8 @@ namespace RimWorldOnlineCity
 
         private static string ShortTagServerId(string content)
         {
-            if (!int.TryParse(content, out int serverId)) return null;
+            // ОПТИМІЗАЦІЯ І ВИПРАВЛЕННЯ БАГУ: підтримка 64-бітних ідентифікаторів PlaceServerId
+            if (!long.TryParse(content, out long serverId)) return null;
 
             int tile = 0;
             string player = null;
@@ -499,7 +506,10 @@ namespace RimWorldOnlineCity
             if (error != null)
             {
                 Loger.Log("IncidentLog ChatController.BeforeStartIncident errorMessage:" + error, Loger.LogLevel.ERROR);
-                Find.WindowStack.Add(new Dialog_MessageBox(error));
+                ModBaseData.RunMainThread(() =>
+                {
+                    Find.WindowStack?.Add(new Dialog_MessageBox(error));
+                });
                 return new ModelStatus { Status = 1 };
             }
 
@@ -511,7 +521,10 @@ namespace RimWorldOnlineCity
         {
             var errMessage = stat?.Message ?? "Error call incident";
             Loger.Log("IncidentLog ChatController.AfterStartIncident Error: " + errMessage, Loger.LogLevel.ERROR);
-            Find.WindowStack.Add(new Dialog_MessageBox(errMessage));
+            ModBaseData.RunMainThread(() =>
+            {
+                Find.WindowStack?.Add(new Dialog_MessageBox(errMessage));
+            });
         }
         #endregion
     }
