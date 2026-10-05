@@ -10,25 +10,30 @@ namespace RimWorldOnlineCity.GameClasses
 {
     internal static class GameInterfaceHelper
     {
-        private static readonly Dictionary<string, string> PlayerIconKeyCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        public static string GetPlayerIconKey(string login)
-        {
-            if (string.IsNullOrEmpty(login)) return string.Empty;
-            if (!PlayerIconKeyCache.TryGetValue(login, out var key))
-            {
-                key = "pl_" + login;
-                PlayerIconKeyCache[login] = key;
-            }
-            return key;
-        }
+        // ОПТИМІЗАЦІЯ: прямий кеш Texture2D за логіном замість щокадрового пошуку в GeneralTexture
+        private static readonly Dictionary<string, Texture2D> PlayerIconCache =
+            new Dictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
 
         public static Texture2D GetPlayerIcon(string login)
         {
             if (string.IsNullOrEmpty(login)) return null;
-            var key = GetPlayerIconKey(login);
-            var icon = GeneralTexture.Get?.ByName(key);
-            return (icon != null && icon != GeneralTexture.Null) ? icon : null;
+
+            if (!PlayerIconCache.TryGetValue(login, out var icon))
+            {
+                var key = "pl_" + login;
+                var tex = GeneralTexture.Get?.ByName(key);
+                icon = (tex != null && tex != GeneralTexture.Null) ? tex : null;
+                if (icon != null)
+                {
+                    PlayerIconCache[login] = icon;
+                }
+            }
+            return icon;
+        }
+
+        public static void ClearCache()
+        {
+            PlayerIconCache.Clear();
         }
     }
 

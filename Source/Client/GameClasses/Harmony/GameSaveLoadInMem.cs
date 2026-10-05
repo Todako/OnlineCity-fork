@@ -126,7 +126,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
         public static int LastSaveSize = 1024 * 1024 * 4;
 
-        // ОПТИМІЗАЦІЯ: швидкі делегати прямого доступу до приватних полів ScribeSaver замість рефлексії
         private static readonly AccessTools.FieldRef<ScribeSaver, string> CurPathRef =
             AccessTools.FieldRefAccess<ScribeSaver, string>("curPath");
         private static readonly AccessTools.FieldRef<ScribeSaver, HashSet<string>> SavedNodesRef =
@@ -163,9 +162,19 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             {
                 Log.Error("Current path is not null in InitSaving");
                 CurPathRef(__instance) = null;
-                SavedNodesRef(__instance)?.Clear();
-                NextListElementTemporaryIdRef(__instance) = 0;
             }
+
+            // Гарантуємо ініціалізацію збережених вузлів
+            var savedNodes = SavedNodesRef(__instance);
+            if (savedNodes == null)
+            {
+                SavedNodesRef(__instance) = new HashSet<string>();
+            }
+            else
+            {
+                savedNodes.Clear();
+            }
+            NextListElementTemporaryIdRef(__instance) = 0;
 
             try
             {
@@ -208,6 +217,21 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             Loger.Log("ScribeSaver_InitSaving_Patch End");
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(ScribeSaver))]
+    [HarmonyPatch("FinalizeSaving")]
+    internal static class ScribeSaver_FinalizeSaving_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            if (!ScribeSaver_InitSaving_Patch.Enable) return;
+            if (ScribeSaver_InitSaving_Patch.SaveData != null)
+            {
+                ScribeSaver_InitSaving_Patch.LastSaveSize = (int)ScribeSaver_InitSaving_Patch.SaveData.Length;
+            }
         }
     }
 }

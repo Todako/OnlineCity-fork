@@ -29,7 +29,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (Current.Game == null) return;
             if (SessionClient.Get?.IsLogined != true) return;
 
-            if (SessionClientController.Data?.DisableDevMode == true)
+            if (SessionClientController.Data != null && SessionClientController.Data.DisableDevMode)
             {
                 if (Prefs.DevMode) Prefs.DevMode = false;
                 if (IdeoUIUtility.devEditMode) IdeoUIUtility.devEditMode = false;
@@ -55,7 +55,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (Current.Game == null) return true;
             if (SessionClient.Get?.IsLogined != true) return true;
 
-            return SessionClientController.Data?.DisableDevMode != true;
+            return SessionClientController.Data == null || !SessionClientController.Data.DisableDevMode;
         }
     }
 
@@ -71,7 +71,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             if (Current.Game == null) return;
             if (SessionClient.Get?.IsLogined != true) return;
-            if (SessionClientController.Data?.DisableDevMode != true) return;
+            if (SessionClientController.Data == null || !SessionClientController.Data.DisableDevMode) return;
 
             IgnoreRestrictionsRef(__instance) = false;
         }
@@ -91,7 +91,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             if (Current.Game == null) return true;
             if (SessionClient.Get?.IsLogined != true) return true;
-            if (SessionClientController.Data?.DisableDevMode != true) return true;
+            if (SessionClientController.Data == null || !SessionClientController.Data.DisableDevMode) return true;
 
             Loger.TransLog("ShowDevMode");
             return true;
@@ -113,7 +113,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (SessionClient.Get?.IsLogined != true) return true;
             if (Prefs.DevMode) return true;
 
-            // ВИПРАВЛЕНО CS0023: прямий доступ до поля структури GeneralSettings
             if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.DisableGameSettings)
             {
                 Loger.Log("Page_SelectStorytellerInGame_DoWindowContents_Patch DisableGameSettings");
@@ -136,7 +135,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (SessionClient.Get?.IsLogined != true) return true;
             if (Prefs.DevMode) return true;
 
-            // ВИПРАВЛЕНО CS0023: прямий доступ до поля структури GeneralSettings
             if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.DisableGameSettings)
             {
                 Loger.Log("HugsLibUtility_OpenModSettingsDialog_Patch DisableGameSettings");
@@ -185,6 +183,18 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             var toAdd = ThingEntry.crossReferencingExposables;
             if (toAdd != null && toAdd.Count > 0)
             {
+                // ОПТИМІЗАЦІЯ: швидкий шлях для поодиноких елементів без наповнення буфера на тисячі об'єктів
+                if (toAdd.Count == 1)
+                {
+                    var single = toAdd[0];
+                    if (single != null && !crossRefs.Contains(single))
+                    {
+                        crossRefs.Add(single);
+                    }
+                    toAdd.Clear();
+                    return true;
+                }
+
                 s_ExistingCrossRefsBuffer.Clear();
                 for (int i = 0; i < crossRefs.Count; i++)
                 {
@@ -194,7 +204,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 for (int i = 0; i < toAdd.Count; i++)
                 {
                     var item = toAdd[i];
-                    if (s_ExistingCrossRefsBuffer.Add(item))
+                    if (item != null && s_ExistingCrossRefsBuffer.Add(item))
                     {
                         crossRefs.Add(item);
                     }
@@ -319,8 +329,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     internal static class GlobalTextureAtlasManager_GlobalTextureAtlasManagerUpdate_Patch
     {
         private static List<PawnTextureAtlas> pawnTextureAtlases;
-        private static readonly FieldInfo FrameAssignmentsField =
-            AccessTools.Field(typeof(PawnTextureAtlas), "frameAssignments");
+        private static readonly AccessTools.FieldRef<PawnTextureAtlas, Dictionary<Pawn, PawnTextureAtlasFrameSet>> FrameAssignmentsRef =
+            AccessTools.FieldRefAccess<PawnTextureAtlas, Dictionary<Pawn, PawnTextureAtlasFrameSet>>("frameAssignments");
 
         [HarmonyPrefix]
         public static bool Prefix()
@@ -349,11 +359,11 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
                 catch (Exception exp)
                 {
-                    var assignments = FrameAssignmentsField?.GetValue(pawnTextureAtlase) as Dictionary<Pawn, PawnTextureAtlasFrameSet>;
+                    var assignments = FrameAssignmentsRef(pawnTextureAtlase);
                     if (assignments != null)
                     {
                         var replacement = new Dictionary<Pawn, PawnTextureAtlasFrameSet>(assignments);
-                        FrameAssignmentsField.SetValue(pawnTextureAtlase, replacement);
+                        FrameAssignmentsRef(pawnTextureAtlase) = replacement;
 
                         Log.Message("Exception " + exp.Message + " Replace frameAssignments: "
                             + assignments.Keys.Aggregate("", (r, k) => r + Environment.NewLine + $"{k.LabelCap} hc{k.GetHashCode()} id{k.thingIDNumber}"));
@@ -383,7 +393,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (SessionClient.Get?.IsLogined != true) yield break;
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
 
-            // ВИПРАВЛЕНО CS0023: перевірка Data на null і прямий доступ до структури GeneralSettings
             if (SessionClientController.Data == null || !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
             yield return new Command_Action
@@ -414,7 +423,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (SessionClient.Get?.IsLogined != true) yield break;
             if (__instance.Faction == null || !__instance.Faction.IsPlayer) yield break;
 
-            // ВИПРАВЛЕНО CS0023: перевірка Data на null і прямий доступ до структури GeneralSettings
             if (SessionClientController.Data == null || !SessionClientController.Data.GeneralSettings.ExchengeEnable) yield break;
 
             yield return new Command_Action
