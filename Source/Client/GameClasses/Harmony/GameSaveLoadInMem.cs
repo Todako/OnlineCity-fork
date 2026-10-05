@@ -164,7 +164,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 CurPathRef(__instance) = null;
             }
 
-            // Гарантуємо ініціалізацію збережених вузлів
             var savedNodes = SavedNodesRef(__instance);
             if (savedNodes == null)
             {
@@ -217,21 +216,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             Loger.Log("ScribeSaver_InitSaving_Patch End");
             return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(ScribeSaver))]
-    [HarmonyPatch("FinalizeSaving")]
-    internal static class ScribeSaver_FinalizeSaving_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-            if (!ScribeSaver_InitSaving_Patch.Enable) return;
-            if (ScribeSaver_InitSaving_Patch.SaveData != null)
-            {
-                ScribeSaver_InitSaving_Patch.LastSaveSize = (int)ScribeSaver_InitSaving_Patch.SaveData.Length;
-            }
         }
     }
 }

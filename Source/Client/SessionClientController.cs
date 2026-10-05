@@ -431,6 +431,12 @@ namespace RimWorldOnlineCity
                 ScribeSaver_InitSaving_Patch.Enable = true;
                 GameDataSaveLoader.SaveGame(SaveName);
                 content = ScribeSaver_InitSaving_Patch.SaveData?.ToArray() ?? new byte[0];
+
+                // Безпечне оновлення розміру з готового масиву байтів
+                if (content.Length > 0)
+                {
+                    ScribeSaver_InitSaving_Patch.LastSaveSize = content.Length;
+                }
             }
             finally
             {
