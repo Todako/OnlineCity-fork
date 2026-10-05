@@ -14,30 +14,47 @@ namespace RimWorldOnlineCity
 
         private int TabIndex = 0;
 
-        private PanelChat panelChat;
-        private PanelProfilePlayer panelProfilePlayer;
-        private PanelViewInfo panelViewStates;
+        private readonly PanelChat panelChat;
+        private readonly PanelProfilePlayer panelProfilePlayer;
+        private readonly PanelViewInfo panelViewStates;
 
-
-        public static string AboutGeneralText = MainHelper.VersionInfo + " "
-            + "OCity_AboutTabText".Translate() + Environment.NewLine + Environment.NewLine
-            + "OCity_AboutGeneralText".Translate();
-        private static TextBox AboutBox = new TextBox()
+        private static string _aboutGeneralText;
+        public static string AboutGeneralText
         {
-            Text = AboutGeneralText
-        };
-
-
-
-        public override Vector2 InitialSize
-        {
-            get { return LastInitialSize; }
+            get
+            {
+                if (_aboutGeneralText == null)
+                {
+                    _aboutGeneralText = MainHelper.VersionInfo + " "
+                        + "OCity_AboutTabText".Translate() + Environment.NewLine + Environment.NewLine
+                        + "OCity_AboutGeneralText".Translate();
+                }
+                return _aboutGeneralText;
+            }
         }
 
-        static Dialog_MainOnlineCity IsShow = null;
-        static Vector2 LastInitialSize = new Vector2(750f, 682f);
-        static Vector2 LastInitialPos = new Vector2(0f, 0f);
+        private static TextBox AboutBox;
 
+        public override Vector2 InitialSize => LastInitialSize;
+
+        private static Dialog_MainOnlineCity IsShow = null;
+        private static Vector2 LastInitialSize = new Vector2(750f, 682f);
+        private static Vector2 LastInitialPos = new Vector2(0f, 0f);
+
+        // Кешовані об'єкти вкладок для ліквідації щокадрових виділень пам'яті
+        private List<TabRecord> _tabsList;
+        private TabRecord _tabChat;
+        private TabRecord _tabSettings;
+        private TabRecord _tabAbout;
+
+        // Кешування тексту статусу підключення та пінгу
+        private string _cachedLoginStatus;
+        private int _lastPing = -1;
+        private bool _lastConnectFail = false;
+        private string _lastLogin = null;
+        private long _lastStatusUpdateTicks = 0;
+
+        private List<ListableOption> _aboutOptions;
 
         public Dialog_MainOnlineCity()
         {
@@ -52,39 +69,99 @@ namespace RimWorldOnlineCity
             panelViewStates = new PanelViewInfo();
 
             ChatController.MainPanelChat = panelChat;
+
+            if (AboutBox == null)
+            {
+                AboutBox = new TextBox { Text = AboutGeneralText };
+            }
         }
 
-        static public void ShowHide()
+        public static void ShowHide()
         {
-            if (IsShow == null)
-                Find.WindowStack.Add(IsShow = new Dialog_MainOnlineCity());
+            if (IsShow == null || !Find.WindowStack.IsOpen<Dialog_MainOnlineCity>())
+            {
+                IsShow = new Dialog_MainOnlineCity();
+                Find.WindowStack.Add(IsShow);
+            }
             else
             {
                 IsShow.Close();
                 IsShow = null;
             }
         }
-        static public void ShowChat()
-        {
-            if (IsShow == null) ShowHide();
 
-            IsShow.TabIndex = 0;
+        public static void ShowChat()
+        {
+            if (IsShow == null || !Find.WindowStack.IsOpen<Dialog_MainOnlineCity>())
+            {
+                ShowHide();
+            }
+
+            if (IsShow != null)
+            {
+                IsShow.TabIndex = 0;
+            }
         }
 
         public override void PreOpen()
         {
             base.PreOpen();
-            //EnsureSettingsHaveValidFiles(ClientController.Settings);
             windowRect.Set(LastInitialPos.x, LastInitialPos.y, windowRect.width, windowRect.height);
         }
 
         public override void PostClose()
         {
             IsShow = null;
-            //ClientController.SaveSettings();
         }
 
         private bool DevTest = false;
+
+        private void EnsureTabs()
+        {
+            if (_tabsList == null)
+            {
+                _tabChat = new TabRecord("OCity_Dialog_ListChat".Translate(), () => { TabIndex = 0; }, TabIndex == 0);
+                _tabSettings = new TabRecord("OCity_Dialog_Settings".Translate(), () => { TabIndex = 2; }, TabIndex == 2);
+                _tabAbout = new TabRecord("OCity_Dialog_ListAbout".Translate(), () => { TabIndex = 3; }, TabIndex == 3);
+                _tabsList = new List<TabRecord>(3) { _tabChat, _tabSettings, _tabAbout };
+            }
+            _tabChat.selected = (TabIndex == 0);
+            _tabSettings.selected = (TabIndex == 2);
+            _tabAbout.selected = (TabIndex == 3);
+        }
+
+        private string GetLoginStatusText()
+        {
+            long nowTicks = DateTime.UtcNow.Ticks;
+            var data = SessionClientController.Data;
+            if (data == null) return string.Empty;
+
+            bool fail = data.LastServerConnectFail;
+            int ping = (int)data.Ping.TotalMilliseconds;
+            string login = SessionClientController.My?.Login ?? string.Empty;
+
+            if (_cachedLoginStatus == null
+                || fail != _lastConnectFail
+                || login != _lastLogin
+                || (nowTicks - _lastStatusUpdateTicks > TimeSpan.TicksPerSecond && ping != _lastPing))
+            {
+                _lastConnectFail = fail;
+                _lastPing = ping;
+                _lastLogin = login;
+                _lastStatusUpdateTicks = nowTicks;
+
+                if (fail)
+                {
+                    _cachedLoginStatus = "OCity_Dialog_Connecting".Translate();
+                }
+                else
+                {
+                    _cachedLoginStatus = "OCity_Dialog_Login".Translate() + login + " " + ping + "ms";
+                }
+            }
+            return _cachedLoginStatus;
+        }
+
         public override void DoWindowContents(Rect inRect)
         {
             try
@@ -106,38 +183,29 @@ namespace RimWorldOnlineCity
                 {
                     Close();
                     SessionClientController.Disconnected(null);
-                    //Find.WindowStack.Add(new Dialog_LoginForm());
                     return;
                 }
-
-                //Rect r1 = new Rect(inRect.x - 5f, inRect.y, 180f, 40f); // inRect.width, inRect.height);
-                //Widgets.DrawBoxSolid(r1, new Color(0, 1, 1));
 
                 var screenRect = new Rect(inRect.x, inRect.y + 31f, 500f, 0);
                 var tabRect = new Rect(inRect.x, inRect.y + 31f, inRect.width, inRect.height - 31f);
 
-                List<TabRecord> list = new List<TabRecord>();
-                list.Add(new TabRecord("OCity_Dialog_ListChat".Translate(), () => { TabIndex = 0; }, TabIndex == 0));
-                //list.Add(new TabRecord("OCity_Dialog_ListInfo".Translate(), () => { TabIndex = 1; }, TabIndex == 1));
-                list.Add(new TabRecord("OCity_Dialog_Settings".Translate(), () => { TabIndex = 2; }, TabIndex == 2));
-                list.Add(new TabRecord("OCity_Dialog_ListAbout".Translate(), () => { TabIndex = 3; }, TabIndex == 3));
-                TabDrawer.DrawTabs(screenRect, list);
+                EnsureTabs();
+                TabDrawer.DrawTabs(screenRect, _tabsList);
+
                 if (TabIndex == 0) DoTab0Contents(tabRect);
                 else if (TabIndex == 1) DoTab1Contents(tabRect);
                 else if (TabIndex == 2) DoTab2Contents(tabRect);
                 else if (TabIndex == 3) DoTab3Contents(tabRect);
 
                 Text.Font = GameFont.Small;
-                var loginRect = new Rect(inRect.width - 180f, -2f, 180f, 50f);
-
-                Widgets.Label(loginRect, SessionClientController.Data.LastServerConnectFail
-                    ? "OCity_Dialog_Connecting".Translate()
-                    : "OCity_Dialog_Login".Translate() + SessionClientController.My.Login
-                        + new TaggedString(" ") + (int)SessionClientController.Data.Ping.TotalMilliseconds + new TaggedString("ms"));
+                var loginRect = new Rect(inRect.width - 220f, -2f, 220f, 30f);
+                Text.Anchor = TextAnchor.MiddleRight;
+                Widgets.Label(loginRect, GetLoginStatusText());
+                Text.Anchor = TextAnchor.UpperLeft;
             }
             catch (Exception e)
             {
-                Loger.Log("Dialog_MainOnlineCity Exception: " + e.Message + Environment.NewLine + e.ToString(), Loger.LogLevel.ERROR);
+                Loger.Log("Dialog_MainOnlineCity Exception: " + e.Message + Environment.NewLine + e, Loger.LogLevel.ERROR);
             }
         }
 
@@ -165,42 +233,46 @@ namespace RimWorldOnlineCity
             var chatAreaOuter = new Rect(inRect.x + 150f, inRect.y + 40f, inRect.width - 150f, inRect.height - 30f - 40f);
             AboutBox.Drow(chatAreaOuter);
 
-            var rect2 = new Rect(inRect.x, inRect.y + inRect.height / 2f, 150f, inRect.height - 30f - 40f);
+            var rect2 = new Rect(inRect.x, inRect.y + 30f, 150f, 80f);
             Text.Font = GameFont.Small;
-            List<ListableOption> list2 = new List<ListableOption>();
-            ListableOption item2 = new ListableOption_WebLink("OCity_Dialog_AutorPage".Translate(), "https://steamcommunity.com/sharedfiles/filedetails/?id=1908437382", GeneralTexture.IconForums);
-            list2.Add(item2);
 
-            rect2 = new Rect(inRect.x, inRect.y + 30f, 150f, 40f);
-            Text.Font = GameFont.Small;
-            list2 = new List<ListableOption>();
-            item2 = new ListableOption_WebLink("OCity_Dialog_Regame".Translate(), () =>
+            if (_aboutOptions == null)
             {
-                var form = new Dialog_Input("OCity_Dialog_DeleteData".Translate(), "OCity_Dialog_DeleteDataCheck".Translate());
-                form.PostCloseAction = () =>
+                _aboutOptions = new List<ListableOption>(2)
                 {
-                    if (form.ResultOK)
+                    new ListableOption_WebLink("OCity_Dialog_Regame".Translate(), () =>
                     {
-                        var mainCannal = SessionClientController.Data.Chats[0];
-                        SessionClientController.Command((connect) =>
+                        var form = new Dialog_Input("OCity_Dialog_DeleteData".Translate(), "OCity_Dialog_DeleteDataCheck".Translate());
+                        form.PostCloseAction = () =>
                         {
-                            var res = connect.PostingChat(mainCannal.Id, "/killmyallplease");
-                            if (res != null && res.Status == 0)
+                            if (form.ResultOK)
                             {
-                                SessionClientController.Disconnected("OCity_Dialog_DeletedData".Translate());
+                                var chats = SessionClientController.Data?.Chats;
+                                if (chats != null && chats.Count > 0)
+                                {
+                                    var mainCannal = chats[0];
+                                    SessionClientController.Command((connect) =>
+                                    {
+                                        var res = connect.PostingChat(mainCannal.Id, "/killmyallplease");
+                                        if (res != null && res.Status == 0)
+                                        {
+                                            SessionClientController.Disconnected("OCity_Dialog_DeletedData".Translate());
+                                        }
+                                    });
+                                }
                             }
-                        });
-                    }
+                        };
+                        Find.WindowStack.Add(form);
+                    }, GeneralTexture.IconDelTex),
+                    new ListableOption_WebLink("OCity_Dialog_AutorPage".Translate(), "https://steamcommunity.com/sharedfiles/filedetails/?id=1908437382", GeneralTexture.IconForums)
                 };
-                Find.WindowStack.Add(form);
-            }, GeneralTexture.IconDelTex);
-            list2.Add(item2);
+            }
 
-            float num = OptionListingUtility.DrawOptionListing(rect2, list2);
+            float num = OptionListingUtility.DrawOptionListing(rect2, _aboutOptions);
             GUI.BeginGroup(rect2);
             if (Current.ProgramState == ProgramState.Entry && Widgets.ButtonImage(new Rect(0f, num + 10f, 64f, 32f), LanguageDatabase.activeLanguage.icon))
             {
-                List<FloatMenuOption> list3 = new List<FloatMenuOption>();
+                var list3 = new List<FloatMenuOption>();
                 foreach (LoadedLanguage current in LanguageDatabase.AllLoadedLanguages)
                 {
                     LoadedLanguage localLang = current;
@@ -213,23 +285,6 @@ namespace RimWorldOnlineCity
                 Find.WindowStack.Add(new FloatMenu(list3));
             }
             GUI.EndGroup();
-
-            /*
-            var rectCannals = new Rect(inRect.x, inRect.y, 100f, (float)Math.Round((decimal)(inRect.height / 2f * 10f)) / 10f);
-            Widgets.DrawBoxSolid(inRect, new Color(0.2f, 0.2f, 0));
-            Widgets.DrawBoxSolid(rectCannals, new Color(0.4f, 0.4f, 0));
-
-
-            Widgets.DrawBoxSolid(new Rect(inRect.x + 110f, inRect.y, inRect.width - 110f, inRect.height - 40f)
-                , new Color(0.4f, 0, 0));
-
-            Widgets.DrawBoxSolid(new Rect(inRect.x + 110f, inRect.y + inRect.height - 35f, inRect.width - 110f, 25f)
-                , new Color(0, 0, 0.4f));
-
-            Widgets.Label(inRect, "Вкладка 3");
-            */
         }
-
-
     }
 }

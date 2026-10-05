@@ -56,9 +56,13 @@ namespace RimWorldOnlineCity.UI
             get
             {
                 var chats = SessionClientController.Data?.Chats;
-                if (lbCannals == null || chats == null || lbCannals.SelectedIndex < 0 || lbCannals.SelectedIndex >= chats.Count)
-                    return null;
-                return chats[lbCannals.SelectedIndex];
+                if (lbCannals == null || chats == null) return null;
+                lock (chats)
+                {
+                    if (lbCannals.SelectedIndex < 0 || lbCannals.SelectedIndex >= chats.Count)
+                        return null;
+                    return chats[lbCannals.SelectedIndex];
+                }
             }
         }
 
@@ -89,7 +93,6 @@ namespace RimWorldOnlineCity.UI
             if (chats == null) return;
 
             int chatsCount = 0;
-            Chat selectCannal = null;
             int selectCannalId = 0;
             bool hasSelectedCannal = false;
 
@@ -97,7 +100,7 @@ namespace RimWorldOnlineCity.UI
             {
                 bool nowUpdateChat = DataLastChatsTime != SessionClientController.Data.ChatsTime.Time;
 
-                // ОПТИМІЗАЦІЯ: фільтрація чужих каналів виконується ЛИШЕ при оновленні чату, а не кожні 8 мілісекунд у кадрі
+                // Фільтрація чужих каналів виконується лише при оновленні чату, а не щокадру
                 if (nowUpdateChat || NeedUpdateChat)
                 {
                     var myLogin = SessionClientController.My?.Login;
@@ -297,45 +300,10 @@ namespace RimWorldOnlineCity.UI
 
                     lbPlayers.DataSource = playersData;
                 }
-            }
 
-            Widgets.Label(new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight, leftPanelWidth, 22f), CachedPlayersLabel);
-
-            lbCannals?.Drow();
-            lbPlayers?.Drow();
-
-            var iconRect = new Rect(inRect.x, inRect.y, iconWidth, iconWidth);
-            if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedChannelCreateTip);
-            if (Widgets.ButtonImage(iconRect, GeneralTexture.IconAddTex))
-            {
-                CannalAdd();
-            }
-
-            if (lbCannals != null && lbCannals.SelectedIndex > 0 && chatsCount > lbCannals.SelectedIndex)
-            {
-                iconRect.x += iconWidthSpace;
-                if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedChannelCloseTip);
-                if (Widgets.ButtonImage(iconRect, GeneralTexture.IconDelTex))
-                {
-                    CannalDelete();
-                }
-            }
-
-            if (lbCannals != null && lbCannals.SelectedIndex >= 0 && chatsCount > lbCannals.SelectedIndex)
-            {
-                iconRect.x += iconWidthSpace;
-                if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedOthersFunctionsTip);
-                if (Widgets.ButtonImage(iconRect, GeneralTexture.IconSubMenuTex))
-                {
-                    CannalsMenuShow();
-                }
-            }
-
-            lock (chats)
-            {
                 if (lbCannals != null && lbCannals.SelectedIndex >= 0 && chats.Count > lbCannals.SelectedIndex)
                 {
-                    selectCannal = chats[lbCannals.SelectedIndex];
+                    var selectCannal = chats[lbCannals.SelectedIndex];
                     selectCannalId = selectCannal.Id;
                     hasSelectedCannal = true;
 
@@ -374,6 +342,38 @@ namespace RimWorldOnlineCity.UI
                 }
             }
 
+            Widgets.Label(new Rect(inRect.x, inRect.y + iconWidthSpace + lbCannalsHeight, leftPanelWidth, 22f), CachedPlayersLabel);
+
+            lbCannals?.Drow();
+            lbPlayers?.Drow();
+
+            var iconRect = new Rect(inRect.x, inRect.y, iconWidth, iconWidth);
+            if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedChannelCreateTip);
+            if (Widgets.ButtonImage(iconRect, GeneralTexture.IconAddTex))
+            {
+                CannalAdd();
+            }
+
+            if (lbCannals != null && lbCannals.SelectedIndex > 0 && chatsCount > lbCannals.SelectedIndex)
+            {
+                iconRect.x += iconWidthSpace;
+                if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedChannelCloseTip);
+                if (Widgets.ButtonImage(iconRect, GeneralTexture.IconDelTex))
+                {
+                    CannalDelete();
+                }
+            }
+
+            if (lbCannals != null && lbCannals.SelectedIndex >= 0 && chatsCount > lbCannals.SelectedIndex)
+            {
+                iconRect.x += iconWidthSpace;
+                if (Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, CachedOthersFunctionsTip);
+                if (Widgets.ButtonImage(iconRect, GeneralTexture.IconSubMenuTex))
+                {
+                    CannalsMenuShow();
+                }
+            }
+
             if (hasSelectedCannal)
             {
                 var chatAreaOuter = new Rect(inRect.x + leftPanelWidth + 10f, inRect.y, inRect.width - leftPanelWidth - 10f, inRect.height - 30f);
@@ -405,7 +405,7 @@ namespace RimWorldOnlineCity.UI
                         if (!string.IsNullOrEmpty(textToSend))
                         {
                             ChatInputText = string.Empty;
-                            ev.Use();
+                            if (ev.isKey) ev.Use();
 
                             SessionClientController.Command((connect) =>
                             {
@@ -431,44 +431,54 @@ namespace RimWorldOnlineCity.UI
 
         private void BuildChatBoxText(Chat targetCannal)
         {
-            var posts = targetCannal.Posts;
-            if (posts == null || posts.Count == 0)
+            var posts = targetCannal?.Posts;
+            if (posts == null)
             {
                 ChatBox.Text = string.Empty;
                 return;
             }
 
-            int startIndex = posts.Count - 1;
-            int totalLength = 0;
-            while (startIndex >= 0)
+            // Потокобезпечний обхід списку реплік під час фонової синхронізації
+            lock (posts)
             {
-                int msgLen = posts[startIndex].Message?.Length ?? 0;
-                if (totalLength + msgLen >= 5000)
+                if (posts.Count == 0)
                 {
-                    startIndex++;
-                    break;
+                    ChatBox.Text = string.Empty;
+                    return;
                 }
-                totalLength += msgLen;
-                startIndex--;
+
+                int startIndex = posts.Count - 1;
+                int totalLength = 0;
+                while (startIndex >= 0)
+                {
+                    int msgLen = posts[startIndex]?.Message?.Length ?? 0;
+                    if (totalLength + msgLen >= 5000)
+                    {
+                        startIndex++;
+                        break;
+                    }
+                    totalLength += msgLen;
+                    startIndex--;
+                }
+                if (startIndex < 0) startIndex = 0;
+
+                var sb = new StringBuilder(totalLength + (posts.Count - startIndex) * 64);
+                for (int i = startIndex; i < posts.Count; i++)
+                {
+                    var cp = posts[i];
+                    if (cp == null) continue;
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append('[');
+                    sb.Append(cp.Time.ToGoodUtcString("HH:mm "));
+
+                    string ownerTag = CachedOwnerShortTags.GetOrAdd(cp.OwnerLogin ?? "", l => ChatController.PrepareShortTag("<@" + l + ">"));
+                    sb.Append(ownerTag);
+
+                    sb.Append("]: ");
+                    sb.Append(cp.Message);
+                }
+                ChatBox.Text = sb.ToString();
             }
-            if (startIndex < 0) startIndex = 0;
-
-            var sb = new StringBuilder(totalLength + (posts.Count - startIndex) * 64);
-            for (int i = startIndex; i < posts.Count; i++)
-            {
-                var cp = posts[i];
-                if (sb.Length > 0) sb.AppendLine();
-                sb.Append('[');
-                sb.Append(cp.Time.ToGoodUtcString("HH:mm "));
-
-                // ОПТИМІЗАЦІЯ: кешування тегу автора для усунення важкого парсингу під час додавання нових реплік
-                string ownerTag = CachedOwnerShortTags.GetOrAdd(cp.OwnerLogin ?? "", l => ChatController.PrepareShortTag("<@" + l + ">"));
-                sb.Append(ownerTag);
-
-                sb.Append("]: ");
-                sb.Append(cp.Message);
-            }
-            ChatBox.Text = sb.ToString();
         }
 
         private static ListBoxPlayerItem AddPlayerItem(List<ListBoxPlayerItem> dataSource, HashSet<string> alreadyLogin, string login, string text)
@@ -497,6 +507,7 @@ namespace RimWorldOnlineCity.UI
 
         private static bool IsPlayerOnline(string login)
         {
+            if (string.IsNullOrEmpty(login)) return false;
             if (login == SessionClientController.My?.Login) return true;
             if (SessionClientController.Data?.Players != null &&
                 SessionClientController.Data.Players.TryGetValue(login, out var pClient))
