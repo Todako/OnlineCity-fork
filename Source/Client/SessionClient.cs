@@ -34,6 +34,18 @@ namespace RimWorldOnlineCity
             }
         }
 
+        private bool CheckStatus(ModelStatus stat)
+        {
+            if (stat != null && stat.Status != 0)
+            {
+                ErrorCode = stat.Status;
+                ErrorMessage = stat.Message;
+                return false;
+            }
+
+            return stat != null;
+        }
+
         /// <summary>
         /// Запит на завантаження збереження світу з сервера.
         /// </summary>
@@ -50,18 +62,11 @@ namespace RimWorldOnlineCity
         /// </summary>
         public bool CreateWorld(ModelCreateWorld packet)
         {
+            if (packet == null) return false;
             if (Loger.Enable) Loger.Log("Client CreateWorld");
 
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request7CreateWorld, (int)PackageType.Response8WorldCreated);
-
-            if (stat != null && stat.Status != 0)
-            {
-                ErrorCode = stat.Status;
-                ErrorMessage = stat.Message;
-                return false;
-            }
-
-            return stat != null;
+            return CheckStatus(stat);
         }
 
         /// <summary>
@@ -69,8 +74,7 @@ namespace RimWorldOnlineCity
         /// </summary>
         public bool SendThings(List<ThingEntry> sendThings, string myLogin, string onlinePlayerLogin, long serverId, int tile)
         {
-            // Ранній вихід без виклику важких описів списку та логування
-            if (sendThings == null || sendThings.Count == 0)
+            if (sendThings == null || sendThings.Count == 0 || string.IsNullOrEmpty(onlinePlayerLogin))
             {
                 return false;
             }
@@ -90,15 +94,7 @@ namespace RimWorldOnlineCity
             };
 
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request15, (int)PackageType.Response16);
-
-            if (stat != null && stat.Status != 0)
-            {
-                ErrorCode = stat.Status;
-                ErrorMessage = stat.Message;
-                return false;
-            }
-
-            return stat != null;
+            return CheckStatus(stat);
         }
 
         /// <summary>
@@ -106,18 +102,11 @@ namespace RimWorldOnlineCity
         /// </summary>
         public bool ExchengeEdit(TradeOrder order)
         {
+            if (order == null) return false;
             if (Loger.Enable) Loger.Log("Client ExchengeEdit " + order, Loger.LogLevel.EXCHANGE);
 
             var stat = TransObject<ModelStatus>(order, (int)PackageType.Request21, (int)PackageType.Response22);
-
-            if (stat != null && stat.Status != 0)
-            {
-                ErrorCode = stat.Status;
-                ErrorMessage = stat.Message;
-                return false;
-            }
-
-            return stat != null;
+            return CheckStatus(stat);
         }
 
         /// <summary>
@@ -125,6 +114,8 @@ namespace RimWorldOnlineCity
         /// </summary>
         public bool ExchengeBuy(long orderId, int count)
         {
+            if (orderId <= 0 || count <= 0) return false;
+
             if (Loger.Enable)
             {
                 Loger.Log($"Client ExchengeBuy id={orderId} count={count}", Loger.LogLevel.EXCHANGE);
@@ -132,15 +123,7 @@ namespace RimWorldOnlineCity
 
             var packet = new ModelOrderBuy { OrderId = orderId, Count = count };
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request23, (int)PackageType.Response24);
-
-            if (stat != null && stat.Status != 0)
-            {
-                ErrorCode = stat.Status;
-                ErrorMessage = stat.Message;
-                return false;
-            }
-
-            return stat != null;
+            return CheckStatus(stat);
         }
 
         /// <summary>
@@ -203,15 +186,7 @@ namespace RimWorldOnlineCity
             };
 
             var stat = TransObject<ModelStatus>(packet, (int)PackageType.Request47Storage, (int)PackageType.Response48Storage);
-
-            if (stat != null && stat.Status != 0)
-            {
-                ErrorCode = stat.Status;
-                ErrorMessage = stat.Message;
-                return false;
-            }
-
-            return stat != null;
+            return CheckStatus(stat);
         }
 
         /// <summary>
@@ -219,6 +194,8 @@ namespace RimWorldOnlineCity
         /// </summary>
         public int ExchengeInfo_GetCountThing(ThingTrade thing)
         {
+            if (thing == null) return -1;
+
             var packet = new ModelExchengeInfo
             {
                 Request = ModelExchengeInfoRequest.GetCountThing,

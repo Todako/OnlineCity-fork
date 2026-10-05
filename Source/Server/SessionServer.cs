@@ -88,7 +88,7 @@ namespace ServerOnlineCity
                 k[i] = (byte)(rnd.Next(0, 128) + rnd.Next(0, 128));
             }
 
-            Array.Copy(KeySaltBytes, 0, k, rndLen, KeySaltBytes.Length);
+            Buffer.BlockCopy(KeySaltBytes, 0, k, rndLen, KeySaltBytes.Length);
 
             Key = cryptoHash.GetHash(k);
             KeyStr = Encoding.ASCII.GetString(Key);
@@ -102,6 +102,8 @@ namespace ServerOnlineCity
             {
                 try
                 {
+                    if (requestRaw == null || requestRaw.Length == 0) return;
+
                     var data = new Dictionary<string, byte[]>();
                     var request = JsonEncoding.GetString(requestRaw);
                     int ii = request.IndexOf("\r\n\r\n", StringComparison.Ordinal);
@@ -139,7 +141,7 @@ namespace ServerOnlineCity
 
                                     int len = rawCodeIndexNext - rawCodeIndex;
                                     var content = new byte[len];
-                                    Array.Copy(requestRaw, rawCodeIndex, content, 0, len);
+                                    Buffer.BlockCopy(requestRaw, rawCodeIndex, content, 0, len);
 
                                     if (request != null) request += ", ";
                                     if (content.Length > 1000)
@@ -175,8 +177,8 @@ namespace ServerOnlineCity
                         if (send is byte[] body)
                         {
                             sendBytes = new byte[HttpOkHeaderBytes.Length + body.Length];
-                            Array.Copy(HttpOkHeaderBytes, 0, sendBytes, 0, HttpOkHeaderBytes.Length);
-                            Array.Copy(body, 0, sendBytes, HttpOkHeaderBytes.Length, body.Length);
+                            Buffer.BlockCopy(HttpOkHeaderBytes, 0, sendBytes, 0, HttpOkHeaderBytes.Length);
+                            Buffer.BlockCopy(body, 0, sendBytes, HttpOkHeaderBytes.Length, body.Length);
                         }
                         else
                         {
@@ -203,7 +205,7 @@ namespace ServerOnlineCity
                 }
             }, 1024 * 1024 * 2);
 
-            receiveReady.Wait(2000);
+            receiveReady.Wait(5000);
             receiveReady.Dispose();
         }
 
@@ -222,7 +224,9 @@ namespace ServerOnlineCity
 
                 // Перевірка на REST API запит (перші 4 байти - 'POST')
                 var firstByte = Client.ReceiveFourByte();
-                if (firstByte?.Length == 4
+                if (firstByte == null) return;
+
+                if (firstByte.Length == 4
                     && firstByte[0] == 80
                     && firstByte[1] == 79
                     && firstByte[2] == 83
@@ -237,6 +241,8 @@ namespace ServerOnlineCity
 
                 // Початкове рукостискання
                 var rc = Client.ReceiveBytes(firstByte);
+                if (rc == null) return;
+
                 var crypto = new CryptoProvider();
                 if (SessionClient.UseCryptoKeys) crypto.OpenKey = Encoding.UTF8.GetString(rc);
 
@@ -258,6 +264,9 @@ namespace ServerOnlineCity
                     var rec = Client.ReceiveBytes();
                     if (!IsActive) break;
 
+                    // ОПТИМІЗАЦІЯ І ВИПРАВЛЕННЯ БАГУ: чисте завершення сесії при відключенні клієнта
+                    if (rec == null || rec.Length == 0) break;
+
                     // Обробка швидких службових сигналів без витрат на дешифрування
                     if (rec.Length == 1)
                     {
@@ -277,7 +286,18 @@ namespace ServerOnlineCity
 
                     // Дешифрування та розпакування отриманого пакета
                     var rec2 = CryptoProvider.SymmetricDecrypt(rec, KeyStr);
+                    if (rec2 == null)
+                    {
+                        Loger.Log("Server Network decrypt fail", Loger.LogLevel.WARNING);
+                        break;
+                    }
+
                     var recObj = (ModelContainer)GZip.UnzipObjByte(rec2);
+                    if (recObj == null)
+                    {
+                        Loger.Log("Server Network unzip fail", Loger.LogLevel.WARNING);
+                        break;
+                    }
 
                     if (rec.Length > 1024 * 512)
                     {
@@ -307,6 +327,11 @@ namespace ServerOnlineCity
                     // Стиснення та шифрування пакета-відповіді
                     var ob = GZip.ZipObjByte(sendObj);
                     var send = CryptoProvider.SymmetricEncrypt(ob, KeyStr);
+                    if (send == null)
+                    {
+                        Loger.Log("Server Network encrypt error", Loger.LogLevel.ERROR);
+                        break;
+                    }
 
                     if (send.Length > 1024 * 512)
                     {
@@ -318,13 +343,14 @@ namespace ServerOnlineCity
                     Client.SendMessage(send);
                     long timeSendTicks = Stopwatch.GetTimestamp();
 
-                    long totalMs = (timeSendTicks - startTimestamp) * 1000 / Stopwatch.Frequency;
+                    long freq = Stopwatch.Frequency > 0 ? Stopwatch.Frequency : 1;
+                    long totalMs = (timeSendTicks - startTimestamp) * 1000 / freq;
                     if (totalMs > 900)
                     {
-                        long deserializeMs = (timeDeserializeTicks - startTimestamp) * 1000 / Stopwatch.Frequency;
-                        long workerMs = (timeWorkerTicks - timeDeserializeTicks) * 1000 / Stopwatch.Frequency;
-                        long serializeMs = (timeSerializeTicks - timeWorkerTicks) * 1000 / Stopwatch.Frequency;
-                        long sendMs = (timeSendTicks - timeSerializeTicks) * 1000 / Stopwatch.Frequency;
+                        long deserializeMs = (timeDeserializeTicks - startTimestamp) * 1000 / freq;
+                        long workerMs = (timeWorkerTicks - timeDeserializeTicks) * 1000 / freq;
+                        long serializeMs = (timeSerializeTicks - timeWorkerTicks) * 1000 / freq;
+                        long sendMs = (timeSendTicks - timeSerializeTicks) * 1000 / freq;
 
                         Loger.Log($"Server Network total {totalMs}ms: " +
                             $"Deserialize {deserializeMs}ms, " +
@@ -338,7 +364,10 @@ namespace ServerOnlineCity
                     {
                         lock (context.Player)
                         {
-                            context.Player.Public.LastOnlineTime = DateTime.UtcNow;
+                            if (context.Player.Public != null)
+                            {
+                                context.Player.Public.LastOnlineTime = DateTime.UtcNow;
+                            }
                             if (context.Player.ExitReason != OCUnion.Transfer.DisconnectReason.AllGood)
                             {
                                 Loger.Log("Disconnect . . . " + context.Player.ExitReason);
