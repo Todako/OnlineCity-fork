@@ -535,7 +535,7 @@ Before connecting for the first time, it is recommended to make a backup of your
 
 Game saves
 Multiplayer progress is saved on the server.
-* Autosave runs every 15 minutes. The interval can be changed in settings.
+* Autosave runs every 10 minutes. The interval can be changed in settings.
 * Saving is also performed when exiting via the game menu.
 * If you close the game via Alt+F4 or force-quit, unsaved progress will be lost.
 

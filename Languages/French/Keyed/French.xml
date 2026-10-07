@@ -536,7 +536,7 @@ Avant la première connexion, il est conseillé de créer une copie de sauvegard
 
 Sauvegardes
 La progression en mode multijoueur est sauvegardée sur le serveur.
-* La sauvegarde automatique s'effectue toutes les 15 minutes. Cet intervalle est paramétrable dans les options.
+* La sauvegarde automatique s'effectue toutes les 10 minutes. Cet intervalle est paramétrable dans les options.
 * Une sauvegarde est également effectuée lors de la déconnexion via le menu du jeu.
 * Si le jeu est fermé via Alt+F4 ou de manière forcée, la progression non sauvegardée sera perdue.
 

@@ -536,7 +536,7 @@ Vor dem ersten Verbinden wird empfohlen, ein Backup der Ordner Mods und Config z
 
 Spielstände
 Der Fortschritt des Mehrspielerspiels wird auf dem Server gespeichert.
-* Die automatische Speicherung erfolgt alle 15 Minuten. Das Intervall kann in den Einstellungen angepasst werden.
+* Die automatische Speicherung erfolgt alle 10 Minuten. Das Intervall kann in den Einstellungen angepasst werden.
 * Eine Speicherung wird auch beim Beenden über das Spielmenü durchgeführt.
 * Wenn das Spiel über Alt+F4 oder erzwungen geschlossen wird, geht ungespeicherter Fortschritt verloren.
 
