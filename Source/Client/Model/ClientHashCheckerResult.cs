@@ -28,14 +28,25 @@ namespace RimWorldOnlineCity.Model
 
         public ClientHashCheckerResult()
         {
-            if (MarkExist = File.Exists(MarkFileName)) File.Delete(MarkFileName);
+            try
+            {
+                if (MarkExist = File.Exists(MarkFileName))
+                {
+                    File.Delete(MarkFileName);
+                }
+            }
+            catch
+            {
+                MarkExist = false;
+            }
+
             ModsConfigByStart = GetModsConfigContent();
         }
 
         private string GetModsConfigContent()
         {
             var configPath = Path.Combine(GenFilePaths.ConfigFolderPath, "ModsConfig.xml");
-            return File.Exists(configPath) ? File.ReadAllText(configPath) : string.Empty;
+            return File.Exists(configPath) ? File.ReadAllText(configPath, Encoding.UTF8) : string.Empty;
         }
 
         private List<string> GetListLi(string text)
@@ -51,7 +62,12 @@ namespace RimWorldOnlineCity.Model
                 pos += 4;
                 var e = text.IndexOf("</li>", pos, StringComparison.Ordinal);
                 if (e < 0) break;
-                result.Add(text.Substring(pos, e - pos));
+
+                var item = text.Substring(pos, e - pos).Trim();
+                if (item.Length > 0)
+                {
+                    result.Add(item);
+                }
             }
             return result;
         }
@@ -63,7 +79,11 @@ namespace RimWorldOnlineCity.Model
         {
             if (DifferentFiles.Count > 0 || ReplaceFiles.Count > 0)
             {
-                File.CreateText(MarkFileName).Close();
+                try
+                {
+                    File.CreateText(MarkFileName).Close();
+                }
+                catch { }
             }
 
             if (!MarkExist && DifferentFiles.Count == 0)
@@ -139,7 +159,7 @@ namespace RimWorldOnlineCity.Model
                 for (int i = 0; i < ReplaceFiles.Count; i++)
                 {
                     var fn = ReplaceFiles[i];
-                    int slashIdx = fn.IndexOf('\\');
+                    int slashIdx = fn.IndexOfAny(new[] { '\\', '/' });
                     if (slashIdx >= 0)
                     {
                         distinctDirs.Add(fn.Substring(0, slashIdx));
@@ -180,11 +200,10 @@ namespace RimWorldOnlineCity.Model
             {
                 try
                 {
-                    File.WriteAllText(ReportFileName, result);
+                    File.WriteAllText(ReportFileName, result, Encoding.UTF8);
                     Process.Start("notepad", ReportFileName);
                 }
-                catch
-                { }
+                catch { }
             }
 
             return result;

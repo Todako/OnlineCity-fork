@@ -20,6 +20,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
     {
         private static readonly List<string> EmptyIgnoreFolders = new List<string>(0);
         private static readonly List<string> ModsIgnoreFolders = new List<string>(1) { "mods" };
+        private static readonly List<string> ConfigIgnoreFolders = new List<string>(1) { "OnlineCity" };
         private static readonly string IgnoreModsPath = "mods\\".NormalizePath();
         private static readonly string IgnoreModsSubPath = ("\\" + "mods\\".NormalizePath()).NormalizePath();
 
@@ -79,8 +80,41 @@ namespace RimWorldOnlineCity.ClientHashCheck
             }
         }
 
+        public void ResetCache()
+        {
+            try
+            {
+                var cacheFilePath = GetCacheFilePath();
+                if (!string.IsNullOrEmpty(cacheFilePath) && File.Exists(cacheFilePath))
+                {
+                    File.Delete(cacheFilePath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("ClientFileChecker ResetCache Exception: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+        }
+
+        public static void ResetAllCaches()
+        {
+            try
+            {
+                var cacheDir = Path.Combine(GenFilePaths.ConfigFolderPath, "OnlineCity");
+                if (Directory.Exists(cacheDir))
+                {
+                    var files = Directory.GetFiles(cacheDir, "HashCache_*.bin");
+                    for (int i = 0; i < files.Length; i++)
+                    {
+                        try { File.Delete(files[i]); } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         /// <summary>
-        /// Завантаження кешу з диска. Попередня ініціалізація ємності словника усуває зайві рехешування.
+        /// Завантаження кешу з диска.
         /// </summary>
         private Dictionary<string, FileHashCacheEntry> LoadCache(string cacheFile)
         {
@@ -166,8 +200,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
         /// <summary>
         /// Головна процедура швидкого розрахунку хешів.
-        /// ОПТИМІЗАЦІЯ: метадані файлів читаються потоково без створення десятків тисяч FileInfo.
-        /// Розрахунок SHA-512 пулиться по робочих потоках з SequentialScan.
         /// </summary>
         public void CalculateHash()
         {
@@ -187,13 +219,15 @@ namespace RimWorldOnlineCity.ClientHashCheck
             var cacheDirty = false;
 
             var candidateFiles = new List<CandidateFileInfo>(4096);
-            var ignoreFolders = FolderType != FolderType.GamePath ? EmptyIgnoreFolders : ModsIgnoreFolders;
+            var ignoreFolders = FolderType == FolderType.GamePath ? ModsIgnoreFolders :
+                                FolderType == FolderType.ModsConfigPath ? ConfigIgnoreFolders :
+                                EmptyIgnoreFolders;
 
             var rootPrefixLen = FolderPath.Length;
             if (!FolderPath.EndsWith("\\") && !FolderPath.EndsWith("/")) rootPrefixLen++;
 
             var rootDirInfo = new DirectoryInfo(FolderPath);
-            CollectFilesRecursiveFast(rootDirInfo, FolderPath, rootPrefixLen, ignoreFolders, candidateFiles, OnChangeFolderAction);
+            CollectFilesRecursiveFast(rootDirInfo, FolderPath, rootPrefixLen, ignoreFolders, candidateFiles, OnChangeFolderAction, FolderType);
 
             var resultList = new List<ModelFileInfo>(candidateFiles.Count);
             var misses = new List<CandidateFileInfo>();
@@ -244,7 +278,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
                 }
             }
 
-            // Розрахунок відсутніх або змінених хешів
             if (misses.Count > 0)
             {
                 cacheDirty = true;
@@ -342,7 +375,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
                 }
             }
 
-            // Очищення видалених файлів з кешу
             if (cache.Count > 0 && visitedRelPaths != null)
             {
                 List<string> removedKeys = null;
@@ -459,22 +491,20 @@ namespace RimWorldOnlineCity.ClientHashCheck
             }
         }
 
-        /// <summary>
-        /// Швидкий рекурсивний збір файлів за допомогою потокових ітераторів EnumerateFiles.
-        /// </summary>
         private static void CollectFilesRecursiveFast(
             DirectoryInfo currentDir,
             string rootDir,
             int rootPrefixLen,
             List<string> ignoreFolders,
             List<CandidateFileInfo> collectedFiles,
-            Action<string, int> onFolderChange)
+            Action<string, int> onFolderChange,
+            FolderType folderType)
         {
             try
             {
                 foreach (var fi in currentDir.EnumerateFiles())
                 {
-                    if (ApproveFileName(fi.Name))
+                    if (ApproveFileName(fi.Name, folderType))
                     {
                         var fullPath = fi.FullName;
                         int start = rootPrefixLen;
@@ -509,16 +539,33 @@ namespace RimWorldOnlineCity.ClientHashCheck
                         onFolderChange?.Invoke(dir.FullName, dirIndex);
                     }
 
-                    CollectFilesRecursiveFast(dir, rootDir, rootPrefixLen, ignoreFolders, collectedFiles, onFolderChange);
+                    CollectFilesRecursiveFast(dir, rootDir, rootPrefixLen, ignoreFolders, collectedFiles, onFolderChange, folderType);
                     dirIndex++;
                 }
             }
             catch { }
         }
 
-        private static bool ApproveFileName(string fileName)
+        private static bool ApproveFileName(string fileName, FolderType folderType)
         {
-            if (fileName.IndexOf('.') < 0) return true;
+            if (string.IsNullOrEmpty(fileName)) return false;
+
+            // Ігноруємо службові файли бінарного кешу
+            if (fileName.StartsWith("HashCache_", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Ігноруємо локальні конфіги гри, які перезаписуються клієнтом самостійно
+            if (folderType == FolderType.ModsConfigPath)
+            {
+                var ignoredConfigs = FileChecker.IgnoredConfigFiles;
+                for (int i = 0; i < ignoredConfigs.Count; i++)
+                {
+                    if (string.Equals(fileName, ignoredConfigs[i], StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+                }
+            }
 
             var ignored = FileChecker.IgnoredModFiles;
             for (int i = 0; i < ignored.Count; i++)

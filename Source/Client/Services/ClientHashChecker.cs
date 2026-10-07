@@ -144,6 +144,10 @@ namespace RimWorldOnlineCity.Services
                             }
 
                             FileChecker.FileSynchronization(clientFileChecker.FolderPath, res);
+
+                            // Скидаємо збережені кеші, щоб після перезапуску гра рахувала актуальні файли
+                            clientFileChecker.ResetCache();
+                            ClientFileChecker.ResetAllCaches();
                         }
 
                         var changedFileNames = new List<string>(res.Files.Count);
