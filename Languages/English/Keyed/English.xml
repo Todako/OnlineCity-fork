@@ -818,7 +818,7 @@ Alternatively, type this command in chat:
 /killmyallplease
 
 How often does the game save?
-Typically every 15 minutes. It also saves when exiting through the game menu.
+Typically every 10 minutes. It also saves when exiting through the game menu.
 
 Alt+F4 does NOT trigger an exit save, so the colony will roll back to the last autosave.
 

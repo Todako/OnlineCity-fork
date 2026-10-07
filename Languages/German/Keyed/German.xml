@@ -821,7 +821,7 @@ Derselbe Befehl kann im Chat eingegeben werden:
 /killmyallplease
 
 Wie oft wird gespeichert?
-Standardmäßig alle 15 Minuten sowie beim regulären Verlassen über das Spielmenü.
+Standardmäßig alle 10 Minuten sowie beim regulären Verlassen über das Spielmenü.
 
 Alt+F4 führt KEINE Speicherung beim Beenden aus, wodurch die Kolonie auf das letzte automatische Savegame zurückfällt.
 
