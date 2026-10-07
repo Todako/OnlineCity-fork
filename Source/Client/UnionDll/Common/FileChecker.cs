@@ -24,6 +24,9 @@ namespace OCUnion.Common
         private static readonly HashSet<string> IgnoredModFilesSet =
             new HashSet<string>(IgnoredModFiles, StringComparer.OrdinalIgnoreCase);
 
+        private static readonly HashSet<string> IgnoredConfigFilesSet =
+            new HashSet<string>(IgnoredConfigFiles, StringComparer.OrdinalIgnoreCase);
+
         public static string GetCheckSum(byte[] data)
         {
             if (data == null || data.Length == 0) return string.Empty;
@@ -474,11 +477,11 @@ namespace OCUnion.Common
             var ext = Path.GetExtension(fileName);
             if (!string.IsNullOrEmpty(ext) && IgnoredModFilesSet.Contains(ext)) return false;
 
-            // ОПТИМІЗАЦІЯ: перевіряємо повне ім'я лише якщо воно не збігається з розширенням
             var name = Path.GetFileName(fileName);
-            if (!string.IsNullOrEmpty(name) && !string.Equals(ext, name, StringComparison.OrdinalIgnoreCase) && IgnoredModFilesSet.Contains(name))
+            if (!string.IsNullOrEmpty(name))
             {
-                return false;
+                if (IgnoredModFilesSet.Contains(name)) return false;
+                if (IgnoredConfigFilesSet.Contains(name)) return false;
             }
 
             return true;
