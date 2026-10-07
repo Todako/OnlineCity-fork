@@ -132,7 +132,6 @@ OOOOOOOOOO
                 }
                 else
                 {
-                    //был вывод сообщения об ошибке (не подтверждения регистрации)
                     if (SavePassword)
                     {
                         SavePassword = false;
@@ -201,7 +200,7 @@ OOOOOOOOOO
             //    Close();
             //}
 
-            //список серверов
+            //список серверів
             mainListing.Gap(6f);
             if (mainListing.ButtonTextLabeled("OCity_Dialog_Choose_server".Translate(), InputName))
             {
@@ -245,7 +244,7 @@ OOOOOOOOOO
             iresct = mainListing.GetRect(24f);
             iresct.xMin += 10f;
             iresct.width = 183f;
-            Widgets.CheckboxLabeled(iresct, "OC_PlayerClient_RememberPassword".Translate(), ref SavePassword, false, null, null, false); //чекбокс Запомнить пароль
+            Widgets.CheckboxLabeled(iresct, "OC_PlayerClient_RememberPassword".Translate(), ref SavePassword, false, null, null, false); //чекбокс зберегти пароль
 
             if (NeedFockus)
             {

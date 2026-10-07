@@ -264,7 +264,7 @@ namespace RimWorldOnlineCity
                         };
                         Find.WindowStack.Add(form);
                     }, GeneralTexture.IconDelTex),
-                    new ListableOption_WebLink("OCity_Dialog_AutorPage".Translate(), "https://steamcommunity.com/sharedfiles/filedetails/?id=1908437382", GeneralTexture.IconForums)
+                    new ListableOption_WebLink("OCity_Dialog_AutorPage".Translate(), "https://github.com/Todako/OnlineCity-fork", GeneralTexture.IconForums)
                 };
             }
 
