@@ -76,7 +76,8 @@ namespace RimWorldOnlineCity.Services
 
                     if (res.IgnoreTag != null && res.IgnoreTag.Count > 0)
                     {
-                        var XMLFileName = Path.Combine(clientFileChecker.FolderPath, res.Files[0].FileName);
+                        var nativeXmlPath = res.Files[0].FileName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                        var XMLFileName = Path.Combine(clientFileChecker.FolderPath, nativeXmlPath);
                         var xmlServer = FileChecker.GenerateHashXML(res.Files[0].Hash, res.IgnoreTag);
                         var xmlClient = FileChecker.GenerateHashXML(XMLFileName, res.IgnoreTag);
 
@@ -145,7 +146,6 @@ namespace RimWorldOnlineCity.Services
 
                             FileChecker.FileSynchronization(clientFileChecker.FolderPath, res);
 
-                            // Скидаємо збережені кеші, щоб після перезапуску гра рахувала актуальні файли
                             clientFileChecker.ResetCache();
                             ClientFileChecker.ResetAllCaches();
                         }
@@ -153,7 +153,7 @@ namespace RimWorldOnlineCity.Services
                         var changedFileNames = new List<string>(res.Files.Count);
                         for (int i = 0; i < res.Files.Count; i++)
                         {
-                            changedFileNames.Add(res.Files[i].FileName);
+                            changedFileNames.Add(res.Files[i].FileName.Replace('\\', '/'));
                         }
                         clientFileChecker.RecalculateHash(changedFileNames);
 

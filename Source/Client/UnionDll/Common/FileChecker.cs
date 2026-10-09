@@ -13,7 +13,7 @@ namespace OCUnion.Common
     public static class FileChecker
     {
         public static readonly List<string> IgnoredModFiles = new List<string>
-            { ".cs", ".csproj", ".sln", ".gitignore", ".gitattributes", ".DS_Store" };
+            { ".cs", ".csproj", ".sln", ".gitignore", ".gitattributes", ".DS_Store", ".ogg", ".wav", ".mp3" };
 
         public static readonly List<string> IgnoredModFolders = new List<string>
             { "bin", "obj", ".vs" };
@@ -76,7 +76,8 @@ namespace OCUnion.Common
                 var serverFile = serverFiles.Files[i];
                 if (!serverFile.NeedReplace) continue;
 
-                var fullName = Path.Combine(modsDir, serverFile.FileName);
+                var nativeRelPath = serverFile.FileName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                var fullName = Path.Combine(modsDir, nativeRelPath);
 
                 if (serverFile.Hash == null)
                 {
@@ -120,9 +121,6 @@ namespace OCUnion.Common
 
         private static int nnnn = 0;
 
-        /// <summary>
-        /// Однопрохідний розрахунок хешу XML без генерації масиву проміжних рядків.
-        /// </summary>
         private static ModelFileInfo GenerateHashXMLString(string XML, List<string> ignoreTag)
         {
             if (string.IsNullOrEmpty(XML)) return new ModelFileInfo { FileName = "" };
@@ -221,9 +219,6 @@ namespace OCUnion.Common
             return GenerateHashXMLString(XML, ignoreTag);
         }
 
-        /// <summary>
-        /// Перевірка чи належить шлях до ігнорованих каталогів без алокацій пам'яті в купі GC.
-        /// </summary>
         public static bool IsIgnoreFolder(string path, List<string> ignoreFolder)
         {
             if (ignoreFolder == null || ignoreFolder.Count == 0 || string.IsNullOrEmpty(path)) return false;
@@ -328,7 +323,8 @@ namespace OCUnion.Common
             for (int i = 0; i < foldersTree.SubDirs.Count; i++)
             {
                 var folder = foldersTree.SubDirs[i];
-                var dirName = Path.Combine(modsDir, folder.directoryName);
+                var nativeDir = folder.directoryName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                var dirName = Path.Combine(modsDir, nativeDir);
                 if (!Directory.Exists(dirName))
                 {
                     Loger.Log($"Create directory: {dirName}");
@@ -362,6 +358,7 @@ namespace OCUnion.Common
                 if (ApproveExt(filePath))
                 {
                     var relPath = filePath.Length > fileNamePos ? filePath.Substring(fileNamePos) : string.Empty;
+                    relPath = relPath.Replace('\\', '/');
                     targetFiles.Add((filePath, relPath));
                 }
             }
@@ -415,13 +412,14 @@ namespace OCUnion.Common
 
         public static void ReHashFiles(List<ModelFileInfo> rep, string folder, List<string> fileNames)
         {
-            if (fileNames == null || fileNames.Count == 0) return;
+            if (fileNames == null || fileNames.Count == 0 || rep == null) return;
 
             var dir = new Dictionary<string, ModelFileInfo>(rep.Count, StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < rep.Count; i++)
             {
                 if (rep[i]?.FileName != null)
                 {
+                    rep[i].FileName = rep[i].FileName.Replace('\\', '/');
                     dir[rep[i].FileName] = rep[i];
                 }
             }
@@ -430,15 +428,23 @@ namespace OCUnion.Common
 
             for (int i = 0; i < fileNames.Count; i++)
             {
-                var fileName = fileNames[i];
+                var rawName = fileNames[i];
+                if (string.IsNullOrEmpty(rawName)) continue;
+
+                var fileName = rawName.Replace('\\', '/');
                 if (!dir.TryGetValue(fileName, out var mfi))
                 {
                     mfi = new ModelFileInfo { FileName = fileName };
                     rep.Add(mfi);
                     dir[fileName] = mfi;
                 }
+                else
+                {
+                    mfi.FileName = fileName;
+                }
 
-                var fullPath = Path.Combine(folder, fileName);
+                var nativeRelPath = fileName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                var fullPath = Path.Combine(folder, nativeRelPath);
                 itemsToHash.Add((mfi, fullPath));
             }
 

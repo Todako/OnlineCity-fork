@@ -21,8 +21,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
         private static readonly List<string> EmptyIgnoreFolders = new List<string>(0);
         private static readonly List<string> ModsIgnoreFolders = new List<string>(1) { "mods" };
         private static readonly List<string> ConfigIgnoreFolders = new List<string>(1) { "OnlineCity" };
-        private static readonly string IgnoreModsPath = "mods\\".NormalizePath();
-        private static readonly string IgnoreModsSubPath = ("\\" + "mods\\".NormalizePath()).NormalizePath();
 
         public FolderCheck Folder { get; }
         public string FolderPath { get; }
@@ -113,9 +111,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
             catch { }
         }
 
-        /// <summary>
-        /// Завантаження кешу з диска.
-        /// </summary>
         private Dictionary<string, FileHashCacheEntry> LoadCache(string cacheFile)
         {
             if (string.IsNullOrEmpty(cacheFile) || !File.Exists(cacheFile))
@@ -139,7 +134,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
                     for (int i = 0; i < count; i++)
                     {
-                        var relPath = reader.ReadString();
+                        var relPath = reader.ReadString().Replace('\\', '/');
                         var ticks = reader.ReadInt64();
                         var size = reader.ReadInt64();
                         var hashLen = reader.ReadByte();
@@ -181,7 +176,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
                         var entry = kvp.Value;
                         if (entry?.Hash == null || entry.RelativePath == null) continue;
 
-                        writer.Write(entry.RelativePath);
+                        writer.Write(entry.RelativePath.Replace('\\', '/'));
                         writer.Write(entry.LastWriteTimeUtcTicks);
                         writer.Write(entry.FileSize);
                         writer.Write((byte)entry.Hash.Length);
@@ -198,9 +193,6 @@ namespace RimWorldOnlineCity.ClientHashCheck
             }
         }
 
-        /// <summary>
-        /// Головна процедура швидкого розрахунку хешів.
-        /// </summary>
         public void CalculateHash()
         {
             var sw = Stopwatch.StartNew();
@@ -247,8 +239,10 @@ namespace RimWorldOnlineCity.ClientHashCheck
 
                 if (isGamePath)
                 {
-                    if (relPath.StartsWith(IgnoreModsPath, StringComparison.OrdinalIgnoreCase)
-                        || relPath.IndexOf(IgnoreModsSubPath, StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (relPath.StartsWith("mods/", StringComparison.OrdinalIgnoreCase)
+                        || relPath.StartsWith("mods\\", StringComparison.OrdinalIgnoreCase)
+                        || relPath.IndexOf("/mods/", StringComparison.OrdinalIgnoreCase) >= 0
+                        || relPath.IndexOf("\\mods\\", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         continue;
                     }
@@ -430,20 +424,24 @@ namespace RimWorldOnlineCity.ClientHashCheck
                     for (int i = 0; i < FilesHash.Count; i++)
                     {
                         if (FilesHash[i]?.FileName != null)
-                            fileDict[FilesHash[i].FileName] = FilesHash[i];
+                        {
+                            var fn = FilesHash[i].FileName.Replace('\\', '/');
+                            fileDict[fn] = FilesHash[i];
+                        }
                     }
                 }
 
                 bool updated = false;
                 foreach (var fileName in fileNames)
                 {
-                    var normRel = fileName.NormalizePath();
-                    if (normRel.Length > 0 && (normRel[0] == '\\' || normRel[0] == '/'))
+                    var normRel = fileName.Replace('\\', '/');
+                    if (normRel.Length > 0 && normRel[0] == '/')
                     {
                         normRel = normRel.Substring(1);
                     }
 
-                    var fullPath = Path.Combine(FolderPath, normRel);
+                    var nativeRelPath = normRel.Replace('/', Path.DirectorySeparatorChar);
+                    var fullPath = Path.Combine(FolderPath, nativeRelPath);
                     ModelFileInfo mfi = null;
 
                     if (fileDict != null)
@@ -454,7 +452,7 @@ namespace RimWorldOnlineCity.ClientHashCheck
                     {
                         for (int j = 0; j < FilesHash.Count; j++)
                         {
-                            if (string.Equals(FilesHash[j]?.FileName, normRel, StringComparison.OrdinalIgnoreCase))
+                            if (string.Equals(FilesHash[j]?.FileName?.Replace('\\', '/'), normRel, StringComparison.OrdinalIgnoreCase))
                             {
                                 mfi = FilesHash[j];
                                 break;
@@ -513,7 +511,8 @@ namespace RimWorldOnlineCity.ClientHashCheck
                             start++;
                         }
 
-                        var relPath = (start < fullPath.Length ? fullPath.Substring(start) : string.Empty).NormalizePath();
+                        // Уніфікуємо шлях до '/'
+                        var relPath = (start < fullPath.Length ? fullPath.Substring(start) : string.Empty).Replace('\\', '/');
 
                         collectedFiles.Add(new CandidateFileInfo(fullPath, relPath, fi.LastWriteTimeUtc.Ticks, fi.Length));
                     }
@@ -550,11 +549,9 @@ namespace RimWorldOnlineCity.ClientHashCheck
         {
             if (string.IsNullOrEmpty(fileName)) return false;
 
-            // Ігноруємо службові файли бінарного кешу
             if (fileName.StartsWith("HashCache_", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            // Ігноруємо локальні конфіги гри, які перезаписуються клієнтом самостійно
             if (folderType == FolderType.ModsConfigPath)
             {
                 var ignoredConfigs = FileChecker.IgnoredConfigFiles;
