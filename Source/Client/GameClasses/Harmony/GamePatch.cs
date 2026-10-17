@@ -99,7 +99,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
     }
 
     // ====================================================================================
-    // Захист налаштувань оповідача та сторонніх модулів (HugsLib)
+    // Захист налаштувань оповідача та сторонніх модулів
     // ====================================================================================
 
     [HarmonyPatch(typeof(Page_SelectStorytellerInGame))]
@@ -124,11 +124,32 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         }
     }
 
-    [HarmonyPatch(typeof(HugsLib.Utils.HugsLibUtility))]
-    [HarmonyPatch("OpenModSettingsDialog")]
+    /// <summary>
+    /// Динамічний патч налаштувань HugsLib без створення жорсткої компіляційної залежності.
+    /// </summary>
     internal static class HugsLibUtility_OpenModSettingsDialog_Patch
     {
-        [HarmonyPrefix]
+        public static void TryPatch(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var targetType = AccessTools.TypeByName("HugsLib.Utils.HugsLibUtility");
+                if (targetType != null)
+                {
+                    var targetMethod = AccessTools.Method(targetType, "OpenModSettingsDialog");
+                    var prefixMethod = AccessTools.Method(typeof(HugsLibUtility_OpenModSettingsDialog_Patch), nameof(Prefix));
+                    if (targetMethod != null && prefixMethod != null)
+                    {
+                        harmony.Patch(targetMethod, prefix: new HarmonyMethod(prefixMethod));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("HugsLibUtility dynamic patch check: " + ex.Message, Loger.LogLevel.DEBUG);
+            }
+        }
+
         public static bool Prefix()
         {
             if (Current.Game == null) return true;
@@ -183,7 +204,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             var toAdd = ThingEntry.crossReferencingExposables;
             if (toAdd != null && toAdd.Count > 0)
             {
-                // ОПТИМІЗАЦІЯ: швидкий шлях для поодиноких елементів без наповнення буфера на тисячі об'єктів
                 if (toAdd.Count == 1)
                 {
                     var single = toAdd[0];

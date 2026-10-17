@@ -1,5 +1,4 @@
-﻿using HugsLib;
-using OCUnion;
+﻿using OCUnion;
 using RimWorld;
 using System;
 using System.Collections.Generic;
@@ -20,10 +19,7 @@ namespace RimWorldOnlineCity
         private string InputDiscord = "";
         private bool NeedFockus = true;
 
-        public override Vector2 InitialSize
-        {
-            get { return new Vector2(400f, 500f); }
-        }
+        public override Vector2 InitialSize => new Vector2(400f, 500f);
 
         public Dialog_Registration()
         {
@@ -39,15 +35,6 @@ namespace RimWorldOnlineCity
             doCloseX = true;
             resizeable = false;
             draggable = true;
-        }
-
-        public override void PreOpen()
-        {
-            base.PreOpen();
-        }
-
-        public override void PostClose()
-        {
         }
 
         public override void DoWindowContents(Rect inRect)
@@ -84,8 +71,8 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    var msgError = SessionClientController.Registration(InputAddr, InputLogin, InputPassword, InputEmail, InputDiscord
-                        , () =>
+                    var msgError = SessionClientController.Registration(InputAddr, InputLogin, InputPassword, InputEmail, InputDiscord,
+                        () =>
                         {
                             SessionClientController.LoginInNewServerIP = ModBaseData.GlobalData?.LastIP?.Value != InputAddr;
                             if (ModBaseData.GlobalData?.LastIP != null)
@@ -93,9 +80,10 @@ namespace RimWorldOnlineCity
                                 ModBaseData.GlobalData.LastIP.Value = InputAddr;
                                 ModBaseData.GlobalData.LastLoginName.Value = InputLogin;
                                 ModBaseData.GlobalData.LastPassword.Value = "";
-                                HugsLibController.SettingsManager.SaveChanges();
+                                ModBaseData.GlobalData?.WriteSettings();
                             }
                         });
+
                     if (msgError == null)
                     {
                         Close();
@@ -103,8 +91,7 @@ namespace RimWorldOnlineCity
                 }
             }
 
-            var mainListing = new Listing_Standard();
-            mainListing.verticalSpacing = mainListingSpacing;
+            var mainListing = new Listing_Standard { verticalSpacing = mainListingSpacing };
             mainListing.Begin(inRect);
             Text.Font = GameFont.Medium;
             mainListing.Label("OCity_Dialog_Registration_LabelReg".Translate());
@@ -118,7 +105,7 @@ namespace RimWorldOnlineCity
             mainListing.Gap(6f);
             if (mainListing.ButtonTextLabeled("OCity_Dialog_Choose_server".Translate(), InputName))
             {
-                List<FloatMenuOption> floatList1 = new List<FloatMenuOption>();
+                var floatList1 = new List<FloatMenuOption>();
                 foreach (var name in MainHelper.ServerList)
                 {
                     floatList1.Add(new FloatMenuOption(name.Key, delegate
@@ -174,22 +161,16 @@ namespace RimWorldOnlineCity
                 GUI.FocusControl("StartTextField");
             }
 
-            //mainListing.Label("Регистрация3.");
             mainListing.End();
-            //Text.Anchor = TextAnchor.UpperLeft;
-
         }
 
         private void TextInput(Listing_Standard mainListing, string label, Action<Listing_Standard, Rect> drawInput)
         {
             const float categoryPadding = 10f;
-            const float categoryInset = 0;// 30f;
-            const float radioLabelInset = 40f;
-            const float mainListingSpacing = 6f;
-            const float subListingSpacing = 0;// 6f;
-            const float subListingLabelWidth = 180f;// 130f;
-            const float subListingRowHeight = 25;// 30f;
-            const float checkboxListingWidth = 280f;
+            const float categoryInset = 0;
+            const float subListingSpacing = 0;
+            const float subListingLabelWidth = 180f;
+            const float subListingRowHeight = 25;
             const float listingColumnSpacing = 17f;
 
             var expectedHeight = categoryPadding * 2 + (subListingRowHeight + subListingSpacing) * 1;
@@ -204,7 +185,6 @@ namespace RimWorldOnlineCity
                 sub.ColumnWidth = width - subListingLabelWidth - listingColumnSpacing;
                 rect = sub.GetRect(subListingRowHeight);
                 drawInput(sub, rect);
-                //InputPassword = GUI.PasswordField(new Rect(rect.x, rect.y, textEditSize.x, textEditSize.y), InputPassword, "*"[0], 100);
             });
         }
 
@@ -218,6 +198,5 @@ namespace RimWorldOnlineCity
             drawContents(sub, width);
             sub.End();
         }
-
     }
 }

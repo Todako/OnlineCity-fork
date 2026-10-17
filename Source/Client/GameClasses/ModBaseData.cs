@@ -1,52 +1,94 @@
-﻿using HugsLib;
-using HugsLib.Settings;
+﻿using HarmonyLib;
 using OCUnion;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Reflection;
 using System.Threading;
+using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity
 {
     /// <summary>
+    /// Адаптер для збереження сумісності з викликами .Value без залежності від HugsLib.
+    /// </summary>
+    public class SettingHandle<T>
+    {
+        private readonly Func<T> _getter;
+        private readonly Action<T> _setter;
+
+        public SettingHandle(Func<T> getter, Action<T> setter)
+        {
+            _getter = getter;
+            _setter = setter;
+        }
+
+        public T Value
+        {
+            get => _getter != null ? _getter() : default;
+            set => _setter?.Invoke(value);
+        }
+
+        public bool NeverVisible { get; set; }
+        public bool Unsaved { get; set; }
+
+        public override string ToString() => Value?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
     /// Головний диспетчер черги завдань основного потоку та налаштувань мода.
     /// Забезпечує синхронізацію між фоновими мережевими службами та головним циклом Unity
     /// з обмеженням бюджету часу на кадр (frame time budget) та пулом об'єктів.
     /// </summary>
-    public class ModBaseData : ModBase
+    public class ModBaseData : Mod
     {
-        public static ModBaseData GlobalData = null;
-
-        public ModBaseData() : base()
-        {
-            GlobalData = this;
-        }
-
-        public override string ModIdentifier => "OnlineCity";
+        public static ModBaseData GlobalData { get; private set; }
+        public static OCSettings Settings { get; private set; }
 
         public SettingHandle<string> LastIP;
         public SettingHandle<string> LastLoginName;
         public SettingHandle<string> LastPassword;
         public SettingHandle<string> LastCash;
 
-        public override void DefsLoaded()
+        public ModBaseData(ModContentPack content) : base(content)
         {
-            LastIP = Settings.GetHandle<string>("ocLastIP", "OCity_StorageTest_LastIP".Translate(), null, "");
-            LastIP.NeverVisible = true;
-            LastIP.Unsaved = false;
+            GlobalData = this;
+            Settings = GetSettings<OCSettings>();
 
-            LastLoginName = Settings.GetHandle<string>("ocLastLoginName", "OCity_StorageTest_LoginName".Translate(), null, "");
-            LastLoginName.NeverVisible = true;
-            LastLoginName.Unsaved = false;
+            InitSettingsHandles();
 
-            LastPassword = Settings.GetHandle<string>("ocLastPassword", "OCity_StorageTest_Password".Translate(), null, "");
-            LastPassword.NeverVisible = true;
-            LastPassword.Unsaved = false;
+            // Автоматична ініціалізація всіх Harmony-патчів збірки
+            var harmony = new Harmony("rimworld.onlinecity");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-            LastCash = Settings.GetHandle<string>("ocLastCash", "OCity_StorageTest_LastCash".Translate(), null, "");
-            LastCash.NeverVisible = true;
-            LastCash.Unsaved = false;
+            // Створення вічного GameObject Unity для обробки черги Update() щокадру
+            var dispatcherObject = new GameObject("OnlineCity_Dispatcher");
+            UnityEngine.Object.DontDestroyOnLoad(dispatcherObject);
+            dispatcherObject.AddComponent<OCDispatcher>();
+        }
+
+        private void InitSettingsHandles()
+        {
+            LastIP = new SettingHandle<string>(
+                () => Settings.LastIP,
+                val => { Settings.LastIP = val ?? ""; WriteSettings(); }
+            );
+
+            LastLoginName = new SettingHandle<string>(
+                () => Settings.LastLoginName,
+                val => { Settings.LastLoginName = val ?? ""; WriteSettings(); }
+            );
+
+            LastPassword = new SettingHandle<string>(
+                () => Settings.LastPassword,
+                val => { Settings.LastPassword = val ?? ""; WriteSettings(); }
+            );
+
+            LastCash = new SettingHandle<string>(
+                () => Settings.LastCash,
+                val => { Settings.LastCash = val ?? ""; WriteSettings(); }
+            );
         }
 
         private class QueueActionModel
@@ -108,7 +150,6 @@ namespace RimWorldOnlineCity
                 return true;
             }
 
-            // Швидка lock-free перевірка навантаження черги за O(1)
             long pendingCount = Interlocked.Read(ref GlobalData.ActionNumNext) - Interlocked.Read(ref GlobalData.ActionNumReady);
             if (softTimeout && pendingCount > 2)
             {
@@ -136,7 +177,6 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Додає дію до черги виконання в основному потоці Unity.
-        /// ОПТИМІЗАЦІЯ: повторне використання об'єктів з пулу замість алокацій у купі.
         /// </summary>
         public static long RunMainThread(Action act)
         {
@@ -148,8 +188,9 @@ namespace RimWorldOnlineCity
 
         /// <summary>
         /// Щокадрове оновлення з черги головного потоку RimWorld з контролем часу виконання (Frame Budgeting).
+        /// Викликається через диспетчер OCDispatcher щокадру.
         /// </summary>
-        public override void Update()
+        public void Update()
         {
             LastRunDebug = DateTime.UtcNow;
             if (MainThreadNum == int.MinValue)
@@ -183,17 +224,26 @@ namespace RimWorldOnlineCity
                         }
                         catch (ObjectDisposedException)
                         {
-                            // Викликаючий потік завершився за таймаутом і утилізував подію
                         }
                     }
                 }
 
-                // Якщо бюджет кадру (3 мс) вичерпано — переносимо решту завдань на наступний кадр
                 if (sw.ElapsedTicks > MaxTicksPerFrame)
                 {
                     break;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Постійний диспетчер Unity MonoBehaviour для виклику черги основного потоку в Update().
+    /// </summary>
+    public class OCDispatcher : MonoBehaviour
+    {
+        private void Update()
+        {
+            ModBaseData.GlobalData?.Update();
         }
     }
 }

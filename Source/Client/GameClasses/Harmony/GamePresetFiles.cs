@@ -1,5 +1,4 @@
 ﻿using HarmonyLib;
-using HugsLib;
 using OCUnion;
 using OCUnion.Common;
 using RimWorld;
@@ -47,7 +46,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             if (!IsKeyInList(current, key))
             {
                 ModBaseData.GlobalData.LastCash.Value = current.Length == 0 ? key : current + "|" + key;
-                HugsLibController.SettingsManager.SaveChanges();
+                ModBaseData.GlobalData?.WriteSettings();
             }
         }
 

@@ -6,3 +6,5 @@
 /Source/BuildOutput
 /Build
 /Source/Client/MigrationBackup
+/Source/Client/.vs
+/Source/Client/UnionDll/obj
