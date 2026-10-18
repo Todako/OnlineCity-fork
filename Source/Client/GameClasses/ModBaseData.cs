@@ -1,5 +1,6 @@
 ﻿using HarmonyLib;
 using OCUnion;
+using RimWorldOnlineCity.GameClasses.Harmony;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -10,9 +11,6 @@ using Verse;
 
 namespace RimWorldOnlineCity
 {
-    /// <summary>
-    /// Адаптер для збереження сумісності з викликами .Value без залежності від HugsLib.
-    /// </summary>
     public class SettingHandle<T>
     {
         private readonly Func<T> _getter;
@@ -36,11 +34,6 @@ namespace RimWorldOnlineCity
         public override string ToString() => Value?.ToString() ?? string.Empty;
     }
 
-    /// <summary>
-    /// Головний диспетчер черги завдань основного потоку та налаштувань мода.
-    /// Забезпечує синхронізацію між фоновими мережевими службами та головним циклом Unity
-    /// з обмеженням бюджету часу на кадр (frame time budget) та пулом об'єктів.
-    /// </summary>
     public class ModBaseData : Mod
     {
         public static ModBaseData GlobalData { get; private set; }
@@ -54,18 +47,26 @@ namespace RimWorldOnlineCity
         public ModBaseData(ModContentPack content) : base(content)
         {
             GlobalData = this;
-            Settings = GetSettings<OCSettings>();
+
+            // Завантажуємо налаштування безпосередньо з Config/OnlineCity/ без реєстрації у LoadedModManager
+            Settings = OCSettings.Load();
 
             InitSettingsHandles();
 
-            // Автоматична ініціалізація всіх Harmony-патчів збірки
-            var harmony = new Harmony("rimworld.onlinecity");
+            var harmony = new HarmonyLib.Harmony("rimworld.onlinecity");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-            // Створення вічного GameObject Unity для обробки черги Update() щокадру
+            HugsLibUtility_OpenModSettingsDialog_Patch.TryPatch(harmony);
+
             var dispatcherObject = new GameObject("OnlineCity_Dispatcher");
             UnityEngine.Object.DontDestroyOnLoad(dispatcherObject);
             dispatcherObject.AddComponent<OCDispatcher>();
+        }
+
+        public override void WriteSettings()
+        {
+            // Перевизначаємо метод Mod.WriteSettings(), щоб RimWorld не зберігав файл у корінь Config/
+            Settings?.Save();
         }
 
         private void InitSettingsHandles()
@@ -135,13 +136,8 @@ namespace RimWorldOnlineCity
         public int MainThreadNum = int.MinValue;
         public DateTime LastRunDebug;
 
-        // Бюджет часу виконання черги: максимум 3 мс на кадр для уникнення мікрофризів Unity
         private static readonly long MaxTicksPerFrame = (Stopwatch.Frequency * 3) / 1000;
 
-        /// <summary>
-        /// Виконує дію в основному потоці гри з очікуванням завершення.
-        /// ОПТИМІЗАЦІЯ: миттєве відновлення роботи через ManualResetEventSlim і пул завдань.
-        /// </summary>
         public static bool RunMainThreadSync(Action act, int waitSecond = 10, bool softTimeout = false)
         {
             if (GlobalData.MainThreadNum == Thread.CurrentThread.ManagedThreadId)
@@ -175,9 +171,6 @@ namespace RimWorldOnlineCity
             return true;
         }
 
-        /// <summary>
-        /// Додає дію до черги виконання в основному потоці Unity.
-        /// </summary>
         public static long RunMainThread(Action act)
         {
             var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
@@ -186,10 +179,6 @@ namespace RimWorldOnlineCity
             return num;
         }
 
-        /// <summary>
-        /// Щокадрове оновлення з черги головного потоку RimWorld з контролем часу виконання (Frame Budgeting).
-        /// Викликається через диспетчер OCDispatcher щокадру.
-        /// </summary>
         public void Update()
         {
             LastRunDebug = DateTime.UtcNow;
@@ -236,9 +225,6 @@ namespace RimWorldOnlineCity
         }
     }
 
-    /// <summary>
-    /// Постійний диспетчер Unity MonoBehaviour для виклику черги основного потоку в Update().
-    /// </summary>
     public class OCDispatcher : MonoBehaviour
     {
         private void Update()

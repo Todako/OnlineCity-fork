@@ -23,10 +23,10 @@ namespace RimWorldOnlineCity
 
         public Dialog_Registration()
         {
-            InputAddr = ModBaseData.GlobalData?.LastIP?.Value ?? "";
-            if (string.IsNullOrEmpty(InputAddr))
+            InputAddr = (ModBaseData.GlobalData?.LastIP?.Value ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(InputAddr))
             {
-                InputAddr = MainHelper.DefaultIP;
+                InputAddr = (MainHelper.DefaultIP ?? "").Trim();
             }
             InputName = MainHelper.ServerList.FirstOrDefault(p => p.Value == InputAddr).Key ?? "";
             closeOnCancel = false;

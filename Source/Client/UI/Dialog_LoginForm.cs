@@ -26,17 +26,17 @@ namespace RimWorldOnlineCity
 
         public Dialog_LoginForm(bool needApprove = false)
         {
-            InputAddr = ModBaseData.GlobalData?.LastIP?.Value ?? "";
-            InputLogin = ModBaseData.GlobalData?.LastLoginName?.Value ?? "";
+            InputAddr = (ModBaseData.GlobalData?.LastIP?.Value ?? "").Trim();
+            InputLogin = (ModBaseData.GlobalData?.LastLoginName?.Value ?? "").Trim();
             if (!string.IsNullOrEmpty(InputAddr) && !string.IsNullOrEmpty(InputLogin))
                 InputPassword = ModBaseData.GlobalData?.LastPassword?.Value ?? "";
             else
                 InputPassword = "";
 
             SavePassword = !string.IsNullOrEmpty(InputPassword);
-            if (string.IsNullOrEmpty(InputAddr))
+            if (string.IsNullOrWhiteSpace(InputAddr))
             {
-                InputAddr = MainHelper.DefaultIP ?? "";
+                InputAddr = (MainHelper.DefaultIP ?? "").Trim();
             }
             InputName = MainHelper.ServerList.FirstOrDefault(p => p.Value == InputAddr).Key ?? "";
 
