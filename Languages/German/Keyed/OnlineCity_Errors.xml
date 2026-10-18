@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<LanguageData>
+  <OCity_Net_ErrRefused>Verbindung konnte nicht hergestellt werden: Der Server hat die Anfrage abgelehnt.</OCity_Net_ErrRefused>
+  <OCity_Net_ErrTimeout>Zeitüberschreitung: Der Server antwortet nicht oder es besteht keine Netzwerkverbindung.</OCity_Net_ErrTimeout>
+  <OCity_Net_ErrHostNotFound>Server oder IP-Adresse nicht gefunden. Überprüfen Sie die Richtigkeit der eingegebenen Adresse.</OCity_Net_ErrHostNotFound>
+  <OCity_Net_ErrNetworkUnreachable>Netzwerk nicht erreichbar. Überprüfen Sie Ihre Internetverbindung.</OCity_Net_ErrNetworkUnreachable>
+</LanguageData>

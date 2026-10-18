@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<LanguageData>
+  <OCity_Net_ErrRefused>Не вдалося встановити з'єднання: сервер відхилив запит.</OCity_Net_ErrRefused>
+  <OCity_Net_ErrTimeout>Час очікування вичерпано: сервер не відповідає або відсутній зв'язок із мережею.</OCity_Net_ErrTimeout>
+  <OCity_Net_ErrHostNotFound>Сервер або IP-адресу не знайдено. Перевірте правильність введеної адреси.</OCity_Net_ErrHostNotFound>
+  <OCity_Net_ErrNetworkUnreachable>Мережа недоступна. Перевірте підключення до інтернету.</OCity_Net_ErrNetworkUnreachable>
+</LanguageData>

@@ -20,6 +20,25 @@ namespace RimWorldOnlineCity
         public string OnlinePlayerLogin => OnlineWObject?.LoginOwner;
         public string OnlineName => OnlineWObject == null ? string.Empty : OnlineWObject.Name;
 
+        // Потокобезпечний спільний буфер для уникнення алокацій StringBuilder у купі
+        [ThreadStatic]
+        private static StringBuilder _sharedSb;
+
+        private static StringBuilder GetSharedStringBuilder()
+        {
+            var sb = _sharedSb;
+            if (sb == null)
+            {
+                sb = new StringBuilder(512);
+                _sharedSb = sb;
+            }
+            else
+            {
+                sb.Clear();
+            }
+            return sb;
+        }
+
         // Однокадрове кешування гравця для усунення зайвих пошуків у словнику Players
         private PlayerClient _cachedPlayer;
         private string _cachedPlayerLogin;
@@ -78,31 +97,67 @@ namespace RimWorldOnlineCity
             }
         }
 
-        #region Кешування InspectString
+        #region Кешування InspectString з перевіркою фактичних змін (Dirty Check)
 
         private float _lastInspectStringTime = -999f;
         private string _cachedInspectString;
         private bool _lastInspectIsOnline;
+        private float _lastMarketValue = -1f;
+        private float _lastMarketValuePawn = -1f;
+        private float _lastMarketValueTrading = -1f;
+        private float _lastFreeWeight = -1f;
+        private long _lastServerId = -1;
+        private bool _lastPvpEnabled;
+
         private static string _cachedInspectTemplate;
         private static string _cachedFreeWeightLabel;
+
+        private bool IsDataChanged(bool online, bool pvpEnabled, float mv, float mvp, float mvt, float fw, long sid)
+        {
+            return online != _lastInspectIsOnline
+                || pvpEnabled != _lastPvpEnabled
+                || mv != _lastMarketValue
+                || mvp != _lastMarketValuePawn
+                || mvt != _lastMarketValueTrading
+                || fw != _lastFreeWeight
+                || sid != _lastServerId;
+        }
 
         public override string GetInspectString()
         {
             float now = Time.realtimeSinceStartup;
-            bool online = IsOnline;
-
-            if (now - _lastInspectStringTime < 1.0f && _cachedInspectString != null && online == _lastInspectIsOnline)
+            if (now - _lastInspectStringTime < 1.0f && _cachedInspectString != null)
             {
                 return _cachedInspectString;
             }
 
             _lastInspectStringTime = now;
+            bool online = IsOnline;
+            bool pvp = (this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false);
+            float mv = OnlineWObject?.MarketValue ?? 0f;
+            float mvp = OnlineWObject?.MarketValuePawn ?? 0f;
+            float mvt = (OnlineWObject?.MarketValueBalance ?? 0f) + (OnlineWObject?.MarketValueStorage ?? 0f);
+            float fw = OnlineWObject?.FreeWeight ?? 0f;
+            long sid = OnlineWObject?.PlaceServerId ?? -1;
+
+            if (_cachedInspectString != null && !IsDataChanged(online, pvp, mv, mvp, mvt, fw, sid))
+            {
+                return _cachedInspectString;
+            }
+
             _lastInspectIsOnline = online;
-            _cachedInspectString = CalculateInspectString(online);
+            _lastPvpEnabled = pvp;
+            _lastMarketValue = mv;
+            _lastMarketValuePawn = mvp;
+            _lastMarketValueTrading = mvt;
+            _lastFreeWeight = fw;
+            _lastServerId = sid;
+
+            _cachedInspectString = CalculateInspectString(online, pvp, mv, mvp, mvt, fw, sid);
             return _cachedInspectString;
         }
 
-        private string CalculateInspectString(bool online)
+        private string CalculateInspectString(bool online, bool pvp, float mv, float mvp, float mvt, float fw, long sid)
         {
             if (OnlineWObject == null)
             {
@@ -115,26 +170,25 @@ namespace RimWorldOnlineCity
             }
 
             var statusOnline = online ? " Online!" : "";
-            var totalTrading = (OnlineWObject.MarketValueBalance + OnlineWObject.MarketValueStorage).ToStringMoney();
+            var sb = GetSharedStringBuilder();
 
-            var sb = new StringBuilder(256);
             sb.AppendFormat(
                 _cachedInspectTemplate,
                 OnlineName,
-                OnlinePlayerLogin + statusOnline + " (sId:" + OnlineWObject.PlaceServerId + ")",
-                OnlineWObject.MarketValue.ToStringMoney(),
-                OnlineWObject.MarketValuePawn.ToStringMoney(),
-                totalTrading
+                OnlinePlayerLogin + statusOnline + " (sId:" + sid + ")",
+                mv.ToStringMoney(),
+                mvp.ToStringMoney(),
+                mvt.ToStringMoney()
             );
 
-            if ((this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false))
+            if (pvp)
             {
                 sb.AppendLine();
                 sb.Append("OCity_Caravan_PlayerAttackCost".Translate(
-                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, this is BaseOnline).ToStringMoney()));
+                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, true).ToStringMoney()));
             }
 
-            if (OnlineWObject.FreeWeight > 0 && OnlineWObject.FreeWeight < 999999)
+            if (fw > 0 && fw < 999999)
             {
                 if (_cachedFreeWeightLabel == null)
                 {
@@ -142,7 +196,7 @@ namespace RimWorldOnlineCity
                 }
                 sb.AppendLine();
                 sb.Append(_cachedFreeWeightLabel);
-                sb.Append(OnlineWObject.FreeWeight.ToStringMass());
+                sb.Append(fw.ToStringMass());
             }
 
             return sb.ToString();
@@ -150,26 +204,57 @@ namespace RimWorldOnlineCity
 
         private float _lastInspectExtendedTime = -999f;
         private string _cachedInspectExtendedString;
-        private bool _lastInspectExtendedIsOnline;
+        private bool _lastExtOnline;
+        private float _lastExtMv = -1f;
+        private float _lastExtMvp = -1f;
+        private float _lastExtMvt = -1f;
+        private float _lastExtFw = -1f;
+        private long _lastExtSid = -1;
+        private bool _lastExtPvp;
         private static string _cachedInspectExtendedTemplate;
 
         public virtual string GetInspectExtendedString()
         {
             float now = Time.realtimeSinceStartup;
-            bool online = IsOnline;
-
-            if (now - _lastInspectExtendedTime < 1.0f && _cachedInspectExtendedString != null && online == _lastInspectExtendedIsOnline)
+            if (now - _lastInspectExtendedTime < 1.0f && _cachedInspectExtendedString != null)
             {
                 return _cachedInspectExtendedString;
             }
 
             _lastInspectExtendedTime = now;
-            _lastInspectExtendedIsOnline = online;
-            _cachedInspectExtendedString = CalculateInspectExtendedString(online);
+            bool online = IsOnline;
+            bool pvp = (this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false);
+            float mv = OnlineWObject?.MarketValue ?? 0f;
+            float mvp = OnlineWObject?.MarketValuePawn ?? 0f;
+            float mvt = (OnlineWObject?.MarketValueBalance ?? 0f) + (OnlineWObject?.MarketValueStorage ?? 0f);
+            float fw = OnlineWObject?.FreeWeight ?? 0f;
+            long sid = OnlineWObject?.PlaceServerId ?? -1;
+
+            if (_cachedInspectExtendedString != null
+                && online == _lastExtOnline
+                && pvp == _lastExtPvp
+                && mv == _lastExtMv
+                && mvp == _lastExtMvp
+                && mvt == _lastExtMvt
+                && fw == _lastExtFw
+                && sid == _lastExtSid)
+            {
+                return _cachedInspectExtendedString;
+            }
+
+            _lastExtOnline = online;
+            _lastExtPvp = pvp;
+            _lastExtMv = mv;
+            _lastExtMvp = mvp;
+            _lastExtMvt = mvt;
+            _lastExtFw = fw;
+            _lastExtSid = sid;
+
+            _cachedInspectExtendedString = CalculateInspectExtendedString(online, pvp, mv, mvp, mvt, fw, sid);
             return _cachedInspectExtendedString;
         }
 
-        private string CalculateInspectExtendedString(bool online)
+        private string CalculateInspectExtendedString(bool online, bool pvp, float mv, float mvp, float mvt, float fw, long sid)
         {
             if (OnlineWObject == null)
             {
@@ -182,26 +267,25 @@ namespace RimWorldOnlineCity
             }
 
             var statusOnline = online ? "<:check_mark_button height=16:> Online!" : "<:zzz height=16:> ";
-            var totalTrading = (OnlineWObject.MarketValueBalance + OnlineWObject.MarketValueStorage).ToStringMoney();
+            var sb = GetSharedStringBuilder();
 
-            var sb = new StringBuilder(256);
             sb.AppendFormat(
                 _cachedInspectExtendedTemplate,
-                "<&" + OnlineWObject.PlaceServerId + "> ",
-                statusOnline + " (sId:" + OnlineWObject.PlaceServerId + ")",
-                "<:money_bag height=16:> " + OnlineWObject.MarketValue.ToStringMoney(),
-                "<:busts_in_silhouette height=16:> " + OnlineWObject.MarketValuePawn.ToStringMoney(),
-                "<:chart_increasing height=16:> " + totalTrading
+                "<&" + sid + "> ",
+                statusOnline + " (sId:" + sid + ")",
+                "<:money_bag height=16:> " + mv.ToStringMoney(),
+                "<:busts_in_silhouette height=16:> " + mvp.ToStringMoney(),
+                "<:chart_increasing height=16:> " + mvt.ToStringMoney()
             );
 
-            if ((this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false))
+            if (pvp)
             {
                 sb.AppendLine();
                 sb.Append("OCity_Caravan_PlayerAttackCost".Translate(
-                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, this is BaseOnline).ToStringMoney()));
+                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, true).ToStringMoney()));
             }
 
-            if (OnlineWObject.FreeWeight > 0 && OnlineWObject.FreeWeight < 999999)
+            if (fw > 0 && fw < 999999)
             {
                 if (_cachedFreeWeightLabel == null)
                 {
@@ -210,7 +294,7 @@ namespace RimWorldOnlineCity
                 sb.AppendLine();
                 sb.Append(_cachedFreeWeightLabel);
                 sb.Append(" <:handbag height=16:> ");
-                sb.Append(OnlineWObject.FreeWeight.ToStringMass());
+                sb.Append(fw.ToStringMass());
             }
 
             return sb.ToString();
@@ -220,16 +304,20 @@ namespace RimWorldOnlineCity
 
         public override string GetDescription()
         {
-            var sb = new StringBuilder(512);
-            sb.Append(base.GetDescription());
-            sb.Append("\n\n");
-            sb.Append(GetInspectString());
-
+            string baseDesc = base.GetDescription();
+            string inspectStr = GetInspectString();
             var player = Player;
-            if (player != null)
+            string playerInfo = player?.GetTextInfo();
+
+            var sb = GetSharedStringBuilder();
+            sb.Append(baseDesc);
+            sb.Append("\n\n");
+            sb.Append(inspectStr);
+
+            if (!string.IsNullOrEmpty(playerInfo))
             {
                 sb.Append("\n\n");
-                sb.Append(player.GetTextInfo());
+                sb.Append(playerInfo);
             }
             return sb.ToString();
         }
@@ -302,7 +390,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        // ОПТИМІЗАЦІЯ: кешування команд Gizmo для усунення алокацій new Command_Action кожні 16 мс
         private Command_Action _gizmoPlayerInfo;
         private Command_Action _gizmoTrade;
 

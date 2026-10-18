@@ -117,6 +117,11 @@ namespace RimWorldOnlineCity
 
         public Texture2D ImageBaseWhenOwnerOffline = null;
 
+        // ОПТИМІЗАЦІЯ: кешування команд Gizmo для усунення алокацій new Command_Action у кожному кадрі OnGUI
+        private Command_Action _gizmoBaseInteract;
+        private string _lastInteractLogin;
+        private string _lastInteractName;
+
         public override IEnumerable<Gizmo> GetGizmos()
         {
             foreach (Gizmo gizmo in base.GetGizmos())
@@ -124,20 +129,27 @@ namespace RimWorldOnlineCity
                 yield return gizmo;
             }
 
-            var command_Action = new Command_Action
+            var login = OnlinePlayerLogin;
+            var name = OnlineName;
+            if (_gizmoBaseInteract == null || login != _lastInteractLogin || name != _lastInteractName)
             {
-                defaultLabel = "OC_Base_Interact".Translate(OnlinePlayerLogin),
-                defaultDesc = "OC_Base_InteractWith".Translate(OnlineName, OnlinePlayerLogin),
-                icon = BaseOnlineButtonIcon,
-                action = delegate
+                _lastInteractLogin = login;
+                _lastInteractName = name;
+                _gizmoBaseInteract = new Command_Action
                 {
-                    Find.WindowStack.Add(new Dialog_BaseOnlineButton(this));
-                }
-            };
-            yield return command_Action;
+                    defaultLabel = "OC_Base_Interact".Translate(login),
+                    defaultDesc = "OC_Base_InteractWith".Translate(name, login),
+                    icon = BaseOnlineButtonIcon,
+                    action = delegate
+                    {
+                        Find.WindowStack.Add(new Dialog_BaseOnlineButton(this));
+                    }
+                };
+            }
+            yield return _gizmoBaseInteract;
 
-            command_Action = GameUtils.CommandShowMap(this);
-            if (command_Action != null) yield return command_Action;
+            var showMapCmd = GameUtils.CommandShowMap(this);
+            if (showMapCmd != null) yield return showMapCmd;
         }
     }
 

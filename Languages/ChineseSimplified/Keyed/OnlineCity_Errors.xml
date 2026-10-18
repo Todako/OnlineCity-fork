@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<LanguageData>
+  <OCity_Net_ErrRefused>无法建立连接：服务器拒绝了请求。</OCity_Net_ErrRefused>
+  <OCity_Net_ErrTimeout>连接超时：服务器未响应或无网络连接。</OCity_Net_ErrTimeout>
+  <OCity_Net_ErrHostNotFound>未找到服务器或 IP 地址。请检查输入的地址是否正确。</OCity_Net_ErrHostNotFound>
+  <OCity_Net_ErrNetworkUnreachable>网络不可用。请检查您的互联网连接。</OCity_Net_ErrNetworkUnreachable>
+</LanguageData>

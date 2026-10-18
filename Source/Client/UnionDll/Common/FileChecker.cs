@@ -21,10 +21,11 @@ namespace OCUnion.Common
         public static readonly List<string> IgnoredConfigFiles = new List<string>
             { "KeyPrefs.xml", "Knowledge.xml", "LastPlayedVersion.txt", "Prefs.xml", ".DS_Store" };
 
-        private static readonly HashSet<string> IgnoredModFilesSet =
+        // Відкритий швидкий O(1) доступ до наборів ігнорувань
+        public static readonly HashSet<string> IgnoredModFilesSet =
             new HashSet<string>(IgnoredModFiles, StringComparer.OrdinalIgnoreCase);
 
-        private static readonly HashSet<string> IgnoredConfigFilesSet =
+        public static readonly HashSet<string> IgnoredConfigFilesSet =
             new HashSet<string>(IgnoredConfigFiles, StringComparer.OrdinalIgnoreCase);
 
         public static string GetCheckSum(byte[] data)
@@ -461,12 +462,15 @@ namespace OCUnion.Common
             else
             {
                 Parallel.ForEach(
-                    itemsToHash,
+                    Partitioner.Create(0, itemsToHash.Count),
                     new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
                     () => SHA512.Create(),
-                    (item, loopState, sha) =>
+                    (range, loopState, sha) =>
                     {
-                        ComputeHashDirect(item.Mfi, item.FullPath, sha);
+                        for (int i = range.Item1; i < range.Item2; i++)
+                        {
+                            ComputeHashDirect(itemsToHash[i].Mfi, itemsToHash[i].FullPath, sha);
+                        }
                         return sha;
                     },
                     sha => sha?.Dispose()
@@ -480,8 +484,12 @@ namespace OCUnion.Common
         {
             if (string.IsNullOrEmpty(fileName)) return false;
 
-            var ext = Path.GetExtension(fileName);
-            if (!string.IsNullOrEmpty(ext) && IgnoredModFilesSet.Contains(ext)) return false;
+            int dotIdx = fileName.LastIndexOf('.');
+            if (dotIdx >= 0)
+            {
+                var ext = fileName.Substring(dotIdx);
+                if (IgnoredModFilesSet.Contains(ext)) return false;
+            }
 
             var name = Path.GetFileName(fileName);
             if (!string.IsNullOrEmpty(name))

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<LanguageData>
+  <OCity_Net_ErrRefused>Could not connect to server: connection actively refused.</OCity_Net_ErrRefused>
+  <OCity_Net_ErrTimeout>Connection timed out: server did not respond or network is unreachable.</OCity_Net_ErrTimeout>
+  <OCity_Net_ErrHostNotFound>Server host or IP address not found. Please check the entered address.</OCity_Net_ErrHostNotFound>
+  <OCity_Net_ErrNetworkUnreachable>Network is unreachable. Please check your internet connection.</OCity_Net_ErrNetworkUnreachable>
+</LanguageData>

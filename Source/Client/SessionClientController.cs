@@ -59,6 +59,71 @@ namespace RimWorldOnlineCity
         private static string CachedSuffix = null;
 
         /// <summary>
+        /// Локалізація системних мережевих помилок сокетів .NET та відповідей сервера.
+        /// Якщо переклад у Languages/ відсутній, повертає стандартне англійське повідомлення.
+        /// </summary>
+        public static string LocalizeErrorMessage(string rawError)
+        {
+            if (string.IsNullOrWhiteSpace(rawError))
+            {
+                return "OCity_SessionCC_Disconnected".CanTranslate()
+                    ? "OCity_SessionCC_Disconnected".Translate().ToString()
+                    : "Disconnected from server.";
+            }
+
+            string key = null;
+            string englishFallback = null;
+
+            if (rawError.IndexOf("actively refused", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("Connection refused", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("10061", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                key = "OCity_Net_ErrRefused";
+                englishFallback = "Could not connect to server: connection actively refused (verify that the server is running and the port is open).";
+            }
+            else if (rawError.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("time out", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("did not properly respond", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("10060", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                key = "OCity_Net_ErrTimeout";
+                englishFallback = "Connection timed out: server did not respond or network is unreachable.";
+            }
+            else if (rawError.IndexOf("No such host", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("Name or service not known", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("11001", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                key = "OCity_Net_ErrHostNotFound";
+                englishFallback = "Server host or IP address not found. Please check the entered address.";
+            }
+            else if (rawError.IndexOf("Network is unreachable", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("No route to host", StringComparison.OrdinalIgnoreCase) >= 0
+                || rawError.IndexOf("10051", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                key = "OCity_Net_ErrNetworkUnreachable";
+                englishFallback = "Network is unreachable. Please check your internet connection.";
+            }
+
+            if (key != null)
+            {
+                return key.CanTranslate() ? key.Translate().ToString() : englishFallback;
+            }
+
+            if (rawError.CanTranslate())
+            {
+                return rawError.Translate().ToString();
+            }
+
+            var translated = rawError.ServerTranslate();
+            if (!string.IsNullOrEmpty(translated) && translated != rawError)
+            {
+                return translated;
+            }
+
+            return rawError;
+        }
+
+        /// <summary>
         /// Потокобезпечне логування у внутрішньоігрову консоль RimWorld через головний потік Unity.
         /// </summary>
         private static void SafeLogWarning(string text)
