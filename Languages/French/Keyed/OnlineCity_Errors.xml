@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<LanguageData>
-  <OCity_Net_ErrRefused>Impossible d'établir la connexion : le serveur a refusé la requête.</OCity_Net_ErrRefused>
-  <OCity_Net_ErrTimeout>Délai d'attente dépassé : le serveur ne répond pas ou la connexion réseau est absente.</OCity_Net_ErrTimeout>
-  <OCity_Net_ErrHostNotFound>Serveur ou adresse IP introuvable. Vérifiez l'exactitude de l'adresse saisie.</OCity_Net_ErrHostNotFound>
-  <OCity_Net_ErrNetworkUnreachable>Réseau inaccessible. Vérifiez votre connexion Internet.</OCity_Net_ErrNetworkUnreachable>
-</LanguageData>

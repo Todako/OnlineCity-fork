@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<LanguageData>
-  <OCity_Net_ErrRefused>연결을 설정할 수 없습니다: 서버가 요청을 거부했습니다.</OCity_Net_ErrRefused>
-  <OCity_Net_ErrTimeout>연결 시간이 초과되었습니다: 서버가 응답하지 않거나 네트워크 연결이 없습니다.</OCity_Net_ErrTimeout>
-  <OCity_Net_ErrHostNotFound>서버 또는 IP 주소를 찾을 수 없습니다. 입력한 주소가 올바른지 확인하십시오.</OCity_Net_ErrHostNotFound>
-  <OCity_Net_ErrNetworkUnreachable>네트워크를 사용할 수 없습니다. 인터넷 연결을 확인하십시오.</OCity_Net_ErrNetworkUnreachable>
-</LanguageData>

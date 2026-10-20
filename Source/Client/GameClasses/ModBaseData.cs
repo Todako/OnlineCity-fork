@@ -34,6 +34,24 @@ namespace RimWorldOnlineCity
         public override string ToString() => Value?.ToString() ?? string.Empty;
     }
 
+    /// <summary>
+    /// Ініціалізація Harmony-патчів після завантаження всіх Defs та модів (аналог HugsLib.DefsLoaded).
+    /// </summary>
+    [StaticConstructorOnStartup]
+    internal static class OCStartupInitializer
+    {
+        static OCStartupInitializer()
+        {
+            var harmony = new HarmonyLib.Harmony("rimworld.onlinecity");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            HugsLibUtility_OpenModSettingsDialog_Patch.TryPatch(harmony);
+
+            var dispatcherObject = new GameObject("OnlineCity_Dispatcher");
+            UnityEngine.Object.DontDestroyOnLoad(dispatcherObject);
+            dispatcherObject.AddComponent<OCDispatcher>();
+        }
+    }
+
     public class ModBaseData : Mod
     {
         public static ModBaseData GlobalData { get; private set; }
@@ -47,25 +65,12 @@ namespace RimWorldOnlineCity
         public ModBaseData(ModContentPack content) : base(content)
         {
             GlobalData = this;
-
-            // Завантажуємо налаштування безпосередньо з Config/OnlineCity/ без реєстрації у LoadedModManager
             Settings = OCSettings.Load();
-
             InitSettingsHandles();
-
-            var harmony = new HarmonyLib.Harmony("rimworld.onlinecity");
-            harmony.PatchAll(Assembly.GetExecutingAssembly());
-
-            HugsLibUtility_OpenModSettingsDialog_Patch.TryPatch(harmony);
-
-            var dispatcherObject = new GameObject("OnlineCity_Dispatcher");
-            UnityEngine.Object.DontDestroyOnLoad(dispatcherObject);
-            dispatcherObject.AddComponent<OCDispatcher>();
         }
 
         public override void WriteSettings()
         {
-            // Перевизначаємо метод Mod.WriteSettings(), щоб RimWorld не зберігав файл у корінь Config/
             Settings?.Save();
         }
 
