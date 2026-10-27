@@ -56,6 +56,7 @@ namespace RimWorldOnlineCity
         private static readonly List<CaravanOnline> EmptyCaravanList = new List<CaravanOnline>(0);
         private static readonly List<WorldObject> ReusablePlayerObjects = new List<WorldObject>(8);
         private static readonly List<string> ReusableOnlineList = new List<string>(64);
+        private static readonly List<string> ReusableTooltipOutList = new List<string>(2);
         private static string CachedSuffix = null;
 
         /// <summary>
@@ -289,44 +290,49 @@ namespace RimWorldOnlineCity
                         }
 
                         step = 9;
-                        UpdateWorldController.LoadFromServer(fromServ, firstRun);
-
-                        step = 10;
-                        // Очищення наявних списків для повторного використання без створення нових екземплярів
-                        foreach (var list in CachedObjectsByPlayer.Values)
+                        // КРИТИЧНО: виконуємо LoadFromServer та обхід Find.WorldObjects строго у головному потоці Unity
+                        if (!ModBaseData.RunMainThreadSync(() =>
                         {
-                            list.Clear();
-                        }
+                            UpdateWorldController.LoadFromServer(fromServ, firstRun);
 
-                        var allWorldObjectsList = UpdateWorldController.allWorldObjects ?? Find.WorldObjects?.AllWorldObjects;
-                        if (allWorldObjectsList != null)
-                        {
-                            for (int i = 0; i < allWorldObjectsList.Count; i++)
+                            foreach (var list in CachedObjectsByPlayer.Values)
                             {
-                                if (allWorldObjectsList[i] is CaravanOnline caravan && !string.IsNullOrEmpty(caravan.OnlinePlayerLogin))
+                                list.Clear();
+                            }
+
+                            var allWorldObjectsList = UpdateWorldController.allWorldObjects ?? Find.WorldObjects?.AllWorldObjects;
+                            if (allWorldObjectsList != null)
+                            {
+                                for (int i = 0; i < allWorldObjectsList.Count; i++)
                                 {
-                                    if (!CachedObjectsByPlayer.TryGetValue(caravan.OnlinePlayerLogin, out var list))
+                                    if (allWorldObjectsList[i] is CaravanOnline caravan && !string.IsNullOrEmpty(caravan.OnlinePlayerLogin))
                                     {
-                                        list = new List<CaravanOnline>(4);
-                                        CachedObjectsByPlayer[caravan.OnlinePlayerLogin] = list;
+                                        if (!CachedObjectsByPlayer.TryGetValue(caravan.OnlinePlayerLogin, out var list))
+                                        {
+                                            list = new List<CaravanOnline>(4);
+                                            CachedObjectsByPlayer[caravan.OnlinePlayerLogin] = list;
+                                        }
+                                        list.Add(caravan);
                                     }
-                                    list.Add(caravan);
                                 }
                             }
-                        }
 
-                        foreach (var pi in Data.Players)
+                            foreach (var pi in Data.Players)
+                            {
+                                if (pi.Value.Public?.Login == My?.Login) continue;
+
+                                if (CachedObjectsByPlayer.TryGetValue(pi.Key, out var list) && list.Count > 0)
+                                {
+                                    pi.Value.WObjects = list;
+                                }
+                                else if (pi.Value.WObjects == null || pi.Value.WObjects.Count > 0)
+                                {
+                                    pi.Value.WObjects = EmptyCaravanList;
+                                }
+                            }
+                        }, 10, true))
                         {
-                            if (pi.Value.Public?.Login == My?.Login) continue;
-
-                            if (CachedObjectsByPlayer.TryGetValue(pi.Key, out var list) && list.Count > 0)
-                            {
-                                pi.Value.WObjects = list;
-                            }
-                            else if (pi.Value.WObjects == null || pi.Value.WObjects.Count > 0)
-                            {
-                                pi.Value.WObjects = EmptyCaravanList;
-                            }
+                            return;
                         }
 
                         step = 11;
@@ -619,7 +625,8 @@ namespace RimWorldOnlineCity
                     statusPrefix = "X ";
                 }
 
-                var outList = new List<string>(2) { statusPrefix + currentLogin };
+                ReusableTooltipOutList.Clear();
+                ReusableTooltipOutList.Add(statusPrefix + currentLogin);
 
                 if (CachedInfoBalanceFormat == null)
                 {
@@ -635,7 +642,7 @@ namespace RimWorldOnlineCity
                 if (!isRelogin && !connectFail && currentBalance != 0)
                 {
                     var mon = currentBalance.ToString();
-                    outList.Add(mon + " ");
+                    ReusableTooltipOutList.Add(mon + " ");
                     GlobalControlsUtility_DoDate_Patch.OutInLastLine = GameUtils.TextureCashlessBalance;
                     tooltip += mon;
                 }
@@ -652,7 +659,7 @@ namespace RimWorldOnlineCity
                 }
 
                 GlobalControlsUtility_DoDate_Patch.CachedWidth = 0f;
-                GlobalControlsUtility_DoDate_Patch.OutText = outList;
+                GlobalControlsUtility_DoDate_Patch.OutText = ReusableTooltipOutList;
                 GlobalControlsUtility_DoDate_Patch.TooltipText = tooltip;
             }
             catch (Exception ex)
@@ -785,13 +792,14 @@ namespace RimWorldOnlineCity
         {
             if (SessionClientController.Data == null || !SessionClientController.Data.GeneralSettings.ColonyScreenEnable) return;
             if (Current.Game == null || Find.WorldGrid == null) return;
+            if (GameAttacker.Get != null || GameAttackHost.Get != null) return;
 
             if (Data.UpdateTimeLocalTime == DateTime.MinValue) return;
             var msUpdate = (int)((DateTime.UtcNow - Data.UpdateTimeLocalTime).TotalMilliseconds);
             if (msUpdate < 1500 || msUpdate > 3500) return;
 
             var ticksGame = GenTicks.TicksAbs;
-            ExchengeUtils.FillWorldObjectsPlayer(ReusablePlayerObjects);
+            if (!ModBaseData.RunMainThreadSync(() => ExchengeUtils.FillWorldObjectsPlayer(ReusablePlayerObjects), 1, true)) return;
             if (ReusablePlayerObjects.Count == 0) return;
 
             for (int i = 0; i < ReusablePlayerObjects.Count; i++)

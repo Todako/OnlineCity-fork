@@ -42,6 +42,11 @@ namespace RimWorldOnlineCity
     {
         static OCStartupInitializer()
         {
+            if (ModBaseData.GlobalData != null)
+            {
+                ModBaseData.GlobalData.MainThreadNum = Thread.CurrentThread.ManagedThreadId;
+            }
+
             var harmony = new HarmonyLib.Harmony("rimworld.onlinecity");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             HugsLibUtility_OpenModSettingsDialog_Patch.TryPatch(harmony);
@@ -65,6 +70,7 @@ namespace RimWorldOnlineCity
         public ModBaseData(ModContentPack content) : base(content)
         {
             GlobalData = this;
+            MainThreadNum = Thread.CurrentThread.ManagedThreadId;
             Settings = OCSettings.Load();
             InitSettingsHandles();
         }
@@ -104,16 +110,43 @@ namespace RimWorldOnlineCity
             public ManualResetEventSlim DoneEvent;
         }
 
-        #region Пул моделей дій
+        #region Пул моделей дій та подій синхронізації (Zero-Allocation)
         private const int MaxPoolSize = 128;
-        private static int PoolSize = 0;
+        private static int ActionPoolSize = 0;
+        private static int EventPoolSize = 0;
         private static readonly ConcurrentQueue<QueueActionModel> ActionPool = new ConcurrentQueue<QueueActionModel>();
+        private static readonly ConcurrentQueue<ManualResetEventSlim> EventPool = new ConcurrentQueue<ManualResetEventSlim>();
+
+        private static ManualResetEventSlim RentEvent()
+        {
+            if (EventPool.TryDequeue(out var ev))
+            {
+                Interlocked.Decrement(ref EventPoolSize);
+                ev.Reset();
+                return ev;
+            }
+            return new ManualResetEventSlim(false);
+        }
+
+        private static void ReturnEvent(ManualResetEventSlim ev)
+        {
+            if (ev == null) return;
+            if (EventPoolSize < MaxPoolSize)
+            {
+                Interlocked.Increment(ref EventPoolSize);
+                EventPool.Enqueue(ev);
+            }
+            else
+            {
+                ev.Dispose();
+            }
+        }
 
         private static QueueActionModel RentAction(Action act, long num, ManualResetEventSlim doneEvent)
         {
             if (ActionPool.TryDequeue(out var qa))
             {
-                Interlocked.Decrement(ref PoolSize);
+                Interlocked.Decrement(ref ActionPoolSize);
                 qa.Act = act;
                 qa.Num = num;
                 qa.DoneEvent = doneEvent;
@@ -126,9 +159,9 @@ namespace RimWorldOnlineCity
         {
             qa.Act = null;
             qa.DoneEvent = null;
-            if (PoolSize < MaxPoolSize)
+            if (ActionPoolSize < MaxPoolSize)
             {
-                Interlocked.Increment(ref PoolSize);
+                Interlocked.Increment(ref ActionPoolSize);
                 ActionPool.Enqueue(qa);
             }
         }
@@ -145,6 +178,8 @@ namespace RimWorldOnlineCity
 
         public static bool RunMainThreadSync(Action act, int waitSecond = 10, bool softTimeout = false)
         {
+            if (GlobalData == null) return false;
+
             if (GlobalData.MainThreadNum == Thread.CurrentThread.ManagedThreadId)
             {
                 act();
@@ -158,26 +193,28 @@ namespace RimWorldOnlineCity
                 return false;
             }
 
-            using (var doneEvent = new ManualResetEventSlim(false))
+            var doneEvent = RentEvent();
+            var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
+            var qa = RentAction(act, num, doneEvent);
+
+            GlobalData.MainThread.Enqueue(qa);
+
+            if (!doneEvent.Wait(waitSecond * 1000))
             {
-                var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
-                var qa = RentAction(act, num, doneEvent);
-
-                GlobalData.MainThread.Enqueue(qa);
-
-                if (!doneEvent.Wait(waitSecond * 1000))
-                {
-                    Loger.Log($"Client RunMainThread Timeout Exception num={num} currentReady={GlobalData.ActionNumReady} pending={pendingCount} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
-                    if (!softTimeout) throw new ApplicationException("Client RunMainThread Timeout");
-                    return false;
-                }
+                // При таймауті не повертаємо doneEvent у пул, щоб уникнути гонитви станів
+                Loger.Log($"Client RunMainThread Timeout Exception num={num} currentReady={GlobalData.ActionNumReady} pending={pendingCount} LastRunDebug={GlobalData.LastRunDebug.Ticks}", Loger.LogLevel.DEBUG);
+                if (!softTimeout) throw new ApplicationException("Client RunMainThread Timeout");
+                return false;
             }
 
+            ReturnEvent(doneEvent);
             return true;
         }
 
         public static long RunMainThread(Action act)
         {
+            if (GlobalData == null) return 0;
+
             var num = Interlocked.Increment(ref GlobalData.ActionNumNext);
             var qa = RentAction(act, num, null);
             GlobalData.MainThread.Enqueue(qa);

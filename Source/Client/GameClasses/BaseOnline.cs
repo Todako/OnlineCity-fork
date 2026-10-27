@@ -47,7 +47,7 @@ namespace RimWorldOnlineCity
             {
                 if (IsOnline)
                 {
-                    if (MatColonyOn == null)
+                    if (MatColonyOn == null && ColonyOn != null)
                     {
                         MatColonyOn = MaterialPool.MatFrom(
                             ColonyOn,
@@ -58,7 +58,7 @@ namespace RimWorldOnlineCity
                     return MatColonyOn;
                 }
 
-                if (MatColonyOff == null)
+                if (MatColonyOff == null && ColonyOff != null)
                 {
                     MatColonyOff = MaterialPool.MatFrom(
                         ColonyOff,
@@ -74,7 +74,7 @@ namespace RimWorldOnlineCity
         private void UpdateWealthTexturesIfNeeded()
         {
             float currentWealth = OnlineWObject?.MarketValueTotal ?? 0f;
-            if (_lastWealthLevel != currentWealth || ColonyOnExpandingTexture == null)
+            if (_lastWealthLevel != currentWealth || ColonyOnExpandingTexture == null || ColonyOffExpandingTexture == null)
             {
                 _lastWealthLevel = currentWealth;
                 ColonyOnExpandingTexture = GetMaterialByWealth(WealthTexturesOn, currentWealth);
@@ -87,7 +87,9 @@ namespace RimWorldOnlineCity
             get
             {
                 UpdateWealthTexturesIfNeeded();
-                return IsOnline ? ColonyOnExpandingTexture.Texture : ColonyOffExpandingTexture.Texture;
+                return IsOnline
+                    ? (ColonyOnExpandingTexture?.Texture ?? ColonyOnExpanding)
+                    : (ColonyOffExpandingTexture?.Texture ?? ColonyOffExpanding);
             }
         }
 
@@ -96,17 +98,19 @@ namespace RimWorldOnlineCity
             get
             {
                 UpdateWealthTexturesIfNeeded();
-                return IsOnline ? ColonyOnExpandingTexture.TextureName : ColonyOffExpandingTexture.TextureName;
+                return IsOnline
+                    ? (ColonyOnExpandingTexture?.TextureName ?? "ColonyOnExpanding")
+                    : (ColonyOffExpandingTexture?.TextureName ?? "ColonyOffExpanding");
             }
         }
 
         private static WealthTexture GetMaterialByWealth(WealthTexture[] wealthTextures, float wealth)
         {
-            for (int i = 1; i < WealthLevels.Length - 1; i++)
+            for (int i = 1; i < WealthLevels.Length; i++)
             {
                 if (wealth < WealthLevels[i])
                 {
-                    return wealthTextures[i];
+                    return wealthTextures[i - 1];
                 }
             }
             return wealthTextures[WealthLevels.Length - 1];

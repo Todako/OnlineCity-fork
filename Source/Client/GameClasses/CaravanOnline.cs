@@ -333,7 +333,7 @@ namespace RimWorldOnlineCity
             if (SessionClientController.My == null || this.Player == null) yield break;
 
             var player = this.Player;
-            FloatMenuOption fmoTrade;
+            FloatMenuOption fmoTrade = null;
             try
             {
                 fmoTrade = ExchengeUtils.ExchangeOfGoods_GetFloatMenu(this, () =>
@@ -352,22 +352,36 @@ namespace RimWorldOnlineCity
             {
                 yield break;
             }
-            yield return fmoTrade;
+
+            if (fmoTrade != null)
+            {
+                yield return fmoTrade;
+            }
 
             if (SessionClientController.My.EnablePVP
                 && this is BaseOnline
                 && GameAttacker.CanStart)
             {
-                FloatMenuOption fmo;
+                FloatMenuOption fmo = null;
                 try
                 {
-                    var dis = AttackUtils.CheckPossibilityAttack(
-                        SessionClientController.Data.MyEx,
-                        player,
-                        UpdateWorldController.GetMyByLocalId(caravan.ID).PlaceServerId,
-                        this.OnlineWObject.PlaceServerId,
-                        SessionClientController.Data.ProtectingNovice
-                    );
+                    string dis = null;
+                    var myEntry = UpdateWorldController.GetMyByLocalId(caravan.ID);
+
+                    if (myEntry == null || myEntry.PlaceServerId == 0 || this.OnlineWObject == null || this.OnlineWObject.PlaceServerId == 0)
+                    {
+                        dis = "OCity_SessionCC_Synchronization".TranslateCache();
+                    }
+                    else
+                    {
+                        dis = AttackUtils.CheckPossibilityAttack(
+                            SessionClientController.Data.MyEx,
+                            player,
+                            myEntry.PlaceServerId,
+                            this.OnlineWObject.PlaceServerId,
+                            SessionClientController.Data.ProtectingNovice
+                        );
+                    }
 
                     fmo = new FloatMenuOption("OCity_Caravan_Attack".Translate(OnlinePlayerLogin + " " + OnlineName)
                         + (dis != null ? " (" + dis + ")" : ""),
@@ -386,12 +400,18 @@ namespace RimWorldOnlineCity
                 {
                     yield break;
                 }
-                yield return fmo;
+
+                if (fmo != null)
+                {
+                    yield return fmo;
+                }
             }
         }
 
         private Command_Action _gizmoPlayerInfo;
         private Command_Action _gizmoTrade;
+        private string _lastGizmoPlayerLogin;
+        private static string _cachedPlayerInfoTitlePrefix;
 
         public override IEnumerable<Gizmo> GetGizmos()
         {
@@ -403,6 +423,7 @@ namespace RimWorldOnlineCity
             var player = Player;
             if (player != null)
             {
+                var login = player.Public?.Login ?? string.Empty;
                 if (_gizmoPlayerInfo == null)
                 {
                     _gizmoPlayerInfo = new Command_Action
@@ -416,16 +437,27 @@ namespace RimWorldOnlineCity
                         }
                     };
                 }
-                _gizmoPlayerInfo.defaultDesc = "OCity_Dialog_ChennelPlayerInfoTitle".Translate() + player.Public.Login;
+
+                if (_lastGizmoPlayerLogin != login || _gizmoPlayerInfo.defaultDesc == null)
+                {
+                    _lastGizmoPlayerLogin = login;
+                    if (_cachedPlayerInfoTitlePrefix == null)
+                    {
+                        _cachedPlayerInfoTitlePrefix = "OCity_Dialog_ChennelPlayerInfoTitle".Translate().ToString();
+                    }
+                    _gizmoPlayerInfo.defaultDesc = _cachedPlayerInfoTitlePrefix + login;
+                }
+
                 yield return _gizmoPlayerInfo;
             }
 
             if (_gizmoTrade == null)
             {
+                var tradeText = "OCity_Dialog_Exchenge_Trade_Orders".Translate();
                 _gizmoTrade = new Command_Action
                 {
-                    defaultLabel = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
-                    defaultDesc = "OCity_Dialog_Exchenge_Trade_Orders".Translate(),
+                    defaultLabel = tradeText,
+                    defaultDesc = tradeText,
                     icon = GeneralTexture.TradeButtonIcon,
                     action = delegate
                     {
