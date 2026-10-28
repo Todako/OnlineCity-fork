@@ -434,6 +434,7 @@ namespace RimWorldOnlineCity
             byte[] content;
             try
             {
+                RoadsOfTheRimPatch.OnBeforeGameSave();
                 ScribeSaver_InitSaving_Patch.Enable = true;
                 GameDataSaveLoader.SaveGame(SaveName);
                 content = ScribeSaver_InitSaving_Patch.SaveData?.ToArray() ?? new byte[0];
@@ -448,6 +449,7 @@ namespace RimWorldOnlineCity
             {
                 ScribeSaver_InitSaving_Patch.Enable = false;
                 ScribeSaver_InitSaving_Patch.SaveData = null;
+                RoadsOfTheRimPatch.OnAfterGameSave();
             }
 
             var localContent = content;

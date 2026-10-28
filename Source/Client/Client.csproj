@@ -119,6 +119,7 @@
     <Compile Include="GameClasses\Harmony\GameLog.cs" />
     <Compile Include="GameClasses\Harmony\GamePresetFiles.cs" />
     <Compile Include="GameClasses\Harmony\GameSaveLoadInMem.cs" />
+    <Compile Include="GameClasses\Harmony\RoadsOfTheRimPatch.cs" />
     <Compile Include="GameClasses\Incident\IncidentAcid.cs" />
     <Compile Include="GameClasses\Incident\IncidentBombing.cs" />
     <Compile Include="GameClasses\Incident\IncidentByDef.cs" />

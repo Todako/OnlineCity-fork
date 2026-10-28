@@ -50,6 +50,7 @@ namespace RimWorldOnlineCity
             var harmony = new HarmonyLib.Harmony("rimworld.onlinecity");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             HugsLibUtility_OpenModSettingsDialog_Patch.TryPatch(harmony);
+            RoadsOfTheRimPatch.TryPatch(harmony);
 
             var dispatcherObject = new GameObject("OnlineCity_Dispatcher");
             UnityEngine.Object.DontDestroyOnLoad(dispatcherObject);

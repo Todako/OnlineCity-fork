@@ -20,7 +20,12 @@ namespace RimWorldOnlineCity
     /// </summary>
     static class UpdateWorldController
     {
-        private static Dictionary<long, int> ConverterServerId { get; set; }
+        // ОПТИМІЗАЦІЯ ТА ВИПРАВЛЕННЯ: окремі словники для власних, чужих і торгових об'єктів,
+        // щоб їхні PlaceServerId ніколи не перезаписували один одного.
+        private static Dictionary<long, int> MyServerToLocalId { get; set; }
+        private static Dictionary<long, int> OtherServerToLocalId { get; set; }
+        private static Dictionary<long, int> TradeServerToLocalId { get; set; }
+
         public static Dictionary<int, WorldObjectEntry> WorldObjectEntrys { get; private set; }
         private static List<WorldObjectEntry> ToDelete { get; set; }
         public static HashSet<TradeOrdersOnline> WorldObject_TradeOrdersOnline { get; set; }
@@ -163,6 +168,9 @@ namespace RimWorldOnlineCity
                 }
 
                 MainTabWindow_DoStatisticsPage_Patch.PatchColonyWealth = _patchMapBuffer;
+
+                // Roads of the Rim: відстеження будівельних ділянок, маршрутів та прогресу в головному потоці
+                RoadsOfTheRimPatch.TrackConstructionObjectsOnMainThread(allWorldObjects);
             }
             catch (Exception ex)
             {
@@ -225,10 +233,16 @@ namespace RimWorldOnlineCity
                 toServ.WObjects = WObjects;
                 LastSendMyWorldObjects = toServ.WObjects;
 
-                if (ToDelete == null) ToDelete = new List<WorldObjectEntry>(8);
-                else ToDelete.Clear();
+                // Roads of the Rim: відправка побудованих доріг і запланованих будівельних майданчиків на сервер
+                toServ.RoadsToAdd = RoadsOfTheRimPatch.FlushPendingRoadsForServer();
+                toServ.RoadSitesToSync = RoadsOfTheRimPatch.FlushPendingRoadSitesForServer();
 
-                if (WorldObjectEntrys != null && WorldObjectEntrys.Count > 0)
+                if (ToDelete == null) ToDelete = new List<WorldObjectEntry>(8);
+
+                bool inActivePvp = SessionClientController.Data?.AttackModule != null
+                    || SessionClientController.Data?.AttackUsModule != null;
+
+                if (!inActivePvp && WorldObjectEntrys != null && WorldObjectEntrys.Count > 0)
                 {
                     _presentIdsBuffer.Clear();
                     if (allWorldObjects != null)
@@ -239,16 +253,40 @@ namespace RimWorldOnlineCity
                         }
                     }
 
+                    List<int> removedLocalKeys = null;
                     foreach (var p in WorldObjectEntrys)
                     {
                         if (!_presentIdsBuffer.Contains(p.Key))
                         {
                             ToDelete.Add(p.Value);
+                            if (removedLocalKeys == null) removedLocalKeys = new List<int>(4);
+                            removedLocalKeys.Add(p.Key);
+                        }
+                    }
+
+                    if (removedLocalKeys != null)
+                    {
+                        for (int i = 0; i < removedLocalKeys.Count; i++)
+                        {
+                            int k = removedLocalKeys[i];
+                            if (WorldObjectEntrys.TryGetValue(k, out var entry))
+                            {
+                                MyServerToLocalId?.Remove(entry.PlaceServerId);
+                            }
+                            WorldObjectEntrys.Remove(k);
                         }
                     }
                 }
 
-                toServ.WObjectsToDelete = ToDelete.Count > 0 ? new List<WorldObjectEntry>(ToDelete) : null;
+                if (!inActivePvp && ToDelete.Count > 0)
+                {
+                    toServ.WObjectsToDelete = new List<WorldObjectEntry>(ToDelete);
+                    ToDelete.Clear();
+                }
+                else
+                {
+                    toServ.WObjectsToDelete = null;
+                }
             }
 
             if (gameProgress != null)
@@ -390,6 +428,16 @@ namespace RimWorldOnlineCity
         {
             if (fromServ == null) return;
 
+            // Roads of the Rim: застосування нових доріг та будівельних майданчиків, отриманих від сервера
+            if (fromServ.Roads != null && fromServ.Roads.Count > 0)
+            {
+                RoadsOfTheRimPatch.ApplyRoadsFromServer(fromServ.Roads);
+            }
+            if (fromServ.RoadSites != null && fromServ.RoadSites.Count > 0)
+            {
+                RoadsOfTheRimPatch.ApplyRoadSitesFromServer(fromServ.RoadSites);
+            }
+
             if (SessionClientController.Data != null && SessionClientController.Data.GeneralSettings.EquableWorldObjects)
             {
                 ApplyFactionsToWorld(fromServ);
@@ -407,12 +455,13 @@ namespace RimWorldOnlineCity
                         Find.WorldObjects.Remove(o);
                     }
                 }
-                ConverterServerId?.Clear();
+                MyServerToLocalId?.Clear();
+                OtherServerToLocalId?.Clear();
+                TradeServerToLocalId?.Clear();
                 Loger.Log("RemoveMissing виконано");
             }
 
             if (ToDelete == null) ToDelete = new List<WorldObjectEntry>(8);
-            else ToDelete.Clear();
 
             var catchAllWorldObjects = Find.WorldObjects?.AllWorldObjects;
             if (catchAllWorldObjects == null) return;
@@ -538,21 +587,35 @@ namespace RimWorldOnlineCity
 
         public static int GetLocalIdByServerId(long serverId)
         {
-            if (ConverterServerId == null || !ConverterServerId.TryGetValue(serverId, out int objId))
-            {
-                return 0;
-            }
-            return objId;
+            if (MyServerToLocalId != null && MyServerToLocalId.TryGetValue(serverId, out int myId))
+                return myId;
+            if (OtherServerToLocalId != null && OtherServerToLocalId.TryGetValue(serverId, out int otherId))
+                return otherId;
+            if (TradeServerToLocalId != null && TradeServerToLocalId.TryGetValue(serverId, out int tradeId))
+                return tradeId;
+            return 0;
         }
 
         public static WorldObjectEntry GetMyByServerId(long serverId)
         {
-            if (ConverterServerId == null || !ConverterServerId.TryGetValue(serverId, out int objId)
-                || WorldObjectEntrys == null || !WorldObjectEntrys.TryGetValue(objId, out var storeWO))
+            if (MyServerToLocalId != null && MyServerToLocalId.TryGetValue(serverId, out int objId)
+                && WorldObjectEntrys != null && WorldObjectEntrys.TryGetValue(objId, out var storeWO))
             {
-                return null;
+                return storeWO;
             }
-            return storeWO;
+
+            if (WorldObjectEntrys != null)
+            {
+                foreach (var kvp in WorldObjectEntrys)
+                {
+                    if (kvp.Value.PlaceServerId == serverId)
+                    {
+                        if (MyServerToLocalId != null) MyServerToLocalId[serverId] = kvp.Key;
+                        return kvp.Value;
+                    }
+                }
+            }
+            return null;
         }
 
         public static WorldObjectEntry GetMyByLocalId(int id)
@@ -569,11 +632,11 @@ namespace RimWorldOnlineCity
 
         public static WorldObjectBaseOnline GetOtherByServerId(long serverId, Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID = null)
         {
-            if (ConverterServerId != null && ConverterServerId.TryGetValue(serverId, out int objId))
+            if (OtherServerToLocalId != null && OtherServerToLocalId.TryGetValue(serverId, out int objId))
             {
                 if (allWorldObjectsByID != null)
                 {
-                    if (allWorldObjectsByID.TryGetValue(objId, out var wo)) return wo;
+                    if (allWorldObjectsByID.TryGetValue(objId, out var wo) && wo is CaravanOnline) return wo;
                 }
                 else
                 {
@@ -582,7 +645,7 @@ namespace RimWorldOnlineCity
                     {
                         for (int i = 0; i < all.Count; i++)
                         {
-                            if (all[i].ID == objId && all[i] is WorldObjectBaseOnline wobo) return wobo;
+                            if (all[i].ID == objId && all[i] is CaravanOnline wobo) return wobo;
                         }
                     }
                 }
@@ -593,9 +656,46 @@ namespace RimWorldOnlineCity
             {
                 for (int i = 0; i < allWorld.Count; i++)
                 {
-                    if (allWorld[i] is WorldObjectBaseOnline wobo && wobo.Place?.PlaceServerId == serverId)
+                    if (allWorld[i] is CaravanOnline wobo && wobo.Place?.PlaceServerId == serverId)
                     {
-                        if (ConverterServerId != null) ConverterServerId[serverId] = wobo.ID;
+                        if (OtherServerToLocalId != null) OtherServerToLocalId[serverId] = wobo.ID;
+                        return wobo;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static WorldObjectBaseOnline GetTradeByServerId(long serverId, Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID = null)
+        {
+            if (TradeServerToLocalId != null && TradeServerToLocalId.TryGetValue(serverId, out int objId))
+            {
+                if (allWorldObjectsByID != null)
+                {
+                    if (allWorldObjectsByID.TryGetValue(objId, out var wo) && !(wo is CaravanOnline)) return wo;
+                }
+                else
+                {
+                    var all = Find.WorldObjects?.AllWorldObjects;
+                    if (all != null)
+                    {
+                        for (int i = 0; i < all.Count; i++)
+                        {
+                            if (all[i].ID == objId && all[i] is WorldObjectBaseOnline wobo && !(wobo is CaravanOnline)) return wobo;
+                        }
+                    }
+                }
+            }
+
+            var allWorld = Find.WorldObjects?.AllWorldObjects;
+            if (allWorld != null)
+            {
+                for (int i = 0; i < allWorld.Count; i++)
+                {
+                    if (allWorld[i] is WorldObjectBaseOnline wobo && !(wobo is CaravanOnline) && wobo.Place?.PlaceServerId == serverId)
+                    {
+                        if (TradeServerToLocalId != null) TradeServerToLocalId[serverId] = wobo.ID;
                         return wobo;
                     }
                 }
@@ -606,21 +706,39 @@ namespace RimWorldOnlineCity
 
         public static WorldObject GetWOByServerId(long serverId, List<WorldObject> allObjects = null)
         {
-            if (ConverterServerId == null || !ConverterServerId.TryGetValue(serverId, out int objId))
-            {
-                return null;
-            }
-
             var list = allObjects ?? Find.WorldObjects?.AllWorldObjects;
             if (list == null) return null;
 
-            for (int i = 0; i < list.Count; i++)
+            if (MyServerToLocalId != null && MyServerToLocalId.TryGetValue(serverId, out int myObjId))
             {
-                if (list[i].ID == objId)
+                for (int i = 0; i < list.Count; i++)
                 {
-                    return list[i];
+                    if (list[i].ID == myObjId) return list[i];
                 }
             }
+
+            if (WorldObjectEntrys != null)
+            {
+                foreach (var kvp in WorldObjectEntrys)
+                {
+                    if (kvp.Value.PlaceServerId == serverId)
+                    {
+                        for (int i = 0; i < list.Count; i++)
+                        {
+                            if (list[i].ID == kvp.Key) return list[i];
+                        }
+                    }
+                }
+            }
+
+            if (OtherServerToLocalId != null && OtherServerToLocalId.TryGetValue(serverId, out int otherObjId))
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i].ID == otherObjId) return list[i];
+                }
+            }
+
             return null;
         }
 
@@ -804,7 +922,7 @@ namespace RimWorldOnlineCity
                 {
                     int existingKey = -1;
 
-                    if (ConverterServerId != null && ConverterServerId.TryGetValue(worldObjectEntry.PlaceServerId, out int mappedId) && WorldObjectEntrys != null && WorldObjectEntrys.ContainsKey(mappedId))
+                    if (MyServerToLocalId != null && MyServerToLocalId.TryGetValue(worldObjectEntry.PlaceServerId, out int mappedId) && WorldObjectEntrys != null && WorldObjectEntrys.ContainsKey(mappedId))
                     {
                         existingKey = mappedId;
                     }
@@ -823,21 +941,45 @@ namespace RimWorldOnlineCity
                     if (existingKey < 0)
                     {
                         bool matched = false;
+                        // 1. Точний пошук за клітинкою (Tile)
                         for (int i = 0; i < allWorldObjects.Count; i++)
                         {
                             var wo = allWorldObjects[i];
                             if (WorldObjectEntrys != null && !WorldObjectEntrys.ContainsKey(wo.ID)
                                 && wo.Tile == worldObjectEntry.Tile
+                                && (wo.Faction?.IsPlayer ?? false)
                                 && ((wo is Caravan && worldObjectEntry.Type == WorldObjectEntryType.Caravan)
-                                    || (wo is MapParent && worldObjectEntry.Type == WorldObjectEntryType.Base)))
+                                    || (wo is MapParent && !(wo is WorldObjectBaseOnline) && worldObjectEntry.Type == WorldObjectEntryType.Base)))
                             {
                                 var id = wo.ID;
                                 if (Loger.Enable) Loger.Log("SetMyID " + id + " ServerId " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name);
                                 WorldObjectEntrys.Add(id, worldObjectEntry);
 
-                                if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = id;
+                                if (MyServerToLocalId != null) MyServerToLocalId[worldObjectEntry.PlaceServerId] = id;
                                 matched = true;
                                 return;
+                            }
+                        }
+
+                        // 2. Резервний пошук каравану за назвою (якщо караван щойно перейшов на сусідній тайл RoadConstructionLeg)
+                        if (!matched && worldObjectEntry.Type == WorldObjectEntryType.Caravan)
+                        {
+                            for (int i = 0; i < allWorldObjects.Count; i++)
+                            {
+                                var wo = allWorldObjects[i];
+                                if (wo is Caravan && (wo.Faction?.IsPlayer ?? false)
+                                    && WorldObjectEntrys != null && !WorldObjectEntrys.ContainsKey(wo.ID)
+                                    && string.Equals(wo.LabelCap, worldObjectEntry.Name, StringComparison.Ordinal))
+                                {
+                                    var id = wo.ID;
+                                    worldObjectEntry.Tile = wo.Tile;
+                                    if (Loger.Enable) Loger.Log("SetMyID (by name) " + id + " ServerId " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name);
+                                    WorldObjectEntrys.Add(id, worldObjectEntry);
+
+                                    if (MyServerToLocalId != null) MyServerToLocalId[worldObjectEntry.PlaceServerId] = id;
+                                    matched = true;
+                                    return;
+                                }
                             }
                         }
 
@@ -850,7 +992,7 @@ namespace RimWorldOnlineCity
                     else if (WorldObjectEntrys != null)
                     {
                         WorldObjectEntrys[existingKey] = worldObjectEntry;
-                        if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = existingKey;
+                        if (MyServerToLocalId != null) MyServerToLocalId[worldObjectEntry.PlaceServerId] = existingKey;
                     }
                     return;
                 }
@@ -862,12 +1004,26 @@ namespace RimWorldOnlineCity
                     for (int i = allWorldObjects.Count - 1; i >= 0; i--)
                     {
                         var cur = allWorldObjects[i];
-                        if (cur.Tile == worldObjectEntry.Tile && cur != worldObject
-                            && !(cur is Caravan) && !(cur is CaravanOnline)
-                            && (cur.Faction == null || !cur.Faction.IsPlayer))
+                        if (cur.Tile == worldObjectEntry.Tile && cur != worldObject)
                         {
-                            if (Loger.Enable) Loger.Log("Remove " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name);
-                            Find.WorldObjects.Remove(cur);
+                            bool isStaleBaseOnline = cur is BaseOnline staleBase
+                                && staleBase.OnlineWObject?.PlaceServerId != worldObjectEntry.PlaceServerId;
+
+                            // Захист об'єктів будівництва доріг Roads of the Rim від видалення
+                            bool isNpcObject = !(cur is Caravan) && !(cur is CaravanOnline)
+                                && !RoadsOfTheRimPatch.IsRoadConstructionObject(cur)
+                                && (cur.Faction == null || !cur.Faction.IsPlayer);
+
+                            if (isStaleBaseOnline || isNpcObject)
+                            {
+                                if (Loger.Enable) Loger.Log("Remove " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name);
+                                if (cur is BaseOnline sb && sb.OnlineWObject != null)
+                                {
+                                    OtherServerToLocalId?.Remove(sb.OnlineWObject.PlaceServerId);
+                                    allWorldObjectsByID?.Remove(sb.ID);
+                                }
+                                Find.WorldObjects.Remove(cur);
+                            }
                         }
                     }
                 }
@@ -882,13 +1038,13 @@ namespace RimWorldOnlineCity
                     worldObject.Tile = worldObjectEntry.Tile;
                     Find.WorldObjects.Add(worldObject);
 
-                    if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    if (OtherServerToLocalId != null) OtherServerToLocalId[worldObjectEntry.PlaceServerId] = worldObject.ID;
                     if (allWorldObjectsByID != null) allWorldObjectsByID[worldObject.ID] = worldObject;
                     if (Loger.Enable) Loger.Log("Add " + worldObjectEntry.PlaceServerId + " " + worldObjectEntry.Name + " " + worldObjectEntry.LoginOwner);
                 }
                 else
                 {
-                    if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    if (OtherServerToLocalId != null) OtherServerToLocalId[worldObjectEntry.PlaceServerId] = worldObject.ID;
                 }
 
                 worldObject.Tile = worldObjectEntry.Tile;
@@ -918,9 +1074,8 @@ namespace RimWorldOnlineCity
             if (worldObject != null)
             {
                 allWorldObjectsByID?.Remove(worldObject.ID);
-                ConverterServerId?.Remove(worldObjectEntry.PlaceServerId);
+                OtherServerToLocalId?.Remove(worldObjectEntry.PlaceServerId);
 
-                // ОПТИМІЗАЦІЯ І ВИПРАВЛЕННЯ БАГУ: видалення через Find.WorldObjects забезпечує виклик PostRemove()
                 if (allWorldObjects != null && allWorldObjects != Find.WorldObjects.AllWorldObjects)
                 {
                     allWorldObjects.Remove(worldObject);
@@ -933,7 +1088,7 @@ namespace RimWorldOnlineCity
         {
             try
             {
-                var worldObject = GetOtherByServerId(worldObjectEntry.PlaceServerId, allWorldObjectsByID);
+                var worldObject = GetTradeByServerId(worldObjectEntry.PlaceServerId, allWorldObjectsByID);
 
                 if (worldObjectEntry.Type != TradeWorldObjectEntryType.TradeOrder)
                 {
@@ -959,7 +1114,7 @@ namespace RimWorldOnlineCity
                             if (wo is TradeThingsOnline tto && tto.Tile == worldObjectEntry.Tile)
                             {
                                 allWorldObjectsByID?.Remove(tto.ID);
-                                ConverterServerId?.Remove(worldObjectEntry.PlaceServerId);
+                                TradeServerToLocalId?.Remove(worldObjectEntry.PlaceServerId);
 
                                 if (allWorldObjects != Find.WorldObjects.AllWorldObjects)
                                 {
@@ -990,7 +1145,7 @@ namespace RimWorldOnlineCity
                     worldObject.Tile = worldObjectEntry.Tile;
                     Find.WorldObjects.Add(worldObject);
 
-                    if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    if (TradeServerToLocalId != null) TradeServerToLocalId[worldObjectEntry.PlaceServerId] = worldObject.ID;
                     if (allWorldObjectsByID != null) allWorldObjectsByID[worldObject.ID] = worldObject;
 
                     if (Loger.Enable)
@@ -1001,7 +1156,7 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    if (ConverterServerId != null) ConverterServerId[worldObjectEntry.PlaceServerId] = worldObject.ID;
+                    if (TradeServerToLocalId != null) TradeServerToLocalId[worldObjectEntry.PlaceServerId] = worldObject.ID;
                     if (worldObjectEntry.Type == TradeWorldObjectEntryType.TradeOrder)
                     {
                         var worldObjectTO = worldObject as TradeOrdersOnline;
@@ -1034,7 +1189,7 @@ namespace RimWorldOnlineCity
 
         public static void DeleteTradeWorldObject(TradeWorldObjectEntry worldObjectEntry, ref List<WorldObject> allWorldObjects, ref Dictionary<int, WorldObjectBaseOnline> allWorldObjectsByID)
         {
-            var worldObject = GetOtherByServerId(worldObjectEntry.PlaceServerId, allWorldObjectsByID);
+            var worldObject = GetTradeByServerId(worldObjectEntry.PlaceServerId, allWorldObjectsByID);
             if (worldObject != null)
             {
                 if (worldObjectEntry.Type == TradeWorldObjectEntryType.TradeOrder)
@@ -1051,7 +1206,7 @@ namespace RimWorldOnlineCity
                     if (worldObjectTO.TradeOrders.Count == 0)
                     {
                         allWorldObjectsByID?.Remove(worldObject.ID);
-                        ConverterServerId?.Remove(worldObjectEntry.PlaceServerId);
+                        TradeServerToLocalId?.Remove(worldObjectEntry.PlaceServerId);
 
                         if (allWorldObjects != null && allWorldObjects != Find.WorldObjects.AllWorldObjects)
                         {
@@ -1064,7 +1219,7 @@ namespace RimWorldOnlineCity
                 else
                 {
                     allWorldObjectsByID?.Remove(worldObject.ID);
-                    ConverterServerId?.Remove(worldObjectEntry.PlaceServerId);
+                    TradeServerToLocalId?.Remove(worldObjectEntry.PlaceServerId);
 
                     if (allWorldObjects != null && allWorldObjects != Find.WorldObjects.AllWorldObjects)
                     {
@@ -1079,7 +1234,9 @@ namespace RimWorldOnlineCity
         public static void InitGame()
         {
             WorldObjectEntrys = new Dictionary<int, WorldObjectEntry>();
-            ConverterServerId = new Dictionary<long, int>();
+            MyServerToLocalId = new Dictionary<long, int>();
+            OtherServerToLocalId = new Dictionary<long, int>();
+            TradeServerToLocalId = new Dictionary<long, int>();
             WorldObject_TradeOrdersOnline = new HashSet<TradeOrdersOnline>();
             ToDelete = new List<WorldObjectEntry>(8);
             LastCatchAllWorldObjectsByID = null;
@@ -1088,7 +1245,9 @@ namespace RimWorldOnlineCity
             LastFactionOnline = null;
             LastForceRecountTicks.Clear();
 
-            // Очищення статичних буферів для запобігання витоку посилань між збереженнями
+            // Скидання кешу доріг та проксі-майданчиків Roads of the Rim
+            RoadsOfTheRimPatch.ClearCache();
+
             _presentIdsBuffer.Clear();
             _tmpMapBuffer.Clear();
             _patchMapBuffer.Clear();

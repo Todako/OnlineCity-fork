@@ -83,7 +83,6 @@ namespace ServerOnlineCity.Services
                     Repository.GetSaveData.SavePlayerData(context.Player.Public.Login, packet.SaveFileData, packet.SingleSave);
                     context.Player.Public.LastSaveTime = timeNow;
 
-                    // Дії при збереженні (виконуються виключно тут)
                     context.Player.MailsConfirmationSave = new List<ModelMail>();
                     Repository.Get.ChangeData = true;
                 }
@@ -147,7 +146,6 @@ namespace ServerOnlineCity.Services
                     // 5. Обробка та оновлення наявних або нових об'єктів світу
                     if (pWOs != null && pWOsCount > 0)
                     {
-                        // Створюємо швидкий індекс поточних об'єктів світу для O(1) пошуку при множинних оновленнях
                         Dictionary<long, int> woIndexBySid = null;
                         if (pWOsCount > 2 && data.WorldObjects.Count > 8)
                         {
@@ -242,6 +240,118 @@ namespace ServerOnlineCity.Services
                         }
                     }
 
+                    // 7.1. Синхронізація побудованих доріг (Roads of the Rim)
+                    if (data.WorldRoads == null) data.WorldRoads = new List<WorldRoadOnline>();
+                    if (packet.RoadsToAdd != null && packet.RoadsToAdd.Count > 0)
+                    {
+                        for (int i = 0; i < packet.RoadsToAdd.Count; i++)
+                        {
+                            var newRoad = packet.RoadsToAdd[i];
+                            if (newRoad == null || newRoad.FromTile == newRoad.ToTile) continue;
+
+                            int a = Math.Min(newRoad.FromTile, newRoad.ToTile);
+                            int b = Math.Max(newRoad.FromTile, newRoad.ToTile);
+                            newRoad.FromTile = a;
+                            newRoad.ToTile = b;
+                            newRoad.UpdateTime = timeNow;
+
+                            bool updatedExisting = false;
+                            for (int j = 0; j < data.WorldRoads.Count; j++)
+                            {
+                                var existing = data.WorldRoads[j];
+                                if (existing.FromTile == a && existing.ToTile == b)
+                                {
+                                    existing.RoadDefName = newRoad.RoadDefName ?? string.Empty;
+                                    existing.UpdateTime = timeNow;
+                                    updatedExisting = true;
+                                    break;
+                                }
+                            }
+
+                            if (!updatedExisting)
+                            {
+                                data.WorldRoads.Add(newRoad);
+                            }
+                        }
+                        Repository.Get.ChangeData = true;
+                    }
+
+                    if (data.WorldRoads.Count > 0)
+                    {
+                        List<WorldRoadOnline> outRoads = null;
+                        for (int i = 0; i < data.WorldRoads.Count; i++)
+                        {
+                            var r = data.WorldRoads[i];
+                            if (r.UpdateTime >= packet.UpdateTime)
+                            {
+                                if (outRoads == null) outRoads = new List<WorldRoadOnline>();
+                                outRoads.Add(r);
+                            }
+                        }
+                        toClient.Roads = outRoads;
+                    }
+
+                    // 7.2. Синхронізація будівельних майданчиків та маршрутів (RoadConstructionSite / RoadConstructionLeg)
+                    if (data.WorldRoadSites == null) data.WorldRoadSites = new List<WorldRoadSiteOnline>();
+                    if (packet.RoadSitesToSync != null && packet.RoadSitesToSync.Count > 0)
+                    {
+                        for (int i = 0; i < packet.RoadSitesToSync.Count; i++)
+                        {
+                            var incoming = packet.RoadSitesToSync[i];
+                            if (incoming == null) continue;
+
+                            incoming.OwnerLogin = pLogin;
+                            incoming.UpdateTime = timeNow;
+
+                            bool found = false;
+                            for (int j = 0; j < data.WorldRoadSites.Count; j++)
+                            {
+                                var existing = data.WorldRoadSites[j];
+                                if (existing.OwnerLogin == pLogin && existing.LocalSiteId == incoming.LocalSiteId)
+                                {
+                                    existing.Tile = incoming.Tile;
+                                    existing.RoadDefName = incoming.RoadDefName;
+                                    existing.LegTiles = incoming.LegTiles;
+                                    existing.CompProgressData = incoming.CompProgressData;
+                                    existing.IsDeleted = incoming.IsDeleted;
+                                    existing.UpdateTime = timeNow;
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            if (!found)
+                            {
+                                data.WorldRoadSites.Add(incoming);
+                            }
+                        }
+                        Repository.Get.ChangeData = true;
+                    }
+
+                    if (data.WorldRoadSites.Count > 0)
+                    {
+                        List<WorldRoadSiteOnline> outSites = null;
+                        for (int i = 0; i < data.WorldRoadSites.Count; i++)
+                        {
+                            var site = data.WorldRoadSites[i];
+                            if (site.IsDeleted && timeNowTicks - site.UpdateTime.Ticks > CleanupTicks120Sec)
+                            {
+                                data.WorldRoadSites.RemoveAt(i--);
+                                continue;
+                            }
+
+                            if (site.OwnerLogin == pLogin) continue;
+                            if (packet.UpdateTime == DateTime.MinValue && site.IsDeleted) continue;
+
+                            if (site.UpdateTime >= packet.UpdateTime)
+                            {
+                                if (outSites == null) outSites = new List<WorldRoadSiteOnline>();
+                                outSites.Add(site);
+                            }
+                        }
+                        toClient.RoadSites = outSites;
+                    }
+
                     // 8. Передача держав
                     if (data.StateUpdateTime > packet.UpdateTime)
                     {
@@ -270,7 +380,6 @@ namespace ServerOnlineCity.Services
                     {
                         try
                         {
-                            // Видалення об'єктів онлайн за O(N + M) через HashSet замість RemoveAll + .Any()
                             if (packet.WObjectOnlineToDelete != null && packet.WObjectOnlineToDelete.Count > 0)
                             {
                                 var toDelKeys = new HashSet<(string Name, int Tile)>();
@@ -342,7 +451,6 @@ namespace ServerOnlineCity.Services
 
                         try
                         {
-                            // Видалення фракцій онлайн за O(N + M) через HashSet замість RemoveAll + .Any()
                             if (packet.FactionOnlineToDelete != null && packet.FactionOnlineToDelete.Count > 0)
                             {
                                 var toDelFactions = new HashSet<(int LoadId, string DefName, string LabelCap)>();

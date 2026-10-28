@@ -9,7 +9,6 @@ namespace Transfer
     [Serializable]
     public class ModelPlayToClient
     {
-        //public long TypeInfo { get; set; }
         public DateTime UpdateTime { get; set; }
         public List<WorldObjectEntry> WObjects { get; set; }
         public List<WorldObjectEntry> WObjectsToDelete { get; set; }
@@ -30,5 +29,8 @@ namespace Transfer
         public List<FactionOnline> FactionOnlineToAdd { get; set; }
         public List<FactionOnline> FactionOnlineToDelete { get; set; }
         public List<StateInfo> States { get; set; }
+
+        public List<WorldRoadOnline> Roads { get; set; }
+        public List<WorldRoadSiteOnline> RoadSites { get; set; }
     }
 }

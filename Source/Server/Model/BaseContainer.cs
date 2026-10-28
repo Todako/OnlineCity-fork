@@ -13,8 +13,8 @@ using Transfer;
 namespace ServerOnlineCity.Model
 {
     /// <summary>
-    /// Головне сховище стану сервера: зберігає облікові записи гравців, стан світу, 
-    /// активні торгові ордери, держави та списки видалених об'єктів.
+    /// Головне сховище стану сервера: зберігає облікові записи гравців, стан світу,
+    /// активні торгові ордери, держави, побудовані дороги та списки видалених об'єктів.
     /// </summary>
     [Serializable]
     public class BaseContainer
@@ -88,7 +88,6 @@ namespace ServerOnlineCity.Model
                 }
             }
 
-            // Атомарна підміна посилань
             PlayersAllDic = approvedDic;
             PlayersAllDicWithNotApprove = allDic;
             GetPlayersAll = approvedList;
@@ -134,9 +133,11 @@ namespace ServerOnlineCity.Model
             return hash;
         }
 
-        // Об'єкти світу онлайн (NPC, фракції)
+        // Об'єкти світу онлайн (NPC, фракції, побудовані дороги та будівельні майданчики Roads of the Rim)
         public List<WorldObjectOnline> WorldObjectOnlineList { get; set; }
         public List<FactionOnline> FactionOnlineList { get; set; }
+        public List<WorldRoadOnline> WorldRoads { get; set; }
+        public List<WorldRoadSiteOnline> WorldRoadSites { get; set; }
 
         [NonSerialized]
         public bool EverybodyLogoff;
@@ -189,7 +190,6 @@ namespace ServerOnlineCity.Model
                 statesList = new HashSet<State>();
                 positionsDic = new ConcurrentDictionary<string, ConcurrentDictionary<string, StatePosition>>(concurrencyLevel, statesCount, StringComparer.Ordinal);
 
-                // Одноразове групування посад за назвою держави з єдиним блокуванням
                 var positionsByState = new Dictionary<string, List<StatePosition>>(statesCount, StringComparer.Ordinal);
                 if (positions != null)
                 {
@@ -239,9 +239,6 @@ namespace ServerOnlineCity.Model
             StateUpdateTime = DateTime.UtcNow;
         }
 
-        /// <summary>
-        /// Повертає список гравців вказаної держави без створення замикань і делегатів.
-        /// </summary>
         public HashSet<PlayerServer> GetStatePlayers(string stateName)
         {
             if (string.IsNullOrEmpty(stateName)) return EmptyPlayerSet;
@@ -288,7 +285,7 @@ namespace ServerOnlineCity.Model
                 LastChanged = DateTime.UtcNow,
             };
 
-            MaxIdChat = 1; // Id = 1 закріплено за загальним чатом, 0 — системний приватний чат
+            MaxIdChat = 1;
             ChatManager.Instance.NewChatManager(1, publicChat);
 
             PlayersAll = new List<PlayerServer>()
@@ -306,6 +303,8 @@ namespace ServerOnlineCity.Model
             VersionNum = MainHelper.VersionNum;
             WorldObjectOnlineList = new List<WorldObjectOnline>();
             FactionOnlineList = new List<FactionOnline>();
+            WorldRoads = new List<WorldRoadOnline>();
+            WorldRoadSites = new List<WorldRoadSiteOnline>();
 
             PostLoad();
         }
@@ -321,6 +320,8 @@ namespace ServerOnlineCity.Model
             if (StatesRanking == null) StatesRanking = new List<string>();
             if (PlayersRankingLast == null) PlayersRankingLast = new List<string>();
             if (StatesRankingLast == null) StatesRankingLast = new List<string>();
+            if (WorldRoads == null) WorldRoads = new List<WorldRoadOnline>();
+            if (WorldRoadSites == null) WorldRoadSites = new List<WorldRoadSiteOnline>();
 
             if (!ServerManager.ServerSettings.PlayerNeedApprove)
             {
@@ -338,7 +339,6 @@ namespace ServerOnlineCity.Model
             UpdatePlayersAllDic();
             UpdateStatesDic();
 
-            // Якщо PVP вимкнено в конфігурації сервера — вимикаємо його у всіх гравців
             if (!ServerManager.ServerSettings.GeneralSettings.EnablePVP)
             {
                 for (int i = 0; i < PlayersAll.Count; i++)
@@ -352,17 +352,11 @@ namespace ServerOnlineCity.Model
             }
         }
 
-        /// <summary>
-        /// Потокобезпечна генерація унікального ServerId для об'єкта світу.
-        /// </summary>
         public long GetWorldObjectEntryId()
         {
             return Interlocked.Increment(ref MaxServerIdWorldObjectEntry);
         }
 
-        /// <summary>
-        /// Потокобезпечна генерація унікального Id для нового гравця.
-        /// </summary>
         public int GenerateMaxPlayerId()
         {
             return Interlocked.Increment(ref MaxPlayerId);
