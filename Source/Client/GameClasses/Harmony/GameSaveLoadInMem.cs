@@ -194,10 +194,10 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
                 SaveStreamRef(__instance) = saveStream;
 
+                // ОПТИМІЗАЦІЯ: вимикаємо зайве форматування пробілами в пам'яті для прискорення серіалізації
                 XmlWriterSettings xmlWriterSettings = new XmlWriterSettings
                 {
-                    Indent = true,
-                    IndentChars = "\t",
+                    Indent = false,
                     CloseOutput = false
                 };
 

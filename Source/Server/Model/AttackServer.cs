@@ -9,34 +9,26 @@ namespace ServerOnlineCity.Model
 {
     public class AttackServer
     {
-        /*
-         * А0: 0 в 1 Атакуючий пересилає айді об'єктів
-         * А1: Атакуючий посилає запит, поки статус не прийде 2
-         * Н2: 1 в 2 Хосту приходить сигнал про атаку і він запитує айді 
-         * А2: Посилає атакуючих пішаків
-         * А3: Посилає запит, поки статус не прийде більше 3. Відповідь зі статусом 4 містить дані для створення карти
-         * Н4: 2 в 4 Посилає дані для створення карти
-         * Н5: 4 в 5 Зчитує атакуючих пішаків, повторює, поки не прийдуть дані пішаків
-        */
         public int State { get; set; }
+        public int BattleSeed { get; set; }
+        public long HostBattleTick { get; set; }
+        public long AttackerBattleTick { get; set; }
+        public bool HostReady { get; set; }
+        public bool AttackerReady { get; set; }
 
         public bool TestMode { get; set; }
 
         public PlayerServer Attacker { get; set; }
-
         public PlayerServer Host { get; set; }
 
-        /// <summary>
-        /// Ознака перемоги. Обчислюється і приймається від Хоста.
-        /// </summary>
         public bool? VictoryAttacker { get; set; }
 
         public long HostPlaceServerId { get; set; }
-
         public long InitiatorPlaceServerId { get; set; }
         public int InitiatorPlaceTile { get; set; }
 
         public IntVec3S MapSize { get; set; }
+        public byte[] MapSnapshotData { get; set; }
         public List<ThingEntry> Pawns { get; set; }
         public List<IntVec3S> TerrainDefNameCell { get; set; }
         public List<string> TerrainDefName { get; set; }
@@ -50,7 +42,10 @@ namespace ServerOnlineCity.Model
         public List<AttackCorpse> NewCorpses { get; set; }
         public List<int> Delete { get; set; }
         public Dictionary<int, AttackThingState> UpdateState { get; set; }
-        public Dictionary<int, AttackPawnCommand> UpdateCommand { get; set; }
+
+        // FIFO-черги команд замість словника, щоб жоден наказ одному й тому самому пішаку не перезаписувався
+        public List<AttackPawnCommand> UpdateCommandQueue { get; set; }
+        public List<AttackPawnCommand> HostCommandQueue { get; set; }
         public HashSet<int> NeedNewThingIDs { get; set; }
 
         public DateTime? SetPauseOnTimeToHost { get; set; }
@@ -116,11 +111,16 @@ namespace ServerOnlineCity.Model
             NewCorpses = new List<AttackCorpse>();
             Delete = new List<int>();
             UpdateState = new Dictionary<int, AttackThingState>();
-            UpdateCommand = new Dictionary<int, AttackPawnCommand>();
+            UpdateCommandQueue = new List<AttackPawnCommand>(32);
+            HostCommandQueue = new List<AttackPawnCommand>(32);
             NeedNewThingIDs = new HashSet<int>();
 
             CreateTime = DateTime.UtcNow;
             AttackUpdateTick = 0;
+            HostBattleTick = 0;
+            AttackerBattleTick = 0;
+            HostReady = false;
+            AttackerReady = false;
 
             if (!TestMode && Host.Public != null)
             {
@@ -137,7 +137,6 @@ namespace ServerOnlineCity.Model
 
             lock (SyncObj)
             {
-                // Перші 5-8 хвилин не перевіряємо на відключення, оскільки створення карти може тривати довго
                 if ((fromClient.State == 10 || (DateTime.UtcNow - CreateTime).TotalSeconds > 8 * 60)
                     && CheckConnect(false))
                 {
@@ -167,7 +166,9 @@ namespace ServerOnlineCity.Model
 
                 if (fromClient.State == 4)
                 {
+                    BattleSeed = fromClient.BattleSeed;
                     MapSize = fromClient.MapSize;
+                    MapSnapshotData = fromClient.MapSnapshotData;
                     TerrainDefNameCell = fromClient.TerrainDefNameCell;
                     TerrainDefName = fromClient.TerrainDefName;
                     Thing = fromClient.Thing;
@@ -189,6 +190,8 @@ namespace ServerOnlineCity.Model
                 if (fromClient.State == 10)
                 {
                     State = 10;
+                    if (fromClient.CurrentBattleTick > 0) HostBattleTick = fromClient.CurrentBattleTick;
+                    if (fromClient.HostReady) HostReady = true;
 
                     if (VictoryAttacker == null) VictoryAttacker = fromClient.VictoryAttacker;
 
@@ -199,30 +202,22 @@ namespace ServerOnlineCity.Model
 
                     if (hasNewEntities)
                     {
-                        // Видаляємо зі списку Delete, якщо надходить команда додати цей ID
                         if (fromClient.NewPawnsId != null)
                         {
                             for (int i = 0; i < fromClient.NewPawnsId.Count; i++)
-                            {
                                 Delete.Remove(fromClient.NewPawnsId[i]);
-                            }
                         }
                         if (fromClient.NewThingsId != null)
                         {
                             for (int i = 0; i < fromClient.NewThingsId.Count; i++)
-                            {
                                 Delete.Remove(fromClient.NewThingsId[i]);
-                            }
                         }
                         if (fromClient.NewCorpses != null)
                         {
                             for (int i = 0; i < fromClient.NewCorpses.Count; i++)
-                            {
                                 Delete.Remove(fromClient.NewCorpses[i].CorpseId);
-                            }
                         }
 
-                        // Об'єднуємо нових пішаків
                         if (fromClient.NewPawnsId != null && fromClient.NewPawns != null)
                         {
                             for (int i = 0; i < fromClient.NewPawnsId.Count; i++)
@@ -234,7 +229,6 @@ namespace ServerOnlineCity.Model
                             }
                         }
 
-                        // Об'єднуємо нові предмети
                         if (fromClient.NewThingsId != null && fromClient.NewThings != null)
                         {
                             for (int i = 0; i < fromClient.NewThingsId.Count; i++)
@@ -246,7 +240,6 @@ namespace ServerOnlineCity.Model
                             }
                         }
 
-                        // Об'єднуємо трупи без виділення лямбда-делегатів LINQ
                         if (fromClient.NewCorpses != null)
                         {
                             for (int i = 0; i < NewCorpses.Count; i++)
@@ -262,19 +255,13 @@ namespace ServerOnlineCity.Model
                                         break;
                                     }
                                 }
-                                if (found)
-                                {
-                                    NewCorpses.RemoveAt(i--);
-                                }
+                                if (found) NewCorpses.RemoveAt(i--);
                             }
 
                             for (int i = 0; i < fromClient.NewCorpses.Count; i++)
-                            {
                                 NewCorpses.Add(fromClient.NewCorpses[i]);
-                            }
                         }
 
-                        // Об'єднуємо видалення
                         if (fromClient.Delete != null)
                         {
                             for (int i = 0; i < fromClient.Delete.Count; i++)
@@ -293,7 +280,6 @@ namespace ServerOnlineCity.Model
                             }
                         }
 
-                        // Запобіжне коригування: прибираємо з доданих ті, що стоять у черзі на видалення
                         for (int d = 0; d < Delete.Count; d++)
                         {
                             int n = Delete[d];
@@ -314,9 +300,7 @@ namespace ServerOnlineCity.Model
                             for (int i = 0; i < NewCorpses.Count; i++)
                             {
                                 if (n == NewCorpses[i].CorpseId)
-                                {
                                     NewCorpses.RemoveAt(i--);
-                                }
                             }
                         }
                     }
@@ -327,24 +311,33 @@ namespace ServerOnlineCity.Model
                         {
                             var stateItem = fromClient.UpdateState[i];
                             if (stateItem != null)
-                            {
                                 UpdateState[stateItem.HostThingID] = stateItem;
-                            }
+                        }
+                    }
+
+                    if (fromClient.HostCommands != null && fromClient.HostCommands.Count > 0)
+                    {
+                        for (int i = 0; i < fromClient.HostCommands.Count; i++)
+                        {
+                            var hCmd = fromClient.HostCommands[i];
+                            if (hCmd != null)
+                                HostCommandQueue.Add(hCmd);
                         }
                     }
 
                     var res = new AttackHostFromSrv
                     {
                         State = State,
-                        UpdateCommand = UpdateCommand.Count > 0 ? new List<AttackPawnCommand>(UpdateCommand.Values) : new List<AttackPawnCommand>(0),
+                        AttackerBattleTick = AttackerBattleTick,
+                        AttackerReady = AttackerReady,
+                        UpdateCommand = UpdateCommandQueue.Count > 0 ? new List<AttackPawnCommand>(UpdateCommandQueue) : new List<AttackPawnCommand>(0),
                         NeedNewThingIDs = NeedNewThingIDs.Count > 0 ? new List<int>(NeedNewThingIDs) : new List<int>(0),
                         SetPauseOnTime = SetPauseOnTimeToHost ?? DateTime.MinValue,
                         VictoryHost = VictoryHostToHost,
                         TerribleFatalError = TerribleFatalError
                     };
 
-                    // ОПТИМІЗАЦІЯ: замість перестворення нових словників очищаємо наявні (0 байт GC)
-                    UpdateCommand.Clear();
+                    UpdateCommandQueue.Clear();
                     NeedNewThingIDs.Clear();
 
                     if (SetPauseOnTimeToHost != null)
@@ -407,7 +400,9 @@ namespace ServerOnlineCity.Model
                     return new AttackInitiatorFromSrv
                     {
                         State = State,
+                        BattleSeed = BattleSeed,
                         MapSize = MapSize,
+                        MapSnapshotData = MapSnapshotData,
                         TerrainDefNameCell = TerrainDefNameCell,
                         TerrainDefName = TerrainDefName,
                         Thing = Thing,
@@ -423,6 +418,8 @@ namespace ServerOnlineCity.Model
                 if (fromClient.State == 10)
                 {
                     AttackUpdateTick++;
+                    if (fromClient.CurrentBattleTick > 0) AttackerBattleTick = fromClient.CurrentBattleTick;
+                    if (fromClient.AttackerReady) AttackerReady = true;
 
                     if (StartTime == DateTime.MinValue)
                     {
@@ -438,7 +435,7 @@ namespace ServerOnlineCity.Model
                     if (fromClient.TerribleFatalError)
                     {
                         Loger.Log($"Server AttackServer TerribleFatalError {AttackUpdateTick}");
-                        if (AttackUpdateTick != 2)
+                        if (AttackUpdateTick > 10)
                         {
                             VictoryHostToHost = true;
                         }
@@ -463,7 +460,7 @@ namespace ServerOnlineCity.Model
                             var cmd = fromClient.UpdateCommand[i];
                             if (cmd != null)
                             {
-                                UpdateCommand[cmd.HostPawnID] = cmd;
+                                UpdateCommandQueue.Add(cmd);
                             }
                         }
                     }
@@ -479,6 +476,9 @@ namespace ServerOnlineCity.Model
                     var res = new AttackInitiatorFromSrv
                     {
                         State = State,
+                        BattleSeed = BattleSeed,
+                        HostBattleTick = HostBattleTick,
+                        HostReady = HostReady,
                         NewPawns = NewPawns.Count > 0 ? NewPawns : new List<ThingEntry>(0),
                         NewPawnsId = NewPawnsId.Count > 0 ? NewPawnsId : new List<int>(0),
                         NewThings = NewThings.Count > 0 ? NewThings : new List<ThingTrade>(0),
@@ -486,11 +486,11 @@ namespace ServerOnlineCity.Model
                         NewCorpses = NewCorpses.Count > 0 ? NewCorpses : new List<AttackCorpse>(0),
                         Delete = Delete.Count > 0 ? Delete : new List<int>(0),
                         UpdateState = UpdateState.Count > 0 ? new List<AttackThingState>(UpdateState.Values) : new List<AttackThingState>(0),
+                        HostCommands = HostCommandQueue.Count > 0 ? new List<AttackPawnCommand>(HostCommandQueue) : new List<AttackPawnCommand>(0),
                         Finishing = VictoryAttacker != null,
                         VictoryAttacker = VictoryAttacker ?? false
                     };
 
-                    // ОПТИМІЗАЦІЯ: створюємо нові списки тільки якщо передані непорожні дані
                     if (NewPawns.Count > 0) NewPawns = new List<ThingEntry>();
                     if (NewPawnsId.Count > 0) NewPawnsId = new List<int>();
                     if (NewThings.Count > 0) NewThings = new List<ThingTrade>();
@@ -499,6 +499,7 @@ namespace ServerOnlineCity.Model
                     if (Delete.Count > 0) Delete = new List<int>();
 
                     UpdateState.Clear();
+                    HostCommandQueue.Clear();
 
                     if (VictoryAttacker != null) Finish();
 
@@ -538,9 +539,6 @@ namespace ServerOnlineCity.Model
             });
         }
 
-        /// <summary>
-        /// Перевірка та дії при збоях зв'язку під час активного бою.
-        /// </summary>
         private bool CheckConnect(bool attacker)
         {
             if (!TestMode && Host?.Public != null)
@@ -585,7 +583,6 @@ namespace ServerOnlineCity.Model
                 }
                 else if (!attacker)
                 {
-                    // Відключився атакуючий
                     if (StartTime == DateTime.MinValue || (DateTime.UtcNow - StartTime).TotalSeconds < 60)
                     {
                         Loger.Log("Server AttackServer Fail attacker off in start" + logDet);
@@ -618,7 +615,6 @@ namespace ServerOnlineCity.Model
                 }
                 else
                 {
-                    // Відключився хост
                     AddMail(Host, new ModelMailAttackCancel
                     {
                         From = systemPlayer,

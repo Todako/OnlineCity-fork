@@ -7,10 +7,13 @@ namespace Model
     [Serializable]
     public class AttackHostToSrv
     {
-
         public int State { get; set; }
+        public int BattleSeed { get; set; }
+        public long CurrentBattleTick { get; set; }
+        public bool HostReady { get; set; }
 
         public IntVec3S MapSize { get; set; }
+        public byte[] MapSnapshotData { get; set; }
 
         public List<IntVec3S> TerrainDefNameCell { get; set; }
         public List<string> TerrainDefName { get; set; }
@@ -23,6 +26,7 @@ namespace Model
         public List<int> NewThingsId { get; set; }
         public List<int> Delete { get; set; }
         public List<AttackThingState> UpdateState { get; set; }
+        public List<AttackPawnCommand> HostCommands { get; set; }
         public bool? VictoryAttacker { get; set; }
         public List<AttackCorpse> NewCorpses { get; set; }
     }

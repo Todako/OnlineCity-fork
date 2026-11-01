@@ -8,12 +8,14 @@ namespace Model
     public class AttackInitiatorFromSrv
     {
         public string ErrorText { get; set; }
-
         public int State { get; set; }
-
+        public int BattleSeed { get; set; }
+        public long HostBattleTick { get; set; }
+        public bool HostReady { get; set; }
         public bool TestMode { get; set; }
 
         public IntVec3S MapSize { get; set; }
+        public byte[] MapSnapshotData { get; set; }
 
         public List<IntVec3S> TerrainDefNameCell { get; set; }
         public List<string> TerrainDefName { get; set; }
@@ -28,6 +30,7 @@ namespace Model
         public List<AttackCorpse> NewCorpses { get; set; }
         public List<int> Delete { get; set; }
         public List<AttackThingState> UpdateState { get; set; }
+        public List<AttackPawnCommand> HostCommands { get; set; }
         public bool Finishing { get; set; }
         public bool VictoryAttacker { get; set; }
     }

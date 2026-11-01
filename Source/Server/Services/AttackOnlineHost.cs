@@ -28,17 +28,23 @@ namespace ServerOnlineCity.Services
                 return new AttackHostFromSrv { ErrorText = "No request data" };
             }
 
-            lock (context.Player)
+            // Зчитуємо посилання атомарно без утримання lock (context.Player) під час 50-мс Lockstep-циклу
+            var attackData = context.Player.AttackData;
+            if (attackData == null)
             {
-                if (context.Player.AttackData == null)
+                lock (context.Player)
                 {
-                    Loger.Log("Server AttackOnlineHost Unexpected error, no data", Loger.LogLevel.ERROR);
-                    return new AttackHostFromSrv { ErrorText = "Unexpected error, no data" };
+                    attackData = context.Player.AttackData;
                 }
-
-                // ОПТИМІЗАЦІЯ: пряме передавання керування без виділення тимчасового об'єкта кожні 50 мс
-                return context.Player.AttackData.RequestHost(fromClient);
             }
+
+            if (attackData == null)
+            {
+                Loger.Log("Server AttackOnlineHost Unexpected error, no data", Loger.LogLevel.ERROR);
+                return new AttackHostFromSrv { ErrorText = "Unexpected error, no data" };
+            }
+
+            return attackData.RequestHost(fromClient);
         }
     }
 }

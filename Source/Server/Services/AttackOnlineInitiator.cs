@@ -28,24 +28,21 @@ namespace ServerOnlineCity.Services
                 return new AttackInitiatorFromSrv { ErrorText = "No request data" };
             }
 
-            lock (context.Player)
+            if (!string.IsNullOrEmpty(fromClient.StartHostPlayer))
             {
-                // Ініціалізація спільного об'єкта битви
-                if (!string.IsNullOrEmpty(fromClient.StartHostPlayer))
+                lock (context.Player)
                 {
                     if (context.Player.AttackData != null)
                     {
                         return new AttackInitiatorFromSrv { ErrorText = "There is an active attack" };
                     }
 
-                    // ОПТИМІЗАЦІЯ: швидкий O(1) пошук гравця замість LINQ FirstOrDefault
                     var hostPlayer = Repository.GetPlayerByLogin(fromClient.StartHostPlayer);
                     if (hostPlayer == null)
                     {
                         return new AttackInitiatorFromSrv { ErrorText = "Player not found" };
                     }
 
-                    // Потокобезпечна перевірка участі захисника в іншому бою
                     lock (hostPlayer)
                     {
                         if (hostPlayer.AttackData != null)
@@ -61,16 +58,24 @@ namespace ServerOnlineCity.Services
                         }
                     }
                 }
-
-                if (context.Player.AttackData == null)
-                {
-                    Loger.Log("Server AttackOnlineInitiator Unexpected error, no data", Loger.LogLevel.ERROR);
-                    return new AttackInitiatorFromSrv { ErrorText = "Unexpected error, no data" };
-                }
-
-                // ОПТИМІЗАЦІЯ: пряме передавання керування спільному об'єкту без попереднього new AttackInitiatorFromSrv()
-                return context.Player.AttackData.RequestInitiator(fromClient);
             }
+
+            var attackData = context.Player.AttackData;
+            if (attackData == null)
+            {
+                lock (context.Player)
+                {
+                    attackData = context.Player.AttackData;
+                }
+            }
+
+            if (attackData == null)
+            {
+                Loger.Log("Server AttackOnlineInitiator Unexpected error, no data", Loger.LogLevel.ERROR);
+                return new AttackInitiatorFromSrv { ErrorText = "Unexpected error, no data" };
+            }
+
+            return attackData.RequestInitiator(fromClient);
         }
     }
 }

@@ -52,12 +52,10 @@ namespace RimWorldOnlineCity
                             elementType = tt.ToString();
                             if (excludeTypes.Contains(tt.Name)) return "<skips>";
                         }
-                        //else return "<EEEEEEE" + type.FullName;
                         array = obj as Array;
                     }
                     else
                     {
-                        // Як краще дізнатися кількість і тип?
                         int cnt = 0;
                         foreach (var o in obj as IEnumerable) cnt++;
                         array = Array.CreateInstance(typeof(object), cnt);
@@ -167,10 +165,10 @@ namespace RimWorldOnlineCity
                         {
                             var res = info + "{"
                                 + Environment.NewLine + prefLine + ress[0];
-                            for (int i = 1; i < ress.Length; i++)
+                            for (int i = 0; i < ress.Length; i++)
                             {
-                                res += ", "
-                                    + Environment.NewLine + prefLine + ress[i];
+                                if (i > 0)
+                                    res += ", " + Environment.NewLine + prefLine + ress[i];
                             }
                             return res + Environment.NewLine + prefLine + "}";
                         }
@@ -185,7 +183,5 @@ namespace RimWorldOnlineCity
                 return "<exception>";
             }
         }
-
     }
-
 }

@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Xml;
 using UnityEngine;
 using Util;
@@ -20,7 +21,6 @@ namespace RimWorldOnlineCity
 {
     public static class ScribeSaverHelper
     {
-        // ОПТИМІЗАЦІЯ: прямий IL-доступ до приватного поля writer замість важкої рефлексії на кожному сейві
         private static readonly AccessTools.FieldRef<ScribeSaver, XmlWriter> WriterRef =
             AccessTools.FieldRefAccess<ScribeSaver, XmlWriter>("writer");
 
@@ -40,7 +40,6 @@ namespace RimWorldOnlineCity
     {
         internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
 
-        // ОПТИМІЗАЦІЯ: збереження посилань на об'єкти замість алокацій thing.ToString() щокадру
         private static readonly HashSet<ThingTrade> ExceptionDravLineThingTrade = new HashSet<ThingTrade>();
         private static readonly HashSet<Thing> ExceptionDravLineThing = new HashSet<Thing>();
 
@@ -71,10 +70,6 @@ namespace RimWorldOnlineCity
             DravLineThing(rect, thing, withInfo, Color.white);
         }
 
-        /// <summary>
-        /// Відмальовка іконки та підказки для ThingTrade.
-        /// ОПТИМІЗАЦІЯ: перевірка помилок за посиланням без виклику thing.ToString() та ледачі підказки.
-        /// </summary>
         public static void DravLineThing(Rect rect, ThingTrade thing, bool withInfo, Color labelColor, float xi = 24f, float yi = 0)
         {
             if (thing == null || ExceptionDravLineThingTrade.Contains(thing)) return;
@@ -119,10 +114,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Відмальовка іконки та підказки для Thing.
-        /// ОПТИМІЗАЦІЯ: створення TipSignal виключно при наведенні курсору миші (Mouse.IsOver).
-        /// </summary>
         public static void DravLineThing(Rect rect, Thing thing, bool withInfo, float xi = 24f, float yi = 0)
         {
             if (thing == null || ExceptionDravLineThing.Contains(thing)) return;
@@ -289,9 +280,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Компаратор для сортування речей без конкатенації рядків та виділення пам'яті в купі (Zero GC).
-        /// </summary>
         private sealed class TradeThingComparer : IComparer<Thing>
         {
             public static readonly TradeThingComparer Instance = new TradeThingComparer();
@@ -317,10 +305,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Перевірка можливості торгової угоди.
-        /// ОПТИМІЗАЦІЯ: повністю ліквідовано створення анонімних об'єктів та конкатенацію рядків під час сортування.
-        /// </summary>
         private static List<TransferableOneWay> ChechToTradeDo(IEnumerable<ThingTrade> targets, IEnumerable<Thing> allThings, IEnumerable<Thing> altThings, ref int rate, bool setRect, bool incomplete = false, bool setTradeCount = true)
         {
             bool result = true;
@@ -529,9 +513,6 @@ namespace RimWorldOnlineCity
             return withTransferFilter ? FilterBeforeSendServer(goods) : goods;
         }
 
-        /// <summary>
-        /// Повертає речі карти з підтримкою швидкої фільтрації за ThingDef (без збору тисяч зайвих об'єктів).
-        /// </summary>
         public static List<Thing> GetAllThings(Map map, bool thingOnPawn = false, bool withTransferFilter = true, ThingDef onlyDef = null)
         {
             var rawPawns = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer);
@@ -645,10 +626,6 @@ namespace RimWorldOnlineCity
             }
         }
 
-        /// <summary>
-        /// Пошук клітинки для вивантаження вантажу.
-        /// ОПТИМІЗАЦІЯ: прямий розрахунок середнього за O(N) замість LINQ Aggregate.
-        /// </summary>
         public static IntVec3 GetTradeCell(Map map)
         {
             var labelDumping = "DumpingStockpile".Translate();
@@ -737,34 +714,98 @@ namespace RimWorldOnlineCity
             IntVec3 ret = new IntVec3();
             ModBaseData.RunMainThreadSync(() =>
             {
-                for (int i = 0; i < pawns.Count; i++)
+                using (NormalGameError())
                 {
-                    var thing = pawns[i];
-                    if (getPirate(thing)) thing.Affiliation = PawnAffiliation.Enemy;
-                    if (MainHelper.DebugMode) Loger.Log("Prepare... " + thing.Affiliation);
-                    var thin = thing.CreateThing();
-
-                    var cell = getCell != null ? getCell(thin) : thin.Position;
-                    if (i == 0) ret = cell;
-
-                    if (thin is Pawn pawn)
+                    IntVec3 baseEdgeCell = IntVec3.Invalid;
+                    if (attackCell && getCell == null)
                     {
+                        if (!RCellFinder.TryFindRandomPawnEntryCell(out baseEdgeCell, map, CellFinder.EdgeRoadChance_Hostile))
+                        {
+                            baseEdgeCell = CellFinder.RandomEdgeCell(map);
+                        }
+                    }
+
+                    for (int i = 0; i < pawns.Count; i++)
+                    {
+                        var thing = pawns[i];
+                        if (thing == null) continue;
+
                         try
                         {
-                            GenSpawn.Spawn(pawn, cell, map);
-                        }
-                        catch (Exception exp)
-                        {
-                            Loger.Log("SpawnList Exception " + thing.Name + ": " + exp, Loger.LogLevel.ERROR);
-                            GenSpawn.Spawn(pawn, cell, map);
-                        }
-                    }
-                    else
-                    {
-                        GenDrop.TryDropSpawn(thin, cell, map, ThingPlaceMode.Near, out _, null);
-                    }
+                            if (thing.Affiliation != PawnAffiliation.Thing)
+                            {
+                                thing.Affiliation = getPirate(thing) ? PawnAffiliation.Enemy : PawnAffiliation.Colonist;
 
-                    spawn?.Invoke(thin, thing);
+                                if (!string.IsNullOrEmpty(thing.Data) && thing.Data.IndexOf("<jobs>", StringComparison.Ordinal) >= 0)
+                                {
+                                    thing.Data = GameXMLUtils.ReplaceByTag(thing.Data, "jobs", "<jobQueue><jobs /></jobQueue>");
+                                }
+                            }
+
+                            if (MainHelper.DebugMode) Loger.Log("Prepare... " + thing.Affiliation);
+                            var thin = thing.CreateThing();
+                            if (thin == null) continue;
+
+                            IntVec3 cell;
+                            if (getCell != null)
+                            {
+                                cell = getCell(thin);
+                            }
+                            else if (attackCell && baseEdgeCell.IsValid)
+                            {
+                                cell = CellFinder.RandomClosewalkCellNear(baseEdgeCell, map, 6);
+                            }
+                            else
+                            {
+                                cell = thin.Position;
+                            }
+
+                            if (!cell.InBounds(map)) cell = map.Center;
+                            if (i == 0) ret = cell;
+
+                            if (thin is Pawn pawn)
+                            {
+                                try
+                                {
+                                    GenSpawn.Spawn(pawn, cell, map);
+                                }
+                                catch (Exception exp)
+                                {
+                                    Loger.Log("SpawnList Exception " + thing.Name + ": " + exp, Loger.LogLevel.ERROR);
+                                    GenSpawn.Spawn(pawn, cell, map);
+                                }
+
+                                if (pawn.Faction == Faction.OfPlayer && map.fogGrid != null)
+                                {
+                                    try
+                                    {
+                                        if (map.fogGrid.IsFogged(pawn.Position))
+                                        {
+                                            FloodFillerFog.FloodUnfog(pawn.Position, map);
+                                        }
+                                        foreach (var adj in GenAdj.CellsAdjacent8Way(pawn))
+                                        {
+                                            if (adj.InBounds(map) && map.fogGrid.IsFogged(adj))
+                                            {
+                                                FloodFillerFog.FloodUnfog(adj, map);
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                            else
+                            {
+                                GenDrop.TryDropSpawn(thin, cell, map, ThingPlaceMode.Near, out _, null);
+                            }
+
+                            spawn?.Invoke(thin, thing);
+                        }
+                        catch (Exception exItem)
+                        {
+                            Loger.Log("SpawnList item skip exception (" + thing.Name + "): " + exItem, Loger.LogLevel.ERROR);
+                        }
+                    }
                 }
             });
             return ret;
@@ -772,27 +813,95 @@ namespace RimWorldOnlineCity
 
         public static void PawnDestroy(Pawn pawn)
         {
-            pawn.Destroy(DestroyMode.Vanish);
-            Find.WorldPawns.RemovePawn(pawn);
+            if (pawn == null) return;
+            if (!pawn.Destroyed) pawn.Destroy(DestroyMode.Vanish);
+            Find.WorldPawns?.RemovePawn(pawn);
+        }
+
+        /// <summary>
+        /// Безпечне вивантаження тимчасової карти бою для RimWorld 1.1–1.4.
+        /// </summary>
+        private static MethodInfo _deinitMapMethod;
+        private static int _deinitMapParamCount = -1;
+
+        public static void DeinitAndRemoveMapSafe(Map map)
+        {
+            if (map == null || Current.Game == null) return;
+
+            try
+            {
+                var parent = map.Parent;
+                if (_deinitMapParamCount < 0)
+                {
+                    var methods = typeof(Game).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    for (int i = 0; i < methods.Length; i++)
+                    {
+                        if (methods[i].Name == "DeinitAndRemoveMap")
+                        {
+                            _deinitMapMethod = methods[i];
+                            _deinitMapParamCount = methods[i].GetParameters().Length;
+                            break;
+                        }
+                    }
+                    if (_deinitMapParamCount < 0) _deinitMapParamCount = 0;
+                }
+
+                if (_deinitMapMethod != null && Current.Game.Maps.Contains(map))
+                {
+                    if (_deinitMapParamCount == 1)
+                        _deinitMapMethod.Invoke(Current.Game, new object[] { map });
+                    else if (_deinitMapParamCount == 2)
+                        _deinitMapMethod.Invoke(Current.Game, new object[] { map, false });
+                }
+
+                if (parent != null && Find.WorldObjects != null && Find.WorldObjects.Contains(parent))
+                {
+                    Find.WorldObjects.Remove(parent);
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("DeinitAndRemoveMapSafe warning: " + ex.Message, Loger.LogLevel.WARNING);
+                try
+                {
+                    if (map.Parent != null && Find.WorldObjects != null && Find.WorldObjects.Contains(map.Parent))
+                    {
+                        Find.WorldObjects.Remove(map.Parent);
+                    }
+                }
+                catch { }
+            }
         }
 
         public static void ApplyState(Thing thing, AttackThingState state, bool pawnHealthStateDead = false)
         {
+            if (thing == null || state == null || thing.Destroyed) return;
+
             if (state.StackCount > 0 && thing.stackCount != state.StackCount)
             {
                 thing.stackCount = state.StackCount;
             }
 
-            if (thing.Position.x != state.Position.x || thing.Position.z != state.Position.z)
+            // КРИТИЧНЕ ВИПРАВЛЕННЯ: перевіряємо, що об'єкт заспавнений і має Map перед викликом TryFindBestPawnStandCell
+            if (thing.Spawned && thing.Map != null)
             {
-                thing.Position = state.Position.Get();
-                if (thing is Pawn pawn)
+                var targetPos = state.Position.Get();
+                if (targetPos.InBounds(thing.Map) && (thing.Position.x != state.Position.x || thing.Position.z != state.Position.z))
                 {
-                    if (CellFinder.TryFindBestPawnStandCell(pawn, out var cell))
+                    thing.Position = targetPos;
+                    if (thing is Pawn pawn)
                     {
-                        pawn.Position = cell;
-                        pawn.Notify_Teleported(endCurrentJob: true, resetTweenedPos: false);
+                        if (CellFinder.TryFindBestPawnStandCell(pawn, out var cell) && cell.InBounds(thing.Map))
+                        {
+                            pawn.Position = cell;
+                        }
+                        pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: false);
                     }
+                }
+
+                if (thing.Rotation.AsByte != state.Rotation)
+                {
+                    thing.Rotation = new Rot4(state.Rotation);
                 }
             }
 
@@ -800,12 +909,12 @@ namespace RimWorldOnlineCity
             {
                 fire.fireSize = (float)state.HitPoints / 10000f;
             }
-            else if (thing.def.useHitPoints)
+            else if (thing.def.useHitPoints && state.HitPoints > 0)
             {
                 thing.HitPoints = state.HitPoints;
             }
 
-            if (thing is Pawn targetPawn)
+            if (thing is Pawn targetPawn && targetPawn.health != null)
             {
                 if ((int)targetPawn.health.State != (int)state.DownState)
                 {
@@ -923,10 +1032,6 @@ namespace RimWorldOnlineCity
             Text.Anchor = TextAnchor.UpperLeft;
         }
 
-        /// <summary>
-        /// Пошук та вибір речей заданого def на домашніх картах гравця.
-        /// ОПТИМІЗАЦІЯ: ліквідовано зайві виклики LINQ Where, Sum, OrderByDescending та збір зайвих об'єктів карти.
-        /// </summary>
         public static int FindThings(ThingDef def, int select, bool getMaxByMap, out Dictionary<Thing, int> thingsSelect)
         {
             int countAll = 0;
@@ -1180,9 +1285,6 @@ namespace RimWorldOnlineCity
             return null;
         }
 
-        /// <summary>
-        /// Розрахунок відстані між тайлами з симетричним кешуванням (start <-> end).
-        /// </summary>
         public static int DistanceBetweenTile(int start, int end)
         {
             var key = new Pair<int, int>(Math.Min(start, end), Math.Max(start, end));

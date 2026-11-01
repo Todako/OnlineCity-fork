@@ -15,14 +15,12 @@ namespace OCUnion.Transfer.Model
         }
 
         public int HostThingID { get; set; }
-
         public IntVec3S Position { get; set; }
-
         public int StackCount { get; set; }
-
         public int HitPoints { get; set; }
-
         public PawnHealthState DownState { get; set; }
+        public byte Rotation { get; set; }
+        public bool Drafted { get; set; }
 
         public AttackThingState()
         {
@@ -30,33 +28,52 @@ namespace OCUnion.Transfer.Model
 
         public AttackThingState(Thing mp)
         {
-            // Цей контейнер застосовується в GameUtils.ApplyState.
             HostThingID = mp.thingIDNumber;
             StackCount = mp.stackCount;
             Position = new IntVec3S(mp.Position);
-            var fire = mp as Fire;
-            HitPoints = fire != null ? (int)(fire.fireSize * 10000f) : mp.HitPoints;
-            var pawn = mp as Pawn;
-            if (pawn != null)
+            Rotation = mp.Rotation.AsByte;
+
+            if (mp is Fire fire)
             {
-                //Loger.Log("Client AttackThingState " + pawn.health.State.ToString() + " thing=" + pawn.Label + " ID=" + pawn.thingIDNumber);
-                DownState = (AttackThingState.PawnHealthState)(int)pawn.health.State;
+                HitPoints = (int)(fire.fireSize * 10000f);
             }
             else
+            {
+                HitPoints = mp.HitPoints;
+            }
+
+            if (mp is Pawn pawn)
+            {
+                DownState = pawn.health != null
+                    ? (PawnHealthState)(int)pawn.health.State
+                    : PawnHealthState.Mobile;
+                Drafted = pawn.drafter?.Drafted ?? false;
+            }
+            else
+            {
                 DownState = PawnHealthState.Mobile;
+                Drafted = false;
+            }
         }
 
         public static int GetHash(Thing mp)
         {
+            int pawnFlags = 0;
+            if (mp is Pawn p)
+            {
+                pawnFlags = (p.health != null ? (int)p.health.State : 0)
+                    + ((p.drafter?.Drafted ?? false) ? 8 : 0);
+            }
+
             return ((mp.Position.x % 50) * 50 + mp.Position.z % 50)
-                + (mp.stackCount + (mp is Pawn ? (int)(mp as Pawn).health.State : 0)) * 10000
-                + mp.HitPoints * 100000;
+                + (mp.stackCount + pawnFlags) * 10000
+                + mp.HitPoints * 100000
+                + mp.Rotation.AsByte * 2500;
         }
 
         public override string ToString()
         {
-            return $"(hostId={HostThingID}, Pos=({Position.x},{Position.z}), HitP={HitPoints}, Cnt={StackCount} {DownState.ToString()})";
+            return $"(hostId={HostThingID}, Pos=({Position.x},{Position.z}), HitP={HitPoints}, Cnt={StackCount} {DownState})";
         }
     }
-
 }

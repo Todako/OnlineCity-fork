@@ -13,9 +13,9 @@ using Verse.AI;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Контролер сторони захисника (хоста) в онлайн-битві PvP.
-    /// Передає початковий стан карти, синхронізує переміщення, поранення,
-    /// створення нових об'єктів/трупів та виконує команди атакуючого кожні 50 мс.
+    /// Контролер сторони захисника (хоста) в онлайн-битві PvP («Гібридний міст» / Instanced Lockstep).
+    /// Передає початковий стан карти, синхронізує команди обох гравців за тактами симуляції
+    /// та контролює життєвий цикл об'єктів на карті бою.
     /// </summary>
     public class GameAttackHost
     {
@@ -60,7 +60,6 @@ namespace RimWorldOnlineCity
 
         private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
 
-        // Постійні змінні для усунення алокацій new HashSet<Thing>() на секунду (Double-Buffering)
         private HashSet<Thing> ThingPrepareChange1 = new HashSet<Thing>();
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
@@ -91,6 +90,14 @@ namespace RimWorldOnlineCity
         private readonly List<AttackThingState> _toSendStateBuffer = new List<AttackThingState>(64);
         private readonly List<int> _deleteBuffer = new List<int>(16);
         private readonly List<int> _addedIdBuffer = new List<int>(16);
+
+        // Черги команд для детермінованого Lockstep
+        private readonly List<AttackPawnCommand> _outgoingHostCommands = new List<AttackPawnCommand>(32);
+        private readonly List<AttackPawnCommand> _scheduledCommands = new List<AttackPawnCommand>(64);
+        private readonly object _commandsSync = new object();
+
+        private bool _localSceneReady = false;
+        private int _battleSeed = 987654321;
 
         public static GameAttackHost Get => SessionClientController.Data.AttackUsModule;
 
@@ -136,537 +143,709 @@ namespace RimWorldOnlineCity
             SessionClientController.Data.DontCheckTimerFail = true;
 
             Loger.Log("Client GameAttackHost Start 1");
-            var tolient = connect.AttackOnlineHost(new AttackHostToSrv { State = 2 });
+            var toClient = connect.AttackOnlineHost(new AttackHostToSrv { State = 2 });
             if (!string.IsNullOrEmpty(connect.ErrorMessage))
             {
                 ErrorBreak(connect.ErrorMessage?.ServerTranslate());
                 return;
             }
 
-            AttackerLogin = tolient.StartInitiatorPlayer;
-            InitiatorPlaceServerId = tolient.InitiatorPlaceServerId;
-            HostPlaceServerId = tolient.HostPlaceServerId;
-            TestMode = tolient.TestMode;
+            HostPlaceServerId = toClient.HostPlaceServerId;
+            InitiatorPlaceServerId = toClient.InitiatorPlaceServerId;
+            AttackerLogin = toClient.StartInitiatorPlayer;
+            TestMode = toClient.TestMode;
+            _battleSeed = (int)(DateTime.UtcNow.Ticks & 0x7FFFFFFF);
+            if (_battleSeed == 0) _battleSeed = 1936507579;
+            LockstepController.Reset(_battleSeed);
+            _localSceneReady = false;
 
-            Loger.Log("Client GameAttackHost Start 2 " + tolient.HostPlaceServerId + " TestMode=" + TestMode);
+            Loger.Log($"Client GameAttackHost Start 2 {HostPlaceServerId} TestMode={TestMode} Seed={_battleSeed}");
 
-            Find.TickManager.Pause();
-
-            LongEventHandler.QueueLongEvent(delegate
+            LongEventHandler.QueueLongEvent(() =>
             {
-                try
+                SessionClientController.SaveGameNowInEvent(false);
+
+                Find.TickManager.Pause();
+                GameAttackTrigger_Patch.ForceSpeed = 0f;
+                PauseMessage();
+
+                CurrentPauseToTime = DateTime.UtcNow.AddMinutes(5);
+                Loger.Log("HostAttackUpdate Set 1 CurrentPauseToTime=" + CurrentPauseToTime.ToGoodUtcString());
+
+                var hostPlace = UpdateWorldController.GetWOByServerId(HostPlaceServerId) as MapParent;
+                GameMap = hostPlace.Map;
+
+                var toSrvMap = new AttackHostToSrv
                 {
-                    SessionClientController.SaveGameNowInEvent(false);
+                    State = 4,
+                    BattleSeed = _battleSeed,
+                    TerrainDefNameCell = new List<IntVec3S>(GameMap.cellIndices.NumGridCells),
+                    TerrainDefName = new List<string>(GameMap.cellIndices.NumGridCells),
+                    Thing = new List<ThingTrade>(2048),
+                    ThingCell = new List<IntVec3S>(2048)
+                };
 
-                    Find.TickManager.Pause();
-                    GameAttackTrigger_Patch.ForceSpeed = 0f;
-                    PauseMessage();
+                toSrvMap.MapSize = new IntVec3S(GameMap.Size);
 
-                    CurrentPauseToTime = DateTime.UtcNow.AddMinutes(5);
-                    Loger.Log("HostAttackUpdate Set 1 CurrentPauseToTime=" + CurrentPauseToTime.ToGoodUtcString());
+                CellRect cellRect = CellRect.WholeMap(GameMap);
+                cellRect.ClipInsideMap(GameMap);
 
-                    var hostPlace = UpdateWorldController.GetWOByServerId(HostPlaceServerId) as MapParent;
-                    GameMap = hostPlace.Map;
+                SendedActual = new Dictionary<int, Thing>(2048);
+                FireList = new HashSet<Thing>();
 
-                    var toSrvMap = new AttackHostToSrv
+                foreach (IntVec3 current in cellRect)
+                {
+                    var terr = GameMap.terrainGrid.TerrainAt(current);
+                    toSrvMap.TerrainDefNameCell.Add(new IntVec3S(current));
+                    toSrvMap.TerrainDefName.Add(terr.defName);
+
+                    var thingsAtCell = GameMap.thingGrid.ThingsListAt(current);
+                    for (int t = 0; t < thingsAtCell.Count; t++)
                     {
-                        State = 4,
-                        TerrainDefNameCell = new List<IntVec3S>(GameMap.cellIndices.NumGridCells),
-                        TerrainDefName = new List<string>(GameMap.cellIndices.NumGridCells),
-                        Thing = new List<ThingTrade>(2048),
-                        ThingCell = new List<IntVec3S>(2048)
-                    };
+                        var thc = thingsAtCell[t];
+                        if (thc is Pawn) continue;
+                        if (thc is Fire fire) FireList.Add(fire);
 
-                    toSrvMap.MapSize = new IntVec3S(GameMap.Size);
+                        var isPlant = thc.def.category == ThingCategory.Plant && !thc.def.plant.IsTree;
+                        if (PlantNotSend && isPlant) continue;
 
-                    CellRect cellRect = CellRect.WholeMap(GameMap);
-                    cellRect.ClipInsideMap(GameMap);
+                        if (thc.Position != current) continue;
 
-                    SendedActual = new Dictionary<int, Thing>(2048);
-                    FireList = new HashSet<Thing>();
+                        var tt = ThingTrade.CreateTrade(thc, thc.stackCount, false);
+                        toSrvMap.ThingCell.Add(new IntVec3S(current));
+                        toSrvMap.Thing.Add(tt);
 
-                    foreach (IntVec3 current in cellRect)
+                        if (!isPlant) SendedActual[thc.thingIDNumber] = thc;
+                    }
+                }
+
+                SessionClientController.Command((connect0) =>
+                {
+                    connect0.AttackOnlineHost(toSrvMap);
+                    if (!string.IsNullOrEmpty(connect0.ErrorMessage))
                     {
-                        var terr = GameMap.terrainGrid.TerrainAt(current);
-                        toSrvMap.TerrainDefNameCell.Add(new IntVec3S(current));
-                        toSrvMap.TerrainDefName.Add(terr.defName);
-
-                        var thingsAtCell = GameMap.thingGrid.ThingsListAt(current);
-                        for (int t = 0; t < thingsAtCell.Count; t++)
-                        {
-                            var thc = thingsAtCell[t];
-                            if (thc is Pawn) continue;
-                            if (thc is Fire fire) FireList.Add(fire);
-
-                            var isPlant = thc.def.category == ThingCategory.Plant && !thc.def.plant.IsTree;
-                            if (PlantNotSend && isPlant) continue;
-
-                            if (thc.Position != current) continue;
-
-                            var tt = ThingTrade.CreateTrade(thc, thc.stackCount, false);
-                            toSrvMap.ThingCell.Add(new IntVec3S(current));
-                            toSrvMap.Thing.Add(tt);
-
-                            if (!isPlant) SendedActual[thc.thingIDNumber] = thc;
-                        }
+                        ErrorBreak(connect0.ErrorMessage?.ServerTranslate());
+                        return;
                     }
 
-                    SessionClientController.Command((connect0) =>
+                    AttackHostFromSrv fromClient2 = null;
+                    int waitCount = 0;
+                    while (waitCount++ < 60 * 2)
                     {
-                        connect0.AttackOnlineHost(toSrvMap);
+                        Thread.Sleep(500);
+                        fromClient2 = connect0.AttackOnlineHost(new AttackHostToSrv { State = 5 });
                         if (!string.IsNullOrEmpty(connect0.ErrorMessage))
                         {
                             ErrorBreak(connect0.ErrorMessage?.ServerTranslate());
                             return;
                         }
+                        if (fromClient2.Pawns != null && fromClient2.Pawns.Count > 0) break;
+                    }
 
-                        List<ThingEntry> pawnsA = null;
-                        var s1Time = DateTime.UtcNow;
-                        while (true)
+                    if (fromClient2?.Pawns == null || fromClient2.Pawns.Count == 0)
+                    {
+                        ErrorBreak("Wait timeout (code 5)");
+                        return;
+                    }
+
+                    SendedPawnsId = new HashSet<int>();
+                    SendedState = new Dictionary<int, int>();
+                    SendedXP = new Dictionary<int, int>();
+                    ToUpdateStateId = new HashSet<int>();
+                    ToUpdateState = new List<Thing>();
+                    ToSendDeleteId = new HashSet<int>();
+                    ToSendAddId = new HashSet<int>();
+                    ToSendThingAdd = new HashSet<Thing>();
+                    ToSendDelayedFillPawnsId = new HashSet<int>();
+                    SendDelayedFillPawnsLastTime = DateTime.UtcNow;
+
+                    AttackingPawns = new HashSet<Pawn>();
+                    AttackingPawnDic = new Dictionary<int, int>();
+                    AttackingPawnsLastPos = new Dictionary<Pawn, IntVec3>();
+                    AttackingPawnJobDic = new Dictionary<int, AttackPawnCommand>();
+
+                    AllPawns.Clear();
+                    var mapPawns = GameMap.mapPawns.AllPawnsSpawned;
+                    for (int i = 0; i < mapPawns.Count; i++)
+                    {
+                        var p = mapPawns[i];
+                        AllPawns[p.thingIDNumber] = p;
+                        ToSendAddId.Add(p.thingIDNumber);
+                    }
+
+                    var mainCann = GameUtils.SpawnCaravanPirate(GameMap, fromClient2.Pawns, (thin, thingEntry) =>
+                    {
+                        if (thin is Pawn pawn)
                         {
-                            var toClient5 = connect0.AttackOnlineHost(new AttackHostToSrv { State = 5 });
-                            if (!string.IsNullOrEmpty(connect0.ErrorMessage))
-                            {
-                                ErrorBreak(connect0.ErrorMessage);
-                                return;
-                            }
-                            pawnsA = toClient5.Pawns;
-                            if (pawnsA != null && pawnsA.Count > 0) break;
-                            if ((DateTime.UtcNow - s1Time).TotalSeconds > 20)
-                            {
-                                ErrorBreak("Timeout");
-                                return;
-                            }
-                            Thread.Sleep(100);
+                            AllPawns[pawn.thingIDNumber] = pawn;
+                            ToSendAddId.Add(pawn.thingIDNumber);
+                            AttackingPawns.Add(pawn);
+                            AttackingPawnDic[pawn.thingIDNumber] = thingEntry.OriginalID;
+                            AttackingPawnsLastPos[pawn] = pawn.Position;
                         }
-
-                        SendedPawnsId = new HashSet<int>();
-                        SendedState = new Dictionary<int, int>(64);
-                        SendedXP = new Dictionary<int, int>(64);
-                        ToUpdateStateId = new HashSet<int>();
-                        ToUpdateState = new List<Thing>(32);
-                        ToSendDeleteId = new HashSet<int>();
-                        ToSendAddId = new HashSet<int>();
-                        ToSendThingAdd = new HashSet<Thing>();
-                        ToSendDelayedFillPawnsId = new HashSet<int>();
-                        AttackingPawns = new HashSet<Pawn>();
-                        AttackingPawnDic = new Dictionary<int, int>(16);
-                        AttackingPawnsLastPos = new Dictionary<Pawn, IntVec3>(16);
-                        AttackingPawnJobDic = new Dictionary<int, AttackPawnCommand>(16);
-                        AttackUpdateTick = 0;
-
-                        try
-                        {
-                            var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
-                            for (int i = 0; i < pawnsA.Count; i++)
-                            {
-                                var label = pawnsA[i].Name;
-                                for (int j = 0; j < mapPawnsA.Count; j++)
-                                {
-                                    var exist = mapPawnsA[j];
-                                    if (exist != null && exist.LabelCapNoCount == label)
-                                    {
-                                        if (exist.IsColonist)
-                                        {
-                                            pawnsA.RemoveAt(i--);
-                                            break;
-                                        }
-                                        else
-                                        {
-                                            if (exist.Spawned) exist.Destroy();
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        catch { }
-
-                        UIEventNewJobDisable = true;
-                        var cellPawns = GameUtils.SpawnCaravanPirate(GameMap, pawnsA, (th, te) =>
-                        {
-                            if (th is Pawn p)
-                            {
-                                AttackingPawns.Add(p);
-                                AttackingPawnDic.Add(p.thingIDNumber, te.OriginalID);
-
-                                p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
-                                p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
-                                {
-                                    playerForced = true,
-                                    expiryInterval = int.MaxValue,
-                                    checkOverrideOnExpire = false,
-                                }, JobCondition.InterruptForced);
-                            }
-                        });
-                        UIEventNewJobDisable = false;
-
-                        CameraJumper.TryJump(cellPawns, GameMap);
-                        TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
-                        SessionClientController.Data.DontCheckTimerFail = false;
-
-                        GameAttackTrigger_Patch.ActiveAttackHost.Add(GameMap, this);
                     });
-                }
-                catch (Exception ext)
-                {
-                    Loger.Log("GameAttackHost Start() Exception: " + ext.Message, Loger.LogLevel.ERROR);
-                }
-            }, "...", false, null);
+
+                    ModBaseData.RunMainThreadSync(() =>
+                    {
+                        Current.Game.CurrentMap = GameMap;
+                        Find.CameraDriver.JumpToCurrentMapLoc(mainCann);
+                    });
+
+                    GameAttackTrigger_Patch.ActiveAttackHost[GameMap] = this;
+                    _localSceneReady = true;
+
+                    TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
+                });
+            }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
         }
 
         private void ErrorBreak(string msg)
         {
-            Loger.Log("Client GameAttackHost error: " + msg, Loger.LogLevel.ERROR);
+            Loger.Log("Client GameAttackHost ErrorBreak: " + msg, Loger.LogLevel.ERROR);
             Clear();
-            SessionClientController.Disconnected("OCity_GameAttacker_Dialog_ErrorMessage".Translate());
+            ModBaseData.RunMainThread(() =>
+            {
+                Find.WindowStack.Add(new Dialog_MessageBox(msg));
+            });
+        }
+
+        public void Clear()
+        {
+            if (TimerObj != null) SessionClientController.Timers.Remove(TimerObj);
+            TimerObj = null;
+
+            if (GameMap != null) GameAttackTrigger_Patch.ActiveAttackHost.Remove(GameMap);
+            LockstepController.Reset(0);
+
+            SessionClientController.Data.AttackUsModule = null;
+            SessionClientController.Data.BackgroundSaveGameOff = false;
+            SessionClientController.Data.DontCheckTimerFail = false;
+            GameAttackTrigger_Patch.ForceSpeed = -1f;
+        }
+
+        public void Finish(bool victoryAttacker)
+        {
+            ModBaseData.RunMainThreadSync(() =>
+            {
+                Find.TickManager.Pause();
+                Clear();
+
+                if (TestMode)
+                {
+                    GameUtils.ShowDialodOKCancel(
+                        TestMode
+                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                        victoryAttacker
+                            ? "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate()
+                            : "OCity_GameAttack_Host_Training_Attack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate(),
+                        () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
+                        null
+                    );
+                    return;
+                }
+
+                if (victoryAttacker)
+                {
+                    if (GameMap?.Parent != null)
+                    {
+                        Find.WorldObjects.Remove(GameMap.Parent);
+                    }
+                }
+                else if (AttackingPawns != null && GameMap != null)
+                {
+                    var pawnsToDestroy = new List<Pawn>();
+                    foreach (var pawn in AttackingPawns)
+                    {
+                        if (pawn != null && !pawn.Dead && !pawn.Downed &&
+                            (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
+                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
+                        {
+                            pawnsToDestroy.Add(pawn);
+                        }
+                    }
+                    for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
+                    {
+                        GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
+                    }
+                }
+
+                SessionClientController.SaveGameNow(true, () =>
+                {
+                    GameUtils.ShowDialodOKCancel(
+                        TestMode
+                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                        victoryAttacker
+                            ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
+                            : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
+                        () => { },
+                        null
+                    );
+                });
+            });
+        }
+
+        public void ControlPawnMoveSpeed(Pawn pawn, ref int speed)
+        {
+            if (!HostPawnMoveSpeedActive || pawn == null) return;
+
+            if (!AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
+            {
+                speed = (int)(speed / HostPawnMoveSpeed);
+                if (speed > 450) speed = 450;
+            }
+        }
+
+        private bool? CheckAttackerVictory()
+        {
+            bool existHostPawn = false;
+            bool existAttackerPawn = false;
+
+            foreach (var kvp in AllPawns)
+            {
+                var pawn = kvp.Value;
+                if (pawn == null || pawn.Dead || pawn.Downed) continue;
+
+                if (!existAttackerPawn
+                    && pawn.RaceProps != null && pawn.RaceProps.Humanlike
+                    && AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
+                {
+                    existAttackerPawn = true;
+                }
+
+                if (!existHostPawn && pawn.IsColonist && !AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
+                {
+                    existHostPawn = true;
+                }
+
+                if (existHostPawn && existAttackerPawn)
+                {
+                    return null;
+                }
+            }
+
+            return existHostPawn && existAttackerPawn ? (bool?)null : existAttackerPawn;
+        }
+
+        private void CheckVictory()
+        {
+            if (IsPause || ConfirmedVictoryAttacker != null) return;
+            if (TimeStartGameAttack == DateTime.MinValue) return;
+            if ((DateTime.UtcNow - TimeStartGameAttack).TotalSeconds < 30) return;
+
+            var vic = CheckAttackerVictory();
+            if (vic == null)
+            {
+                if (CheckVictoryTime != DateTime.MaxValue) CheckVictoryTime = DateTime.MaxValue;
+            }
+            else
+            {
+                if (CheckVictoryTime == DateTime.MaxValue)
+                {
+                    CheckVictoryTime = DateTime.UtcNow;
+                }
+                else if ((DateTime.UtcNow - CheckVictoryTime).TotalSeconds > CheckVictoryDelay)
+                {
+                    ConfirmedVictoryAttacker = vic;
+                    Loger.Log("Client Host CheckVictory ConfirmedVictoryAttacker=" + ConfirmedVictoryAttacker.Value);
+                }
+            }
         }
 
         private void AttackUpdate()
         {
+            if (InTimer) return;
+            InTimer = true;
             bool inTimerEvent = false;
             try
             {
                 if (WaitOrErrorExit)
                 {
-                    ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
-                    if (WaitOrErrorExitStart == DateTime.MinValue)
+                    if ((DateTime.UtcNow - WaitOrErrorExitStart).TotalSeconds > 20)
                     {
-                        WaitOrErrorExitStart = DateTime.UtcNow;
+                        Clear();
                     }
-                    else if ((DateTime.UtcNow - WaitOrErrorExitStart).TotalSeconds > 60)
-                    {
-                        ErrorBreak("Unknown error");
-                    }
-                    return;
-                }
-                if (TerribleFatalError)
-                {
-                    ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
+                    InTimer = false;
                     return;
                 }
 
-                if (InTimer) return;
-                InTimer = true;
+                if (LongEventHandler.AnyEventNowOrWaiting)
+                {
+                    InTimer = false;
+                    return;
+                }
 
                 AttackUpdateTick++;
 
                 if (IsPause)
                 {
-                    if (!Find.TickManager.Paused)
-                    {
-                        ModBaseData.RunMainThread(() =>
-                        {
-                            if (Find.TickManager != null && !Find.TickManager.Paused)
-                            {
-                                Find.TickManager.Pause();
-                                GameAttackTrigger_Patch.ForceSpeed = 0f;
-                                PauseMessage();
-                            }
-                        });
-                    }
+                    GameAttackTrigger_Patch.ForceSpeed = 0f;
                 }
                 else
                 {
-                    if (Find.TickManager.Paused || Find.TickManager.CurTimeSpeed != TimeSpeed.Normal)
+                    if (TimeStartGameAttack == DateTime.MinValue)
                     {
-                        ModBaseData.RunMainThread(() =>
-                        {
-                            if (Find.TickManager != null)
-                            {
-                                Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
-                                GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
-                                if (TimeStartGameAttack == DateTime.MinValue) TimeStartGameAttack = DateTime.UtcNow;
-                            }
-                        });
+                        TimeStartGameAttack = DateTime.UtcNow;
+                    }
+                    GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
+                }
+
+                _newPawnsBuffer.Clear();
+                _newPawnsIdBuffer.Clear();
+                _newThingsBuffer.Clear();
+                _newThingsIdBuffer.Clear();
+                _newCorpsesBuffer.Clear();
+                _toSendStateBuffer.Clear();
+                _deleteBuffer.Clear();
+                _addedIdBuffer.Clear();
+
+                List<AttackPawnCommand> hostCmdsToSend = null;
+                lock (_commandsSync)
+                {
+                    if (_outgoingHostCommands.Count > 0)
+                    {
+                        hostCmdsToSend = new List<AttackPawnCommand>(_outgoingHostCommands);
+                        _outgoingHostCommands.Clear();
                     }
                 }
 
+                ModBaseData.RunMainThreadSync(() =>
+                {
+                    CheckVictory();
+
+                    var currentPawns = GameMap.mapPawns.AllPawnsSpawned;
+                    for (int i = 0; i < currentPawns.Count; i++)
+                    {
+                        var p = currentPawns[i];
+                        if (!AllPawns.ContainsKey(p.thingIDNumber))
+                        {
+                            AllPawns[p.thingIDNumber] = p;
+                            lock (ToSendListsSync)
+                            {
+                                ToSendAddId.Add(p.thingIDNumber);
+                            }
+                        }
+                    }
+
+                    lock (ToSendListsSync)
+                    {
+                        var tempSet = ThingPrepareChange0;
+                        ThingPrepareChange0 = ThingPrepareChange1;
+                        ThingPrepareChange1 = tempSet;
+                        ThingPrepareChange1.Clear();
+
+                        foreach (var th in ThingPrepareChange0)
+                        {
+                            if (th == null) continue;
+                            if (th.Destroyed || !th.Spawned)
+                            {
+                                if (SendedActual.ContainsKey(th.thingIDNumber))
+                                {
+                                    ToSendDeleteId.Add(th.thingIDNumber);
+                                }
+                            }
+                            else
+                            {
+                                if (th is Pawn)
+                                {
+                                    ToSendAddId.Add(th.thingIDNumber);
+                                }
+                                else
+                                {
+                                    ToSendThingAdd.Add(th);
+                                }
+                            }
+                        }
+                        ThingPrepareChange0.Clear();
+
+                        if ((DateTime.UtcNow - SendDelayedFillPawnsLastTime).TotalSeconds > SendDelayedFillPawnsSeconds)
+                        {
+                            SendDelayedFillPawnsLastTime = DateTime.UtcNow;
+                            foreach (var id in ToSendDelayedFillPawnsId)
+                            {
+                                ToSendAddId.Add(id);
+                            }
+                            ToSendDelayedFillPawnsId.Clear();
+                        }
+
+                        if (ToSendAddId.Count > 0)
+                        {
+                            int cnt = ToSendAddId.Count < 3 || ToSendAddId.Count > 6 || AttackUpdateTick <= 2 ? ToSendAddId.Count : 3;
+                            foreach (var id in ToSendAddId)
+                            {
+                                if (cnt-- <= 0) break;
+                                _addedIdBuffer.Add(id);
+                                if (!AllPawns.TryGetValue(id, out var pawn) || pawn == null) continue;
+
+                                if (pawn.Dead || pawn.Destroyed || !pawn.Spawned)
+                                {
+                                    if (SendedPawnsId.Contains(id))
+                                    {
+                                        SendedPawnsId.Remove(id);
+                                        if (pawn.Corpse != null && pawn.Corpse.Spawned)
+                                        {
+                                            _newCorpsesBuffer.Add(new AttackCorpse
+                                            {
+                                                CorpseWithPawn = ThingEntry.CreateEntry(pawn.Corpse, 1),
+                                                CorpseId = pawn.Corpse.thingIDNumber,
+                                                PawnId = id
+                                            });
+                                            SendedActual[pawn.Corpse.thingIDNumber] = pawn.Corpse;
+                                        }
+                                        else
+                                        {
+                                            _deleteBuffer.Add(id);
+                                        }
+                                    }
+                                    continue;
+                                }
+
+                                SendedPawnsId.Add(id);
+                                var sendPawn = ThingEntry.CreateEntry(pawn, 1);
+                                if (AttackingPawnDic.TryGetValue(id, out int origId))
+                                {
+                                    sendPawn.OriginalID = origId;
+                                }
+                                _newPawnsBuffer.Add(sendPawn);
+                                _newPawnsIdBuffer.Add(id);
+                            }
+
+                            for (int i = 0; i < _addedIdBuffer.Count; i++)
+                            {
+                                ToSendAddId.Remove(_addedIdBuffer[i]);
+                            }
+                        }
+
+                        if (ToSendThingAdd.Count > 0)
+                        {
+                            foreach (var th in ToSendThingAdd)
+                            {
+                                if (th == null) continue;
+                                if (th.Destroyed || !th.Spawned)
+                                {
+                                    if (SendedActual.ContainsKey(th.thingIDNumber))
+                                    {
+                                        ToSendDeleteId.Add(th.thingIDNumber);
+                                    }
+                                    continue;
+                                }
+
+                                if (th is Corpse corpse && corpse.InnerPawn != null)
+                                {
+                                    _newCorpsesBuffer.Add(new AttackCorpse
+                                    {
+                                        CorpseWithPawn = ThingEntry.CreateEntry(corpse, 1),
+                                        CorpseId = corpse.thingIDNumber,
+                                        PawnId = corpse.InnerPawn.thingIDNumber
+                                    });
+                                    SendedActual[corpse.thingIDNumber] = corpse;
+                                    continue;
+                                }
+
+                                SendedActual[th.thingIDNumber] = th;
+                                _newThingsBuffer.Add(ThingTrade.CreateTrade(th, th.stackCount, false));
+                                _newThingsIdBuffer.Add(th.thingIDNumber);
+                            }
+                            ToSendThingAdd.Clear();
+                        }
+
+                        if (ToSendDeleteId.Count > 0)
+                        {
+                            foreach (var id in ToSendDeleteId)
+                            {
+                                SendedPawnsId.Remove(id);
+                                SendedActual.Remove(id);
+                                SendedState.Remove(id);
+                                _deleteBuffer.Add(id);
+                            }
+                            ToSendDeleteId.Clear();
+                        }
+                    }
+
+                    foreach (var p in AllPawns.Values)
+                    {
+                        if (p == null) continue;
+                        int id = p.thingIDNumber;
+                        if (!SendedPawnsId.Contains(id)) continue;
+
+                        if (p.Dead || p.Destroyed || !p.Spawned)
+                        {
+                            lock (ToSendListsSync)
+                            {
+                                ToSendAddId.Add(id);
+                            }
+                            continue;
+                        }
+
+                        var hash = AttackThingState.GetHash(p);
+                        if (!SendedState.TryGetValue(id, out int oldHash) || oldHash != hash)
+                        {
+                            SendedState[id] = hash;
+                            _toSendStateBuffer.Add(new AttackThingState(p));
+                        }
+
+                        var hpSummary = (int)(p.health.summaryHealth.SummaryHealthPercent * 10000f);
+                        if (!SendedXP.TryGetValue(id, out int oldHpSummary) || oldHpSummary != hpSummary)
+                        {
+                            SendedXP[id] = hpSummary;
+                            lock (ToSendListsSync)
+                            {
+                                ToSendDelayedFillPawnsId.Add(id);
+                            }
+                        }
+                    }
+
+                    lock (ToSendListsSync)
+                    {
+                        if (FireList.Count > 0)
+                        {
+                            ToUpdateState.AddRange(FireList);
+                        }
+
+                        for (int i = 0; i < ToUpdateState.Count; i++)
+                        {
+                            var th = ToUpdateState[i];
+                            if (th == null) continue;
+                            int id = th.thingIDNumber;
+                            if (th.Destroyed || !th.Spawned)
+                            {
+                                FireList.Remove(th);
+                                if (SendedActual.ContainsKey(id))
+                                {
+                                    SendedActual.Remove(id);
+                                    SendedState.Remove(id);
+                                    _deleteBuffer.Add(id);
+                                }
+                                continue;
+                            }
+
+                            var hash = AttackThingState.GetHash(th);
+                            if (!SendedState.TryGetValue(id, out int oldHash) || oldHash != hash)
+                            {
+                                SendedState[id] = hash;
+                                _toSendStateBuffer.Add(new AttackThingState(th));
+                            }
+                        }
+                        ToUpdateState.Clear();
+                        ToUpdateStateId.Clear();
+                    }
+                });
+
+                inTimerEvent = true;
                 SessionClientController.Command((connect) =>
                 {
                     try
                     {
-                        AttackHostFromSrv toClient;
-                        lock (ToSendListsSync)
+                        var toSrv = new AttackHostToSrv
                         {
-                            AllPawns.Clear();
-                            var spawnedPawns = GameMap.mapPawns.AllPawnsSpawned;
-                            for (int pIdx = 0; pIdx < spawnedPawns.Count; pIdx++)
+                            State = 10,
+                            BattleSeed = _battleSeed,
+                            CurrentBattleTick = LockstepController.LocalBattleTick,
+                            HostReady = _localSceneReady,
+                            NewPawns = _newPawnsBuffer.Count > 0 ? new List<ThingEntry>(_newPawnsBuffer) : null,
+                            NewPawnsId = _newPawnsIdBuffer.Count > 0 ? new List<int>(_newPawnsIdBuffer) : null,
+                            NewThings = _newThingsBuffer.Count > 0 ? new List<ThingTrade>(_newThingsBuffer) : null,
+                            NewThingsId = _newThingsIdBuffer.Count > 0 ? new List<int>(_newThingsIdBuffer) : null,
+                            NewCorpses = _newCorpsesBuffer.Count > 0 ? new List<AttackCorpse>(_newCorpsesBuffer) : null,
+                            Delete = _deleteBuffer.Count > 0 ? new List<int>(_deleteBuffer) : null,
+                            UpdateState = _toSendStateBuffer.Count > 0 ? new List<AttackThingState>(_toSendStateBuffer) : null,
+                            HostCommands = hostCmdsToSend,
+                            VictoryAttacker = ConfirmedVictoryAttacker
+                        };
+
+                        var toClient = connect.AttackOnlineHost(toSrv);
+                        if (!string.IsNullOrEmpty(connect.ErrorMessage))
+                        {
+                            Loger.Log("HostAttackUpdate Network Error: " + connect.ErrorMessage, Loger.LogLevel.ERROR);
+                        }
+
+                        if (toClient != null)
+                        {
+                            if (toClient.AttackerBattleTick > LockstepController.RemoteBattleTick)
                             {
-                                var p = spawnedPawns[pIdx];
-                                AllPawns[p.thingIDNumber] = p;
+                                LockstepController.RemoteBattleTick = toClient.AttackerBattleTick;
+                            }
+                            if (toClient.AttackerReady)
+                            {
+                                LockstepController.RemoteReady = true;
                             }
 
-                            if (!IsPause && ConfirmedVictoryAttacker == null)
+                            if (toClient.SetPauseOnTime > DateTime.MinValue)
                             {
-                                var vic = CheckAttackerVictory();
-                                if (vic == null)
+                                CurrentPauseToTime = toClient.SetPauseOnTime;
+                                Loger.Log("HostAttackUpdate SetPauseOnTime=" + CurrentPauseToTime.ToGoodUtcString());
+                            }
+
+                            if (toClient.TerribleFatalError)
+                            {
+                                TerribleFatalError = true;
+                                Clear();
+                                return;
+                            }
+
+                            if (toClient.VictoryHost)
+                            {
+                                ConfirmedVictoryAttacker = false;
+                            }
+
+                            if (ConfirmedVictoryAttacker != null)
+                            {
+                                Finish(ConfirmedVictoryAttacker.Value);
+                                return;
+                            }
+
+                            if (toClient.UpdateCommand != null && toClient.UpdateCommand.Count > 0)
+                            {
+                                ModBaseData.RunMainThread(() =>
                                 {
-                                    if (CheckVictoryTime != DateTime.MaxValue) CheckVictoryTime = DateTime.MaxValue;
-                                }
-                                else
-                                {
-                                    if (CheckVictoryTime == DateTime.MaxValue)
+                                    bool prevDisable = UIEventNewJobDisable;
+                                    UIEventNewJobDisable = true;
+                                    try
                                     {
-                                        CheckVictoryTime = DateTime.UtcNow;
-                                    }
-                                    else if ((DateTime.UtcNow - CheckVictoryTime).TotalSeconds > CheckVictoryDelay)
-                                    {
-                                        ConfirmedVictoryAttacker = vic;
-                                    }
-                                }
-                            }
-                            if (ConfirmedVictoryAttacker != null) Finish(ConfirmedVictoryAttacker.Value);
-
-                            foreach (var pawnId in AllPawns.Keys)
-                            {
-                                if (!SendedPawnsId.Contains(pawnId))
-                                {
-                                    ToSendAddId.Add(pawnId);
-                                }
-                            }
-                            foreach (var sendedId in SendedPawnsId)
-                            {
-                                if (!AllPawns.ContainsKey(sendedId))
-                                {
-                                    ToSendDeleteId.Add(sendedId);
-                                }
-                            }
-
-                            if ((DateTime.UtcNow - SendDelayedFillPawnsLastTime).TotalSeconds >= SendDelayedFillPawnsSeconds)
-                            {
-                                foreach (var mpp in AllPawns)
-                                {
-                                    var mp = mpp.Value;
-                                    var mpID = mpp.Key;
-                                    if (ToSendDelayedFillPawnsId.Contains(mpID)) continue;
-
-                                    var mpXPnew = (int)(mp.health.summaryHealth.SummaryHealthPercent * 10000f);
-                                    if (!SendedXP.TryGetValue(mpID, out int mpXP))
-                                    {
-                                        SendedXP[mpID] = mpXPnew;
-                                    }
-                                    else if (mpXP != mpXPnew)
-                                    {
-                                        SendedXP[mpID] = mpXPnew;
-                                        ToSendDelayedFillPawnsId.Add(mpID);
-                                    }
-                                }
-
-                                foreach (var fire in FireList)
-                                {
-                                    if (ToUpdateStateId.Add(fire.thingIDNumber))
-                                    {
-                                        ToUpdateState.Add(fire);
-                                    }
-                                }
-
-                                SendDelayedFillPawnsLastTime = DateTime.UtcNow;
-                                ToSendDelayedFillPawnsId.IntersectWith(AllPawns.Keys);
-                                ToSendDelayedFillPawnsId.ExceptWith(ToSendAddId);
-                                ToSendAddId.UnionWith(ToSendDelayedFillPawnsId);
-                                ToSendDelayedFillPawnsId.Clear();
-                            }
-
-                            foreach (var mp in ThingPrepareChange0)
-                            {
-                                if (!(mp is Pawn)) continue;
-                                var mpID = mp.thingIDNumber;
-                                if (!ToSendAddId.Contains(mpID)) ToSendAddId.Add(mpID);
-                            }
-
-                            _newPawnsBuffer.Clear();
-                            _newPawnsIdBuffer.Clear();
-
-                            int cnt = ToSendAddId.Count < 3 || ToSendAddId.Count > 6 || AttackUpdateTick == 0
-                                ? ToSendAddId.Count
-                                : 3;
-
-                            _addedIdBuffer.Clear();
-                            foreach (int id in ToSendAddId)
-                            {
-                                if (_addedIdBuffer.Count >= cnt) break;
-                                _addedIdBuffer.Add(id);
-
-                                if (!AllPawns.TryGetValue(id, out Pawn thing)) continue;
-                                var tt = ThingEntry.CreateEntry(thing, 1);
-                                if (AttackingPawnDic.TryGetValue(tt.OriginalID, out int transId)) tt.TransportID = transId;
-
-                                _newPawnsBuffer.Add(tt);
-                                _newPawnsIdBuffer.Add(id);
-                                SendedActual[thing.thingIDNumber] = thing;
-                            }
-
-                            for (int aIdx = 0; aIdx < _addedIdBuffer.Count; aIdx++)
-                            {
-                                int id = _addedIdBuffer[aIdx];
-                                ToSendAddId.Remove(id);
-                                SendedPawnsId.Add(id);
-                            }
-
-                            foreach (int id in ToSendDeleteId)
-                            {
-                                SendedPawnsId.Remove(id);
-                            }
-
-                            _newThingsBuffer.Clear();
-                            _newThingsIdBuffer.Clear();
-                            _newCorpsesBuffer.Clear();
-
-                            if (ToSendThingAdd.Count > 0)
-                            {
-                                foreach (var item in ToSendThingAdd)
-                                {
-                                    if (ToSendDeleteId.Contains(item.thingIDNumber)) continue;
-
-                                    if (item is Corpse corpse && corpse.InnerPawn != null)
-                                    {
-                                        _newCorpsesBuffer.Add(new AttackCorpse
+                                        for (int i = 0; i < toClient.UpdateCommand.Count; i++)
                                         {
-                                            CorpseId = item.thingIDNumber,
-                                            PawnId = corpse.InnerPawn.thingIDNumber,
-                                            CorpseWithPawn = ThingEntry.CreateEntry(corpse.InnerPawn, 1)
-                                        });
+                                            var comm = toClient.UpdateCommand[i];
+                                            if (comm == null) continue;
+                                            if (!AllPawns.TryGetValue(comm.HostPawnID, out Pawn pawn) || pawn == null) continue;
+
+                                            AttackingPawnJobDic[comm.HostPawnID] = comm;
+                                            if (comm.ScheduledTick > LockstepController.LocalBattleTick)
+                                            {
+                                                lock (_commandsSync)
+                                                {
+                                                    _scheduledCommands.Add(comm);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                ApplyAttackingPawnJob(pawn, comm);
+                                            }
+                                        }
                                     }
-                                    else if (!(item is Corpse))
+                                    finally
                                     {
-                                        var tt = ThingTrade.CreateTrade(item, item.stackCount, false);
-                                        _newThingsBuffer.Add(tt);
-                                        _newThingsIdBuffer.Add(tt.OriginalID);
+                                        UIEventNewJobDisable = prevDisable;
                                     }
-
-                                    SendedActual[item.thingIDNumber] = item;
-                                }
+                                });
                             }
 
-                            _toSendStateBuffer.Clear();
-                            foreach (var mpp in AllPawns)
+                            if (toClient.NeedNewThingIDs != null && toClient.NeedNewThingIDs.Count > 0)
                             {
-                                var mp = mpp.Value;
-                                var mpID = mpp.Key;
-                                if (ToUpdateStateId.Contains(mpID)) continue;
-
-                                var mpHash = AttackThingState.GetHash(mp);
-                                if (!SendedState.TryGetValue(mpID, out int mpHS) || mpHS != mpHash)
+                                lock (ToSendListsSync)
                                 {
-                                    SendedState[mpID] = mpHash;
-                                    _toSendStateBuffer.Add(new AttackThingState(mp));
-                                }
-                            }
-
-                            for (int imp = 0; imp < ToUpdateState.Count; imp++)
-                            {
-                                var mp = ToUpdateState[imp];
-                                var mpID = mp.thingIDNumber;
-                                if (ToSendDeleteId.Contains(mpID)) continue;
-
-                                if (mp is Pawn)
-                                {
-                                    var mpHash = AttackThingState.GetHash(mp);
-                                    SendedState[mpID] = mpHash;
-                                }
-                                _toSendStateBuffer.Add(new AttackThingState(mp));
-                            }
-
-                            foreach (var mp in ThingPrepareChange0)
-                            {
-                                if (mp is Pawn) continue;
-                                var mpID = mp.thingIDNumber;
-                                if (ToSendDeleteId.Contains(mpID)) continue;
-
-                                _toSendStateBuffer.Add(new AttackThingState(mp));
-                            }
-
-                            ThingPrepareChange0.Clear();
-                            var tempSet = ThingPrepareChange0;
-                            ThingPrepareChange0 = ThingPrepareChange1;
-                            ThingPrepareChange1 = tempSet;
-
-                            _deleteBuffer.Clear();
-                            foreach (var item in ToSendDeleteId)
-                            {
-                                SendedActual.Remove(item);
-                                _deleteBuffer.Add(item);
-                            }
-
-                            toClient = connect.AttackOnlineHost(new AttackHostToSrv
-                            {
-                                State = 10,
-                                NewPawns = _newPawnsBuffer,
-                                NewPawnsId = _newPawnsIdBuffer,
-                                NewThings = _newThingsBuffer,
-                                NewThingsId = _newThingsIdBuffer,
-                                NewCorpses = _newCorpsesBuffer,
-                                Delete = _deleteBuffer,
-                                UpdateState = _toSendStateBuffer,
-                                VictoryAttacker = ConfirmedVictoryAttacker,
-                            });
-
-                            ToSendThingAdd.Clear();
-                            ToSendDeleteId.Clear();
-                            ToUpdateStateId.Clear();
-                            ToUpdateState.Clear();
-                        }
-
-                        if (toClient == null || toClient.State == 0)
-                        {
-                            WaitOrErrorExit = true;
-                            return;
-                        }
-
-                        if (toClient.SetPauseOnTime != DateTime.MinValue)
-                        {
-                            CurrentPauseToTime = toClient.SetPauseOnTime - SessionClientController.Data.ServetTimeDelta;
-                        }
-
-                        if (toClient.VictoryHost)
-                        {
-                            ConfirmedVictoryAttacker = false;
-                        }
-
-                        if (toClient.TerribleFatalError)
-                        {
-                            TerribleFatalError = true;
-                        }
-
-                        if (toClient.UpdateCommand != null && toClient.UpdateCommand.Count > 0)
-                        {
-                            ModBaseData.RunMainThreadSync(() =>
-                            {
-                                UIEventNewJobDisable = true;
-                                try
-                                {
-                                    for (int ii = 0; ii < toClient.UpdateCommand.Count; ii++)
+                                    for (int idx = 0; idx < toClient.NeedNewThingIDs.Count; idx++)
                                     {
-                                        var comm = toClient.UpdateCommand[ii];
-                                        if (!AllPawns.TryGetValue(comm.HostPawnID, out Pawn pawn)) continue;
-
-                                        AttackingPawnJobDic[comm.HostPawnID] = comm;
-                                        ApplyAttackingPawnJob(pawn);
-                                    }
-                                }
-                                finally
-                                {
-                                    UIEventNewJobDisable = false;
-                                }
-                            });
-                        }
-
-                        if (toClient.NeedNewThingIDs != null && toClient.NeedNewThingIDs.Count > 0)
-                        {
-                            lock (ToSendListsSync)
-                            {
-                                for (int idx = 0; idx < toClient.NeedNewThingIDs.Count; idx++)
-                                {
-                                    var id = toClient.NeedNewThingIDs[idx];
-                                    if (AllPawns.ContainsKey(id))
-                                    {
-                                        ToSendAddId.Add(id);
-                                        continue;
-                                    }
-                                    if (SendedActual.TryGetValue(id, out Thing thing) && !(thing is Pawn))
-                                    {
-                                        ToSendThingAdd.Add(thing);
+                                        var id = toClient.NeedNewThingIDs[idx];
+                                        if (AllPawns.ContainsKey(id))
+                                        {
+                                            ToSendAddId.Add(id);
+                                            continue;
+                                        }
+                                        if (SendedActual.TryGetValue(id, out Thing thing) && !(thing is Pawn))
+                                        {
+                                            ToSendThingAdd.Add(thing);
+                                        }
                                     }
                                 }
                             }
@@ -674,7 +853,6 @@ namespace RimWorldOnlineCity
                     }
                     catch (Exception ext)
                     {
-                        InTimer = false;
                         Loger.Log("HostAttackUpdate Event Exception: " + ext.Message, Loger.LogLevel.ERROR);
                     }
                     finally
@@ -685,7 +863,7 @@ namespace RimWorldOnlineCity
 
                 if (MainHelper.DebugMode || AttackUpdateTick % 20 == 0)
                 {
-                    Loger.Log("HostAttackUpdate Tick #" + AttackUpdateTick);
+                    Loger.Log($"HostAttackUpdate Tick #{AttackUpdateTick} LocalTick={LockstepController.LocalBattleTick} RemoteTick={LockstepController.RemoteBattleTick} Ready={_localSceneReady}/{LockstepController.RemoteReady}");
                 }
             }
             catch (Exception ext)
@@ -695,6 +873,47 @@ namespace RimWorldOnlineCity
             if (!inTimerEvent) InTimer = false;
         }
 
+        public void ExecuteScheduledCommandsForTick(long currentTick)
+        {
+            List<AttackPawnCommand> toRun = null;
+            lock (_commandsSync)
+            {
+                for (int i = _scheduledCommands.Count - 1; i >= 0; i--)
+                {
+                    var cmd = _scheduledCommands[i];
+                    if (cmd == null || cmd.ScheduledTick <= currentTick)
+                    {
+                        if (cmd != null)
+                        {
+                            if (toRun == null) toRun = new List<AttackPawnCommand>(8);
+                            toRun.Add(cmd);
+                        }
+                        _scheduledCommands.RemoveAt(i);
+                    }
+                }
+            }
+
+            if (toRun == null || toRun.Count == 0) return;
+
+            bool prevDisable = UIEventNewJobDisable;
+            UIEventNewJobDisable = true;
+            try
+            {
+                for (int i = 0; i < toRun.Count; i++)
+                {
+                    var comm = toRun[i];
+                    if (AllPawns.TryGetValue(comm.HostPawnID, out var pawn) && pawn != null)
+                    {
+                        ApplyAttackingPawnJob(pawn, comm);
+                    }
+                }
+            }
+            finally
+            {
+                UIEventNewJobDisable = prevDisable;
+            }
+        }
+
         private class APJBT
         {
             public long Tick;
@@ -702,30 +921,85 @@ namespace RimWorldOnlineCity
         }
         private readonly Dictionary<int, APJBT> ApplyPawnJobByTick = new Dictionary<int, APJBT>(16);
 
-        private void SetPawnJob(Pawn pawn, JobDef def, LocalTargetInfo target, int count = -1)
+        private void SetPawnJob(Pawn pawn, JobDef def, LocalTargetInfo targetA, LocalTargetInfo targetB = default, int count = -1, string abilityDefName = null)
         {
-            pawn.jobs.StartJob(new Job(def, target)
-            {
-                playerForced = true,
-                expiryInterval = int.MaxValue,
-                checkOverrideOnExpire = false,
-                count = count,
-            }, JobCondition.InterruptForced);
-        }
+            if (pawn?.jobs == null || def == null) return;
 
-        private void ApplyAttackingPawnJob(Pawn pawn)
-        {
-            var pId = pawn.thingIDNumber;
-            AttackPawnCommand comm = null;
-            bool stopJob = !AttackingPawnDic.ContainsKey(pId) || !AttackingPawnJobDic.TryGetValue(pId, out comm);
+            // Не перериваємо поточне очікування новою копією тієї самої роботи очікування
+            if ((def == JobDefOf.Wait_Combat || def == JobDefOf.Wait) && pawn.CurJobDef == def)
+            {
+                return;
+            }
+
+            var job = targetB.IsValid ? new Job(def, targetA, targetB) : new Job(def, targetA);
+            job.playerForced = true;
+            job.expiryInterval = int.MaxValue;
+            job.checkOverrideOnExpire = false;
+            if (count > 0) job.count = count;
+
+            if (!string.IsNullOrEmpty(abilityDefName) && pawn.abilities != null)
+            {
+                var abDef = DefDatabase<AbilityDef>.GetNamedSilentFail(abilityDefName);
+                if (abDef != null)
+                {
+                    var ab = pawn.abilities.GetAbility(abDef);
+                    if (ab != null)
+                    {
+                        job.ability = ab;
+                        job.verbToUse = ab.verb;
+                    }
+                }
+            }
+
+            bool prevDisable = UIEventNewJobDisable;
+            UIEventNewJobDisable = true;
             try
             {
+                pawn.jobs.StartJob(job, JobCondition.InterruptForced);
+            }
+            finally
+            {
+                UIEventNewJobDisable = prevDisable;
+            }
+        }
+
+        private void ApplyAttackingPawnJob(Pawn pawn, AttackPawnCommand explicitComm = null)
+        {
+            if (pawn == null || pawn.Dead || pawn.Destroyed || !pawn.Spawned) return;
+
+            bool prevDisable = UIEventNewJobDisable;
+            UIEventNewJobDisable = true;
+
+            var pId = pawn.thingIDNumber;
+            AttackPawnCommand comm = explicitComm;
+            bool stopJob = comm == null && (!AttackingPawnDic.ContainsKey(pId) || !AttackingPawnJobDic.TryGetValue(pId, out comm));
+
+            try
+            {
+                if (comm != null && comm.Command == AttackPawnCommand.PawnCommand.SetDrafted)
+                {
+                    if (pawn.drafter != null && pawn.drafter.Drafted != comm.DraftState)
+                    {
+                        pawn.drafter.Drafted = comm.DraftState;
+                    }
+                    return;
+                }
+
+                if (comm != null && comm.Command == AttackPawnCommand.PawnCommand.SetHostility)
+                {
+                    if (pawn.playerSettings != null)
+                    {
+                        pawn.playerSettings.hostilityResponse = (HostilityResponseMode)comm.HostilityMode;
+                    }
+                    return;
+                }
+
                 var tick = (long)Find.TickManager.TicksGame;
-                if (ApplyPawnJobByTick.TryGetValue(pId, out APJBT check))
+                if (!stopJob && explicitComm == null && ApplyPawnJobByTick.TryGetValue(pId, out APJBT check))
                 {
                     if (check.Comm == comm && check.Tick == tick)
                     {
-                        stopJob = true;
+                        return;
                     }
                 }
 
@@ -779,9 +1053,46 @@ namespace RimWorldOnlineCity
                     if (target == null) stopJob = true;
                 }
 
+                LocalTargetInfo targetB = LocalTargetInfo.Invalid;
                 if (!stopJob)
                 {
-                    if (comm.Command == AttackPawnCommand.PawnCommand.Goto)
+                    if (comm.TargetIDB != 0)
+                    {
+                        if (AllPawns.TryGetValue(comm.TargetIDB, out Pawn pTargetB))
+                            targetB = pTargetB;
+                        else if (SendedActual.TryGetValue(comm.TargetIDB, out Thing thTargetB))
+                            targetB = thTargetB;
+                    }
+                    else if (comm.TargetPosB != null && (comm.TargetPosB.x != 0 || comm.TargetPosB.z != 0))
+                    {
+                        targetB = comm.TargetPosB.Get();
+                    }
+                }
+
+                if (!stopJob)
+                {
+                    if (comm.Command == AttackPawnCommand.PawnCommand.Wait_Combat)
+                    {
+                        stopJob = true;
+                    }
+                    else if (comm.Command == AttackPawnCommand.PawnCommand.UniversalJob || comm.Command == AttackPawnCommand.PawnCommand.CastAbility)
+                    {
+                        var jDef = !string.IsNullOrEmpty(comm.JobDefName)
+                            ? DefDatabase<JobDef>.GetNamedSilentFail(comm.JobDefName)
+                            : null;
+                        if (jDef == null || jDef == JobDefOf.Wait_Combat || jDef == JobDefOf.Wait)
+                        {
+                            stopJob = true;
+                        }
+                        else
+                        {
+                            LocalTargetInfo targetA = target != null
+                                ? new LocalTargetInfo(target)
+                                : (comm.TargetPos != null ? new LocalTargetInfo(comm.TargetPos.Get()) : LocalTargetInfo.Invalid);
+                            SetPawnJob(pawn, jDef, targetA, targetB, comm.Count, comm.AbilityDefName);
+                        }
+                    }
+                    else if (comm.Command == AttackPawnCommand.PawnCommand.Goto)
                     {
                         SetPawnJob(pawn, JobDefOf.Goto, comm.TargetPos.Get());
                     }
@@ -803,7 +1114,7 @@ namespace RimWorldOnlineCity
                     else if (comm.Command == AttackPawnCommand.PawnCommand.TakeInventory)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.TakeInventory, target, target.stackCount);
+                        else SetPawnJob(pawn, JobDefOf.TakeInventory, target, default, target.stackCount);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Wear)
                     {
@@ -823,7 +1134,7 @@ namespace RimWorldOnlineCity
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Ingest)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.Ingest, target, Math.Min(target.stackCount, target.def.ingestible.maxNumToIngestAtOnce));
+                        else SetPawnJob(pawn, JobDefOf.Ingest, target, default, Math.Min(target.stackCount, target.def.ingestible.maxNumToIngestAtOnce));
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Strip)
                     {
@@ -833,26 +1144,35 @@ namespace RimWorldOnlineCity
                     else if (comm.Command == AttackPawnCommand.PawnCommand.TendPatient)
                     {
                         if (target == null) target = pawn;
-                        SetPawnJob(pawn, JobDefOf.TendPatient, target, 1);
+                        SetPawnJob(pawn, JobDefOf.TendPatient, target, default, 1);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.OC_InventoryDrop)
                     {
                         stopJob = true;
-                        GenDrop.TryDropSpawn(target, pawn.Position, GameMap, ThingPlaceMode.Near, out _);
+                        if (target != null)
+                        {
+                            GenDrop.TryDropSpawn(target, pawn.Position, GameMap, ThingPlaceMode.Near, out _);
+                        }
                     }
-                    else stopJob = true;
+                    else
+                    {
+                        stopJob = true;
+                    }
                 }
 
                 if (stopJob)
                 {
                     if (AttackingPawnJobDic.ContainsKey(pId)) AttackingPawnJobDic.Remove(pId);
 
-                    pawn.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                    if (pawn.CurJobDef != JobDefOf.Wait_Combat)
                     {
-                        playerForced = true,
-                        expiryInterval = int.MaxValue,
-                        checkOverrideOnExpire = false,
-                    }, JobCondition.InterruptForced);
+                        pawn.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                        {
+                            playerForced = true,
+                            expiryInterval = int.MaxValue,
+                            checkOverrideOnExpire = false,
+                        }, JobCondition.InterruptForced);
+                    }
                 }
                 else
                 {
@@ -872,11 +1192,38 @@ namespace RimWorldOnlineCity
                 if (AttackingPawnJobDic.ContainsKey(pId)) AttackingPawnJobDic.Remove(pId);
                 Loger.Log("HostAttackUpdate ApplyAttackingPawnJob Exception: " + exp.Message, Loger.LogLevel.ERROR);
             }
+            finally
+            {
+                UIEventNewJobDisable = prevDisable;
+            }
         }
 
         public bool UIEventNewJobDisable = false;
+
+        public void UIEventDraftChanged(Pawn pawn, bool drafted)
+        {
+            if (UIEventNewJobDisable || pawn == null) return;
+            if (AttackingPawns != null && AttackingPawns.Contains(pawn)) return;
+
+            var cmd = new AttackPawnCommand
+            {
+                HostPawnID = pawn.thingIDNumber,
+                Command = AttackPawnCommand.PawnCommand.SetDrafted,
+                DraftState = drafted,
+                ScheduledTick = LockstepController.LocalBattleTick + LockstepController.CommandTickDelay
+            };
+
+            lock (_commandsSync)
+            {
+                _outgoingHostCommands.Add(cmd);
+            }
+        }
+
         public void UIEventNewJob(Pawn pawn, Job job)
         {
+            // КРИТИЧНО: перевірка ПЕРЕД try/finally, щоб ранній вихід ніколи не скидав UIEventNewJobDisable у false!
+            if (UIEventNewJobDisable || pawn == null) return;
+
             try
             {
                 var pawnId = pawn.thingIDNumber;
@@ -905,23 +1252,62 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                if (UIEventNewJobDisable) return;
+                // Якщо це пішак захисника і наказ віддано гравцем — передаємо команду нападнику для Lockstep
+                if (!AttackingPawnDic.ContainsKey(pawnId))
+                {
+                    if (job != null && job.playerForced && job.def != null
+                        && job.def != JobDefOf.Wait_Combat && job.def != JobDefOf.Wait)
+                    {
+                        var hostCmd = new AttackPawnCommand
+                        {
+                            HostPawnID = pawnId,
+                            Command = job.ability != null ? AttackPawnCommand.PawnCommand.CastAbility : AttackPawnCommand.PawnCommand.UniversalJob,
+                            JobDefName = job.def.defName,
+                            Count = job.count,
+                            AbilityDefName = job.ability?.def?.defName,
+                            ScheduledTick = LockstepController.LocalBattleTick + LockstepController.CommandTickDelay
+                        };
 
-                if (!AttackingPawnDic.ContainsKey(pawnId)) return;
+                        if (job.targetA.HasThing)
+                            hostCmd.TargetID = job.targetA.Thing.thingIDNumber;
+                        else if (job.targetA.IsValid)
+                            hostCmd.TargetPos = new IntVec3S(job.targetA.Cell);
 
-                UIEventNewJobDisable = true;
-                ApplyAttackingPawnJob(pawn);
+                        if (job.targetB.HasThing)
+                            hostCmd.TargetIDB = job.targetB.Thing.thingIDNumber;
+                        else if (job.targetB.IsValid)
+                            hostCmd.TargetPosB = new IntVec3S(job.targetB.Cell);
+
+                        lock (_commandsSync)
+                        {
+                            _outgoingHostCommands.Add(hostCmd);
+                        }
+                    }
+                    return;
+                }
+
+                // Для пішаків нападника відновлюємо їхню команду лише коли їхня поточна робота завершилася (job == null)
+                if (job == null && AttackingPawnJobDic.ContainsKey(pawnId))
+                {
+                    bool prevDisable = UIEventNewJobDisable;
+                    UIEventNewJobDisable = true;
+                    try
+                    {
+                        ApplyAttackingPawnJob(pawn);
+                    }
+                    finally
+                    {
+                        UIEventNewJobDisable = prevDisable;
+                    }
+                }
             }
             catch { }
-            finally
-            {
-                UIEventNewJobDisable = false;
-            }
         }
 
         public void UIEventChange(Thing thing, bool distroy = false, bool newSpawn = false)
         {
             if (PlantNotSend && thing is Plant && !thing.def.plant.IsTree) return;
+            if (thing == null) return;
 
             var tId = thing.thingIDNumber;
             lock (ToSendListsSync)
@@ -942,7 +1328,7 @@ namespace RimWorldOnlineCity
                 {
                     if (thing is Pawn)
                     {
-                        if (!ToSendDelayedFillPawnsId.Contains(tId)) ToSendDelayedFillPawnsId.Add(tId);
+                        ToSendDelayedFillPawnsId.Add(tId);
                     }
                     else
                     {
@@ -955,116 +1341,9 @@ namespace RimWorldOnlineCity
             }
         }
 
-        public void ControlPawnMoveSpeed(Pawn pawn, ref int speed)
+        public bool UIEventInventoryDrop(Thing thing)
         {
-            if (!HostPawnMoveSpeedActive || pawn == null) return;
-
-            if (!AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
-            {
-                speed = (int)(speed / HostPawnMoveSpeed);
-                if (speed > 450) speed = 450;
-            }
-        }
-
-        private bool? CheckAttackerVictory()
-        {
-            bool existHostPawn = false;
-            bool existAttackerPawn = false;
-
-            foreach (var kvp in AllPawns)
-            {
-                var pawn = kvp.Value;
-                if (pawn.Dead || pawn.Downed) continue;
-
-                if (!existAttackerPawn
-                    && pawn.RaceProps.Humanlike
-                    && AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
-                {
-                    existAttackerPawn = true;
-                }
-
-                if (!existHostPawn && pawn.IsColonist)
-                {
-                    existHostPawn = true;
-                }
-
-                if (existHostPawn && existAttackerPawn)
-                {
-                    return null;
-                }
-            }
-
-            return existHostPawn && existAttackerPawn ? (bool?)null : existAttackerPawn;
-        }
-
-        public void Clear()
-        {
-            if (TimerObj != null) SessionClientController.Timers.Remove(TimerObj);
-            if (GameMap != null) GameAttackTrigger_Patch.ActiveAttackHost.Remove(GameMap);
-            SessionClientController.Data.AttackUsModule = null;
-            SessionClientController.Data.BackgroundSaveGameOff = false;
-            SessionClientController.Data.DontCheckTimerFail = false;
-            GameAttackTrigger_Patch.ForceSpeed = -1f;
-        }
-
-        public void Finish(bool victoryAttacker)
-        {
-            ModBaseData.RunMainThreadSync(() =>
-            {
-                Find.TickManager.Pause();
-                Clear();
-
-                if (TestMode)
-                {
-                    GameUtils.ShowDialodOKCancel(
-                        TestMode
-                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                        victoryAttacker
-                            ? "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate()
-                            : "OCity_GameAttack_Host_Training_Attack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate(),
-                        () => SessionClientController.Disconnected("OCity_GameAttacker_Done".Translate()),
-                        null
-                    );
-                    return;
-                }
-
-                if (victoryAttacker)
-                {
-                    Find.WorldObjects.Remove(GameMap.Parent);
-                }
-                else
-                {
-                    var pawnsToDestroy = new List<Pawn>();
-                    foreach (var pawn in AttackingPawns)
-                    {
-                        if (!pawn.Dead && !pawn.Downed &&
-                            (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
-                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
-                        {
-                            pawnsToDestroy.Add(pawn);
-                        }
-                    }
-                    for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
-                    {
-                        GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
-                    }
-                }
-
-                SessionClientController.SaveGameNow(true, () =>
-                {
-                    GameUtils.ShowDialodOKCancel(
-                        TestMode
-                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                        victoryAttacker
-                            ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
-                            : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
-                        () => { },
-                        null
-                    );
-                });
-            });
+            return true;
         }
     }
 }
