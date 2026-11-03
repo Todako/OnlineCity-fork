@@ -2,6 +2,7 @@
 using OCUnion;
 using OCUnion.Transfer.Model;
 using RimWorld;
+using RimWorld.Planet;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -23,12 +24,13 @@ namespace RimWorldOnlineCity.GameClasses
         public static int BattleSeed = 12345;
         public static long LocalBattleTick = 0;
         public static long RemoteBattleTick = 0;
+        public static DateTime LastRemoteTickUpdateUtc = DateTime.MinValue;
         public static bool RemoteReady = false;
         public static bool IsInBattleTick { get; private set; }
 
-        // Буфер мережевого випередження (6 тіків = ~100 мс при 60 TPS)
-        public const long MaxTickLead = 6;
-        public const int CommandTickDelay = 3;
+        // Буфер мережевого випередження (24 тіки = ~400 мс при 60 TPS) для плавного ходу без ривків
+        public const long MaxTickLead = 24;
+        public const int CommandTickDelay = 2;
 
         private static bool _randStatePushed = false;
 
@@ -43,8 +45,24 @@ namespace RimWorldOnlineCity.GameClasses
             BattleSeed = seed != 0 ? seed : 987654321;
             LocalBattleTick = 0;
             RemoteBattleTick = 0;
+            LastRemoteTickUpdateUtc = DateTime.UtcNow;
             RemoteReady = false;
             IsInBattleTick = false;
+        }
+
+        public static void UpdateRemoteTick(long remoteTick)
+        {
+            if (remoteTick >= 0)
+            {
+                if (remoteTick != RemoteBattleTick)
+                {
+                    LastRemoteTickUpdateUtc = DateTime.UtcNow;
+                }
+                if (remoteTick > RemoteBattleTick)
+                {
+                    RemoteBattleTick = remoteTick;
+                }
+            }
         }
 
         public static bool CanAdvanceTick()
@@ -56,6 +74,13 @@ namespace RimWorldOnlineCity.GameClasses
 
             if (LocalBattleTick - RemoteBattleTick > MaxTickLead)
             {
+                // Захист від зависання симуляції на боці хоста, якщо клієнт перестав надсилати тіки
+                if (GameAttackTrigger_Patch.ActiveAttackHost.Count > 0
+                    && LastRemoteTickUpdateUtc != DateTime.MinValue
+                    && (DateTime.UtcNow - LastRemoteTickUpdateUtc).TotalSeconds > 2.5)
+                {
+                    return true;
+                }
                 return false;
             }
 
@@ -150,6 +175,51 @@ namespace RimWorldOnlineCity.GameClasses
         {
             if (!GameAttackTrigger_Patch.HasActiveAttack) return;
             LockstepController.OnMapPostTick(__instance);
+        }
+    }
+
+    // ====================================================================================
+    // 1.1. Заборона ванільного виходу пішаків за край карти та авто-закриття карти Ambush
+    // ====================================================================================
+
+    [HarmonyPatch(typeof(Pawn))]
+    [HarmonyPatch("ExitMap")]
+    public static class Pawn_ExitMap_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Pawn __instance)
+        {
+            if (!GameAttackTrigger_Patch.HasActiveAttack) return true;
+            var map = __instance?.Map;
+            if (map == null) return true;
+
+            if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
+                || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map))
+            {
+                // Забороняємо ванільному RimWorld виводити колоністів у караван через край карти під час PvP
+                return false;
+            }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(MapParent))]
+    [HarmonyPatch("CheckRemoveMapNow")]
+    public static class MapParent_CheckRemoveMapNow_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(MapParent __instance)
+        {
+            if (!GameAttackTrigger_Patch.HasActiveAttack) return true;
+            var map = __instance?.Map;
+            if (map != null && (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
+                || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map)))
+            {
+                // Не дозволяємо ванільному RimWorld автоматично знищувати карту Ambush при смерті колоністів нападника,
+                // поки сервер та хост офіційно не завершать бій через Finish()
+                return false;
+            }
+            return true;
         }
     }
 
@@ -630,23 +700,6 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
-    [HarmonyPatch(typeof(Pawn))]
-    [HarmonyPatch("TicksPerMove")]
-    public static class Pawn_TicksPerMove
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Pawn __instance, ref int __result)
-        {
-            if (GameAttackTrigger_Patch.ActiveAttackHost.Count == 0) return;
-
-            var map = __instance.Map;
-            if (map != null && GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
-            {
-                clientHost.ControlPawnMoveSpeed(__instance, ref __result);
-            }
-        }
-    }
-
     [HarmonyPatch(typeof(Thing))]
     [HarmonyPatch("Position", MethodType.Setter)]
     public static class Thing_Position_Patch
@@ -654,7 +707,7 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPostfix]
         public static void Postfix(Thing __instance)
         {
-            if (GameAttackTrigger_Patch.ActiveAttackHost.Count == 0) return;
+            if (!GameAttackTrigger_Patch.HasActiveAttack) return;
             if (!(__instance is Pawn pawn)) return;
 
             var map = pawn.Map;
@@ -665,7 +718,7 @@ namespace RimWorldOnlineCity.GameClasses
                 if (clientHost.UIEventNewJobDisable) return;
                 if (clientHost.AttackingPawns == null || !clientHost.AttackingPawns.Contains(pawn)) return;
 
-                const int mapBorder = 1;
+                const int mapBorder = 2;
                 if (pawn.Position.x < mapBorder || pawn.Position.x > map.Size.x - 1 - mapBorder
                     || pawn.Position.z < mapBorder || pawn.Position.z > map.Size.z - 1 - mapBorder)
                 {
@@ -675,7 +728,9 @@ namespace RimWorldOnlineCity.GameClasses
                         {
                             clientHost.UIEventNewJobDisable = true;
                             pawn.Position = resPos;
+                            pawn.pather?.StopDead();
                             pawn.Notify_Teleported(true, true);
+                            clientHost.AttackingPawnJobDic.Remove(pawn.thingIDNumber);
                         }
                         catch (Exception e)
                         {
@@ -685,29 +740,6 @@ namespace RimWorldOnlineCity.GameClasses
                         {
                             clientHost.UIEventNewJobDisable = false;
                         }
-
-                        LongEventHandler.QueueLongEvent(delegate
-                        {
-                            try
-                            {
-                                clientHost.AttackingPawnJobDic.Remove(pawn.thingIDNumber);
-                                clientHost.UIEventNewJobDisable = true;
-                                pawn.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
-                                {
-                                    playerForced = true,
-                                    expiryInterval = int.MaxValue,
-                                    checkOverrideOnExpire = false,
-                                }, JobCondition.InterruptForced);
-                            }
-                            catch (Exception e)
-                            {
-                                Loger.Log("Client Thing_Position_Patch Exception2: " + e.ToString());
-                            }
-                            finally
-                            {
-                                clientHost.UIEventNewJobDisable = false;
-                            }
-                        }, "", false, null);
                     }
                 }
                 else

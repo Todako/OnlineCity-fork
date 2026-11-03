@@ -22,10 +22,10 @@ namespace RimWorldOnlineCity
         public int AttackUpdateDelay { get; } = 50;
         public bool PlantNotSend { get; } = false;
         public int SendDelayedFillPawnsSeconds { get; } = 30;
-        public int CheckVictoryDelay { get; } = 20;
+        public int CheckVictoryDelay { get; } = 3;
         public int MapBorder { get; } = 10;
         public float TickTimeSpeed { get; } = 1f;
-        public float HostPawnMoveSpeed { get; } = 0.5f;
+        public float HostPawnMoveSpeed { get; } = 1f;
 
         public bool TestMode { get; set; }
         public string AttackerLogin { get; set; }
@@ -66,12 +66,11 @@ namespace RimWorldOnlineCity
         public DateTime CurrentPauseToTime;
         public bool IsPause => CurrentPauseToTime > DateTime.UtcNow;
 
-        public bool HostPawnMoveSpeedActive =>
-            TimeStartGameAttack != DateTime.MinValue
-            && TimeStartGameAttack.AddMinutes(1) < DateTime.UtcNow;
+        public bool HostPawnMoveSpeedActive => false;
 
         public DateTime TimeStartGameAttack = DateTime.MinValue;
         private DateTime CheckVictoryTime = DateTime.MaxValue;
+        private DateTime EdgeRetreatStartTime = DateTime.MaxValue;
 
         public bool? ConfirmedVictoryAttacker { get; set; }
         public bool TerribleFatalError { get; set; }
@@ -203,7 +202,6 @@ namespace RimWorldOnlineCity
                     for (int t = 0; t < thingsAtCell.Count; t++)
                     {
                         var thc = thingsAtCell[t];
-                        // Не передаємо пішаків, трупи та тимчасові ефекти через ThingTrade
                         if (thc is Pawn || thc is Corpse || thc is Blueprint || thc is Frame || thc is UnfinishedThing || thc is Filth || thc is Mote)
                             continue;
                         if (thc is Fire fire) FireList.Add(fire);
@@ -268,7 +266,6 @@ namespace RimWorldOnlineCity
 
                     AllPawns.Clear();
 
-                    // Спочатку спавнимо та додаємо в чергу пішаків нападника, щоб вони першими надійшли на клієнт нападника
                     var mainCann = GameUtils.SpawnCaravanPirate(GameMap, fromClient2.Pawns, (thin, thingEntry) =>
                     {
                         if (thin is Pawn pawn)
@@ -396,43 +393,69 @@ namespace RimWorldOnlineCity
 
         public void ControlPawnMoveSpeed(Pawn pawn, ref int speed)
         {
-            if (!HostPawnMoveSpeedActive || pawn == null) return;
-
-            if (!AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
-            {
-                speed = (int)(speed / HostPawnMoveSpeed);
-                if (speed > 450) speed = 450;
-            }
         }
 
         private bool? CheckAttackerVictory()
         {
             bool existHostPawn = false;
             bool existAttackerPawn = false;
+            bool allAliveAttackersInRetreatZone = true;
+            bool anyAttackerAtMapEdge = false;
 
             foreach (var kvp in AllPawns)
             {
                 var pawn = kvp.Value;
-                if (pawn == null || pawn.Dead || pawn.Downed) continue;
+                if (pawn == null || pawn.Dead || pawn.Downed || !pawn.Spawned) continue;
 
-                if (!existAttackerPawn
-                    && pawn.RaceProps != null && pawn.RaceProps.Humanlike
+                if (pawn.RaceProps != null && pawn.RaceProps.Humanlike
                     && AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
                 {
                     existAttackerPawn = true;
+
+                    bool inBorder = pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
+                        || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder;
+
+                    if (!inBorder)
+                    {
+                        allAliveAttackersInRetreatZone = false;
+                    }
+                    else if (pawn.Position.x <= 3 || pawn.Position.x >= GameMap.Size.x - 4
+                        || pawn.Position.z <= 3 || pawn.Position.z >= GameMap.Size.z - 4)
+                    {
+                        anyAttackerAtMapEdge = true;
+                    }
                 }
 
                 if (!existHostPawn && pawn.IsColonist && !AttackingPawnDic.ContainsKey(pawn.thingIDNumber))
                 {
                     existHostPawn = true;
                 }
-
-                if (existHostPawn && existAttackerPawn)
-                {
-                    return null;
-                }
             }
 
+            if (existHostPawn && existAttackerPawn)
+            {
+                // Автоматичний відступ у караван, якщо після перших 10 секунд бою всі живі нападники
+                // відійшли в 10-клітинну прикордонну зону і підійшли впритул до межі карти (<= 3 клітинки)
+                if (LockstepController.LocalBattleTick > 600 && allAliveAttackersInRetreatZone && anyAttackerAtMapEdge)
+                {
+                    if (EdgeRetreatStartTime == DateTime.MaxValue)
+                    {
+                        EdgeRetreatStartTime = DateTime.UtcNow;
+                    }
+                    else if ((DateTime.UtcNow - EdgeRetreatStartTime).TotalSeconds >= 3.0)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    EdgeRetreatStartTime = DateTime.MaxValue;
+                }
+
+                return null;
+            }
+
+            EdgeRetreatStartTime = DateTime.MaxValue;
             return existHostPawn && existAttackerPawn ? (bool?)null : existAttackerPawn;
         }
 
@@ -440,7 +463,7 @@ namespace RimWorldOnlineCity
         {
             if (IsPause || ConfirmedVictoryAttacker != null) return;
             if (TimeStartGameAttack == DateTime.MinValue) return;
-            if ((DateTime.UtcNow - TimeStartGameAttack).TotalSeconds < 30) return;
+            if ((DateTime.UtcNow - TimeStartGameAttack).TotalSeconds < 5) return;
 
             var vic = CheckAttackerVictory();
             if (vic == null)
@@ -580,7 +603,10 @@ namespace RimWorldOnlineCity
                             {
                                 if (th is Pawn)
                                 {
-                                    ToSendAddId.Add(th.thingIDNumber);
+                                    if (!SendedPawnsId.Contains(th.thingIDNumber))
+                                    {
+                                        ToSendAddId.Add(th.thingIDNumber);
+                                    }
                                 }
                                 else
                                 {
@@ -589,16 +615,6 @@ namespace RimWorldOnlineCity
                             }
                         }
                         ThingPrepareChange0.Clear();
-
-                        if ((DateTime.UtcNow - SendDelayedFillPawnsLastTime).TotalSeconds > SendDelayedFillPawnsSeconds)
-                        {
-                            SendDelayedFillPawnsLastTime = DateTime.UtcNow;
-                            foreach (var id in ToSendDelayedFillPawnsId)
-                            {
-                                ToSendAddId.Add(id);
-                            }
-                            ToSendDelayedFillPawnsId.Clear();
-                        }
 
                         if (ToSendAddId.Count > 0)
                         {
@@ -723,16 +739,6 @@ namespace RimWorldOnlineCity
                             SendedState[id] = hash;
                             _toSendStateBuffer.Add(new AttackThingState(p));
                         }
-
-                        var hpSummary = (int)(p.health.summaryHealth.SummaryHealthPercent * 10000f);
-                        if (!SendedXP.TryGetValue(id, out int oldHpSummary) || oldHpSummary != hpSummary)
-                        {
-                            SendedXP[id] = hpSummary;
-                            lock (ToSendListsSync)
-                            {
-                                ToSendDelayedFillPawnsId.Add(id);
-                            }
-                        }
                     }
 
                     lock (ToSendListsSync)
@@ -801,9 +807,9 @@ namespace RimWorldOnlineCity
 
                         if (toClient != null)
                         {
-                            if (toClient.AttackerBattleTick > LockstepController.RemoteBattleTick)
+                            if (toClient.AttackerBattleTick >= 0)
                             {
-                                LockstepController.RemoteBattleTick = toClient.AttackerBattleTick;
+                                LockstepController.UpdateRemoteTick(toClient.AttackerBattleTick);
                             }
                             if (toClient.AttackerReady)
                             {
@@ -964,7 +970,6 @@ namespace RimWorldOnlineCity
         {
             if (pawn?.jobs == null || def == null) return;
 
-            // Не перериваємо поточне очікування новою копією тієї самої роботи очікування
             if ((def == JobDefOf.Wait_Combat || def == JobDefOf.Wait) && pawn.CurJobDef == def)
             {
                 return;
@@ -1260,7 +1265,6 @@ namespace RimWorldOnlineCity
 
         public void UIEventNewJob(Pawn pawn, Job job)
         {
-            // КРИТИЧНО: перевірка ПЕРЕД try/finally, щоб ранній вихід ніколи не скидав UIEventNewJobDisable у false!
             if (UIEventNewJobDisable || pawn == null) return;
 
             try
@@ -1291,7 +1295,6 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                // Якщо це пішак захисника і наказ віддано гравцем — передаємо команду нападнику для Lockstep
                 if (!AttackingPawnDic.ContainsKey(pawnId))
                 {
                     if (job != null && job.playerForced && job.def != null
@@ -1325,7 +1328,6 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                // Для пішаків нападника відновлюємо їхню команду лише коли їхня поточна робота завершилася (job == null)
                 if (job == null && AttackingPawnJobDic.ContainsKey(pawnId))
                 {
                     bool prevDisable = UIEventNewJobDisable;
@@ -1365,11 +1367,7 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    if (thing is Pawn)
-                    {
-                        ToSendDelayedFillPawnsId.Add(tId);
-                    }
-                    else
+                    if (!(thing is Pawn))
                     {
                         if (ToUpdateStateId.Add(tId))
                         {

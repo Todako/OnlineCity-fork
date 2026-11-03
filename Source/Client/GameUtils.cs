@@ -674,10 +674,31 @@ namespace RimWorldOnlineCity
             return new IntVec3(sumX / count, 0, sumZ / count);
         }
 
+        private static IntVec3 ClampAwayFromEdge(IntVec3 cell, Map map, int minBorder = 7)
+        {
+            int x = Mathf.Clamp(cell.x, minBorder, map.Size.x - 1 - minBorder);
+            int z = Mathf.Clamp(cell.z, minBorder, map.Size.z - 1 - minBorder);
+            var clamped = new IntVec3(x, 0, z);
+            if (clamped.InBounds(map) && clamped.Standable(map) && !clamped.Fogged(map))
+            {
+                return clamped;
+            }
+            if (CellFinder.TryFindRandomCellNear(clamped, map, 6, c => c.InBounds(map) && c.Standable(map) && !c.Fogged(map)
+                && c.x >= 4 && c.x <= map.Size.x - 5 && c.z >= 4 && c.z <= map.Size.z - 5, out var valid))
+            {
+                return valid;
+            }
+            return cell;
+        }
+
         public static Func<IntVec3> GetAttackCells(Map map)
         {
-            IntVec3 enterCell = FindNearEdgeCell(map, null);
-            return () => CellFinder.RandomSpawnCellForPawnNear(enterCell, map, 4);
+            IntVec3 enterCell = ClampAwayFromEdge(FindNearEdgeCell(map, null), map, 8);
+            return () =>
+            {
+                var c = CellFinder.RandomSpawnCellForPawnNear(enterCell, map, 4);
+                return ClampAwayFromEdge(c, map, 5);
+            };
         }
 
         private static IntVec3 FindNearEdgeCell(Map map, Predicate<IntVec3> extraCellValidator)
@@ -723,6 +744,7 @@ namespace RimWorldOnlineCity
                         {
                             baseEdgeCell = CellFinder.RandomEdgeCell(map);
                         }
+                        baseEdgeCell = ClampAwayFromEdge(baseEdgeCell, map, 8);
                     }
 
                     for (int i = 0; i < pawns.Count; i++)
@@ -753,7 +775,7 @@ namespace RimWorldOnlineCity
                             }
                             else if (attackCell && baseEdgeCell.IsValid)
                             {
-                                cell = CellFinder.RandomClosewalkCellNear(baseEdgeCell, map, 6);
+                                cell = ClampAwayFromEdge(CellFinder.RandomClosewalkCellNear(baseEdgeCell, map, 5), map, 5);
                             }
                             else
                             {
@@ -882,20 +904,23 @@ namespace RimWorldOnlineCity
                 thing.stackCount = state.StackCount;
             }
 
-            // КРИТИЧНЕ ВИПРАВЛЕННЯ: перевіряємо, що об'єкт заспавнений і має Map перед викликом TryFindBestPawnStandCell
             if (thing.Spawned && thing.Map != null)
             {
                 var targetPos = state.Position.Get();
                 if (targetPos.InBounds(thing.Map) && (thing.Position.x != state.Position.x || thing.Position.z != state.Position.z))
                 {
-                    thing.Position = targetPos;
+                    float distSq = thing.Position.DistanceToSquared(targetPos);
                     if (thing is Pawn pawn)
                     {
-                        if (CellFinder.TryFindBestPawnStandCell(pawn, out var cell) && cell.InBounds(thing.Map))
+                        pawn.Position = targetPos;
+                        if (distSq > 9f)
                         {
-                            pawn.Position = cell;
+                            pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
                         }
-                        pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: false);
+                    }
+                    else
+                    {
+                        thing.Position = targetPos;
                     }
                 }
 

@@ -271,7 +271,6 @@ namespace RimWorldOnlineCity
                                         var tt = response.Thing[i];
                                         if (tt == null) continue;
 
-                                        // Пропускаємо трупи з ThingTrade, оскільки вони не містять InnerPawn і викликають помилки SpawnSetup
                                         if (tt.Def != null && typeof(Corpse).IsAssignableFrom(tt.Def.thingClass))
                                             continue;
 
@@ -310,7 +309,6 @@ namespace RimWorldOnlineCity
                             PreparationEndTimeUtc = DateTime.UtcNow + DefaultPauseTimeToHost;
                             AttackUpdateTick = 0;
 
-                            // Запускаємо цикл оновлення через фоновий таймер, щоб не блокувати головний потік Unity у LongEventHandler
                             TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
                         });
                     }
@@ -473,12 +471,19 @@ namespace RimWorldOnlineCity
                     try
                     {
                         ThingDropIgnore = true;
-                        if (thing is Pawn p && !p.Dead && p.Spawned && p.pather != null && p.pather.Moving)
+                        if (thing is Pawn p && !p.Dead && p.Spawned)
                         {
                             var targetCell = st.Position.Get();
-                            if (p.Position.DistanceToSquared(targetCell) <= 4f
-                                && (int)p.health.State == (int)st.DownState)
+                            float distSq = p.Position.DistanceToSquared(targetCell);
+                            bool sameHealthState = (int)p.health.State == (int)st.DownState;
+
+                            // Уникаємо візуальних телепортацій під час руху, якщо розбіжність у межах мережевої затримки (до 4 клітинок)
+                            if (sameHealthState && ((p.pather != null && p.pather.Moving && distSq <= 16f) || distSq <= 2f))
                             {
+                                if (p.def.useHitPoints && st.HitPoints > 0)
+                                {
+                                    p.HitPoints = st.HitPoints;
+                                }
                                 continue;
                             }
                         }
@@ -806,7 +811,7 @@ namespace RimWorldOnlineCity
                         }
                         if (toClient.HostBattleTick >= 0)
                         {
-                            LockstepController.RemoteBattleTick = toClient.HostBattleTick;
+                            LockstepController.UpdateRemoteTick(toClient.HostBattleTick);
                         }
 
                         bool hasNewPawns = toClient.NewPawns != null && toClient.NewPawns.Count > 0;
@@ -821,18 +826,24 @@ namespace RimWorldOnlineCity
                                 {
                                     if (hasNewPawns && toClient.NewPawnsId != null)
                                     {
+                                        var filteredPawns = new List<ThingEntry>(toClient.NewPawns.Count);
                                         int pairCount = Math.Min(toClient.NewPawns.Count, toClient.NewPawnsId.Count);
                                         for (int i = 0; i < pairCount; i++)
                                         {
                                             var hostid = toClient.NewPawnsId[i];
-                                            Thing thing = GetThingByHostId(hostid);
-                                            if (thing != null) DestroyThing(thing, hostid);
+                                            Thing existingThing = GetThingByHostId(hostid);
+
+                                            // Якщо живий пішак уже є на карті, не знищуємо і не переспавнюємо його посеред бою
+                                            if (existingThing is Pawn existingPawn && existingPawn.Spawned && !existingPawn.Destroyed && !existingPawn.Dead)
+                                            {
+                                                continue;
+                                            }
+
+                                            if (existingThing != null) DestroyThing(existingThing, hostid);
 
                                             var te = toClient.NewPawns[i];
                                             if (te != null)
                                             {
-                                                // КРИТИЧНЕ ВИПРАВЛЕННЯ: відновлюємо TransportID для пішаків нападника
-                                                // та записуємо актуальний hostid у te.OriginalID перед викликом SpawnList!
                                                 bool isAttackerPawn = te.TransportID != 0
                                                     || (te.OriginalID != 0 && te.OriginalID != hostid)
                                                     || (te.OriginalID != 0 && AttackerOriginalPawnIds != null && AttackerOriginalPawnIds.Contains(te.OriginalID));
@@ -846,76 +857,79 @@ namespace RimWorldOnlineCity
                                                     te.TransportID = 0;
                                                 }
                                                 te.OriginalID = hostid;
+                                                filteredPawns.Add(te);
                                             }
                                         }
 
-                                        GameUtils.SpawnList(GameMap, toClient.NewPawns, false,
-                                            p => p.TransportID == 0,
-                                            (th, te) =>
-                                            {
-                                                CheckDestroy.Remove(th.thingIDNumber);
-                                                var p = th as Pawn;
-                                                if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                        if (filteredPawns.Count > 0)
+                                        {
+                                            GameUtils.SpawnList(GameMap, filteredPawns, false,
+                                                p => p.TransportID == 0,
+                                                (th, te) =>
                                                 {
-                                                    ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
-                                                    ThingsIDDic[th.thingIDNumber] = te.OriginalID;
-                                                    ThingsObjDic[th.thingIDNumber] = th;
-
-                                                    if (te.TransportID != 0 && p != null)
+                                                    CheckDestroy.Remove(th.thingIDNumber);
+                                                    var p = th as Pawn;
+                                                    if (te.OriginalID != 0 && th.thingIDNumber != 0)
                                                     {
-                                                        if (p.Faction != Faction.OfPlayer)
-                                                        {
-                                                            p.SetFaction(Faction.OfPlayer);
-                                                        }
-                                                        if (p.jobs != null && p.jobs.jobQueue == null)
-                                                        {
-                                                            p.jobs.jobQueue = new JobQueue();
-                                                        }
+                                                        ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
+                                                        ThingsIDDic[th.thingIDNumber] = te.OriginalID;
+                                                        ThingsObjDic[th.thingIDNumber] = th;
 
-                                                        AttackerPawns[p] = te.OriginalID;
-                                                        if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
-                                                        if (p.drafter != null) p.drafter.Drafted = true;
-
-                                                        // Гарантоване відкриття туману війни навколо заспавненого колоніста нападника
-                                                        try
+                                                        if (te.TransportID != 0 && p != null)
                                                         {
-                                                            if (GameMap.fogGrid != null)
+                                                            if (p.Faction != Faction.OfPlayer)
                                                             {
-                                                                FloodFillerFog.FloodUnfog(p.Position, GameMap);
-                                                                foreach (var adj in GenAdj.CellsAdjacent8Way(p))
+                                                                p.SetFaction(Faction.OfPlayer);
+                                                            }
+                                                            if (p.jobs != null && p.jobs.jobQueue == null)
+                                                            {
+                                                                p.jobs.jobQueue = new JobQueue();
+                                                            }
+
+                                                            AttackerPawns[p] = te.OriginalID;
+                                                            if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
+                                                            if (p.drafter != null) p.drafter.Drafted = true;
+
+                                                            try
+                                                            {
+                                                                if (GameMap.fogGrid != null)
                                                                 {
-                                                                    if (adj.InBounds(GameMap) && GameMap.fogGrid.IsFogged(adj))
+                                                                    FloodFillerFog.FloodUnfog(p.Position, GameMap);
+                                                                    foreach (var adj in GenAdj.CellsAdjacent8Way(p))
                                                                     {
-                                                                        FloodFillerFog.FloodUnfog(adj, GameMap);
+                                                                        if (adj.InBounds(GameMap) && GameMap.fogGrid.IsFogged(adj))
+                                                                        {
+                                                                            FloodFillerFog.FloodUnfog(adj, GameMap);
+                                                                        }
                                                                     }
                                                                 }
                                                             }
+                                                            catch { }
+
+                                                            p.jobs?.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                            {
+                                                                playerForced = true,
+                                                                expiryInterval = int.MaxValue,
+                                                                checkOverrideOnExpire = false,
+                                                            }, JobCondition.InterruptForced);
+
+                                                            if (AttackerPawns.Count == 1)
+                                                            {
+                                                                CameraJumper.TryJump(p.Position, GameMap);
+                                                                Find.ColonistBar?.MarkColonistsDirty();
+                                                            }
                                                         }
-                                                        catch { }
-
-                                                        p.jobs?.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                        else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
                                                         {
-                                                            playerForced = true,
-                                                            expiryInterval = int.MaxValue,
-                                                            checkOverrideOnExpire = false,
-                                                        }, JobCondition.InterruptForced);
-
-                                                        if (AttackerPawns.Count == 1)
-                                                        {
-                                                            CameraJumper.TryJump(p.Position, GameMap);
-                                                            Find.ColonistBar?.MarkColonistsDirty();
+                                                            var hostileFac = SessionClientController.Data?.FactionPirate
+                                                                ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+                                                            p.SetFaction(hostileFac);
                                                         }
                                                     }
-                                                    else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
-                                                    {
-                                                        var hostileFac = SessionClientController.Data?.FactionPirate
-                                                            ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
-                                                        p.SetFaction(hostileFac);
-                                                    }
-                                                }
-                                            });
+                                                });
 
-                                        Find.ColonistBar?.MarkColonistsDirty();
+                                            Find.ColonistBar?.MarkColonistsDirty();
+                                        }
                                     }
 
                                     if (hasNewCorpses)
