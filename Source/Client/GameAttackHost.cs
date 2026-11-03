@@ -64,7 +64,8 @@ namespace RimWorldOnlineCity
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
         public DateTime CurrentPauseToTime;
-        public bool IsPause => CurrentPauseToTime > DateTime.UtcNow;
+        // Використовуємо синхронізований із сервером час, щоб уникнути розбіжності годинників між ПК гравців
+        public bool IsPause => CurrentPauseToTime > (DateTime.UtcNow + SessionClientController.ServerTimeDelta);
 
         public bool HostPawnMoveSpeedActive => false;
 
@@ -168,7 +169,7 @@ namespace RimWorldOnlineCity
                 GameAttackTrigger_Patch.ForceSpeed = 0f;
                 PauseMessage();
 
-                CurrentPauseToTime = DateTime.UtcNow.AddMinutes(5);
+                CurrentPauseToTime = DateTime.UtcNow + SessionClientController.ServerTimeDelta + TimeSpan.FromMinutes(5);
                 Loger.Log("HostAttackUpdate Set 1 CurrentPauseToTime=" + CurrentPauseToTime.ToGoodUtcString());
 
                 var hostPlace = UpdateWorldController.GetWOByServerId(HostPlaceServerId) as MapParent;
@@ -276,6 +277,18 @@ namespace RimWorldOnlineCity
                             AttackingPawns.Add(pawn);
                             AttackingPawnDic[pawn.thingIDNumber] = origId;
                             AttackingPawnsLastPos[pawn] = pawn.Position;
+
+                            // Призначаємо Wait_Combat одразу при спавні, щоб ванільний ШІ піратів не скеровував їх за край карти
+                            if (!pawn.Dead && !pawn.Downed && pawn.jobs != null)
+                            {
+                                if (pawn.jobs.jobQueue == null) pawn.jobs.jobQueue = new JobQueue();
+                                pawn.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                {
+                                    playerForced = true,
+                                    expiryInterval = int.MaxValue,
+                                    checkOverrideOnExpire = false,
+                                }, JobCondition.InterruptForced);
+                            }
                         }
                     });
 
@@ -292,8 +305,8 @@ namespace RimWorldOnlineCity
 
                     ModBaseData.RunMainThreadSync(() =>
                     {
-                        Current.Game.CurrentMap = GameMap;
-                        Find.CameraDriver.JumpToCurrentMapLoc(mainCann);
+                        // Примусово закриваємо глобальну карту планети (якщо відкрита) і наводимо камеру на точку вторгнення
+                        CameraJumper.TryJump(new GlobalTargetInfo(mainCann, GameMap));
                     });
 
                     GameAttackTrigger_Patch.ActiveAttackHost[GameMap] = this;
@@ -377,16 +390,26 @@ namespace RimWorldOnlineCity
 
                 SessionClientController.SaveGameNow(true, () =>
                 {
-                    GameUtils.ShowDialodOKCancel(
-                        TestMode
-                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                        victoryAttacker
-                            ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
-                            : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
-                        () => { },
-                        null
-                    );
+                    ModBaseData.RunMainThread(() =>
+                    {
+                        GameUtils.ShowDialodOKCancel(
+                            TestMode
+                                ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
+                                : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                            victoryAttacker
+                                ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
+                                : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
+                            () =>
+                            {
+                                GameAttackTrigger_Patch.ForceSpeed = -1f;
+                                if (Find.TickManager != null && Find.TickManager.Paused)
+                                {
+                                    Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                }
+                            },
+                            null
+                        );
+                    });
                 });
             });
         }
@@ -434,8 +457,6 @@ namespace RimWorldOnlineCity
 
             if (existHostPawn && existAttackerPawn)
             {
-                // Автоматичний відступ у караван, якщо після перших 10 секунд бою всі живі нападники
-                // відійшли в 10-клітинну прикордонну зону і підійшли впритул до межі карти (<= 3 клітинки)
                 if (LockstepController.LocalBattleTick > 600 && allAliveAttackersInRetreatZone && anyAttackerAtMapEdge)
                 {
                     if (EdgeRetreatStartTime == DateTime.MaxValue)
@@ -491,6 +512,12 @@ namespace RimWorldOnlineCity
             bool inTimerEvent = false;
             try
             {
+                if (SessionClientController.Data?.AttackUsModule != this)
+                {
+                    InTimer = false;
+                    return;
+                }
+
                 if (WaitOrErrorExit)
                 {
                     if ((DateTime.UtcNow - WaitOrErrorExitStart).TotalSeconds > 20)
@@ -516,6 +543,7 @@ namespace RimWorldOnlineCity
                     {
                         ModBaseData.RunMainThread(() =>
                         {
+                            if (SessionClientController.Data?.AttackUsModule != this) return;
                             if (Find.TickManager != null && !Find.TickManager.Paused)
                             {
                                 Find.TickManager.Pause();
@@ -536,6 +564,7 @@ namespace RimWorldOnlineCity
                     {
                         ModBaseData.RunMainThread(() =>
                         {
+                            if (SessionClientController.Data?.AttackUsModule != this) return;
                             if (Find.TickManager != null)
                             {
                                 Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
@@ -632,7 +661,7 @@ namespace RimWorldOnlineCity
                                     if (SendedPawnsId.Contains(id))
                                     {
                                         SendedPawnsId.Remove(id);
-                                        if (pawn.Corpse != null && pawn.Corpse.Spawned)
+                                        if (pawn.Corpse != null && pawn.Corpse.Spawned && !SendedActual.ContainsKey(pawn.Corpse.thingIDNumber))
                                         {
                                             _newCorpsesBuffer.Add(new AttackCorpse
                                             {
@@ -642,7 +671,7 @@ namespace RimWorldOnlineCity
                                             });
                                             SendedActual[pawn.Corpse.thingIDNumber] = pawn.Corpse;
                                         }
-                                        else
+                                        else if (pawn.Corpse == null || !pawn.Corpse.Spawned)
                                         {
                                             _deleteBuffer.Add(id);
                                         }
@@ -688,6 +717,8 @@ namespace RimWorldOnlineCity
 
                                 if (th is Corpse corpse && corpse.InnerPawn != null)
                                 {
+                                    if (SendedActual.ContainsKey(corpse.thingIDNumber)) continue;
+                                    SendedPawnsId.Remove(corpse.InnerPawn.thingIDNumber);
                                     _newCorpsesBuffer.Add(new AttackCorpse
                                     {
                                         CorpseWithPawn = ThingEntry.CreateEntry(corpse, 1),
@@ -968,7 +999,7 @@ namespace RimWorldOnlineCity
 
         private void SetPawnJob(Pawn pawn, JobDef def, LocalTargetInfo targetA, LocalTargetInfo targetB = default, int count = -1, string abilityDefName = null)
         {
-            if (pawn?.jobs == null || def == null) return;
+            if (pawn?.jobs == null || def == null || pawn.Dead || pawn.Downed) return;
 
             if ((def == JobDefOf.Wait_Combat || def == JobDefOf.Wait) && pawn.CurJobDef == def)
             {
@@ -1009,7 +1040,8 @@ namespace RimWorldOnlineCity
 
         private void ApplyAttackingPawnJob(Pawn pawn, AttackPawnCommand explicitComm = null)
         {
-            if (pawn == null || pawn.Dead || pawn.Destroyed || !pawn.Spawned) return;
+            // КРИТИЧНО: не призначаємо жодних робіт збитим з ніг (Downed) або мертвим пішакам
+            if (pawn == null || pawn.Dead || pawn.Downed || pawn.Destroyed || !pawn.Spawned) return;
 
             bool prevDisable = UIEventNewJobDisable;
             UIEventNewJobDisable = true;
@@ -1265,7 +1297,7 @@ namespace RimWorldOnlineCity
 
         public void UIEventNewJob(Pawn pawn, Job job)
         {
-            if (UIEventNewJobDisable || pawn == null) return;
+            if (UIEventNewJobDisable || pawn == null || job == null) return;
 
             try
             {
@@ -1278,11 +1310,11 @@ namespace RimWorldOnlineCity
                         ThingPrepareChange1.Add(jobThing);
                         ThingPrepareChange2.Remove(pawnId);
                     }
-                    if (job != null && job.targetA.HasThing && !(job.targetA.Thing is Pawn))
+                    if (job.targetA.HasThing && !(job.targetA.Thing is Pawn))
                     {
                         ThingPrepareChange2[pawnId] = job.targetA.Thing;
                     }
-                    if (job != null && pawn.RaceProps != null && pawn.RaceProps.Humanlike
+                    if (pawn.RaceProps != null && pawn.RaceProps.Humanlike
                         && (job.def == JobDefOf.Equip
                         || job.def == JobDefOf.TakeInventory
                         || job.def == JobDefOf.Wear
@@ -1297,7 +1329,7 @@ namespace RimWorldOnlineCity
 
                 if (!AttackingPawnDic.ContainsKey(pawnId))
                 {
-                    if (job != null && job.playerForced && job.def != null
+                    if (job.playerForced && job.def != null
                         && job.def != JobDefOf.Wait_Combat && job.def != JobDefOf.Wait)
                     {
                         var hostCmd = new AttackPawnCommand
@@ -1324,21 +1356,6 @@ namespace RimWorldOnlineCity
                         {
                             _outgoingHostCommands.Add(hostCmd);
                         }
-                    }
-                    return;
-                }
-
-                if (job == null && AttackingPawnJobDic.ContainsKey(pawnId))
-                {
-                    bool prevDisable = UIEventNewJobDisable;
-                    UIEventNewJobDisable = true;
-                    try
-                    {
-                        ApplyAttackingPawnJob(pawn);
-                    }
-                    finally
-                    {
-                        UIEventNewJobDisable = prevDisable;
                     }
                 }
             }

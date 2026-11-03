@@ -303,7 +303,7 @@ namespace RimWorldOnlineCity
                             }
                             catch { }
 
-                            CameraJumper.TryJump(GameMap.Center, GameMap);
+                            CameraJumper.TryJump(new GlobalTargetInfo(GameMap.Center, GameMap));
                             GameAttackTrigger_Patch.ActiveAttacker[GameMap] = this;
 
                             PreparationEndTimeUtc = DateTime.UtcNow + DefaultPauseTimeToHost;
@@ -330,6 +330,7 @@ namespace RimWorldOnlineCity
 
         private void DestroyThing(Thing thing, int hostId = 0)
         {
+            if (thing == null) return;
             var id = thing.thingIDNumber;
             if (hostId != 0 || ThingsIDDic.TryGetValue(id, out hostId))
                 ThingsIDDicRev.Remove(hostId);
@@ -342,7 +343,10 @@ namespace RimWorldOnlineCity
                 try
                 {
                     ThingDropIgnore = true;
-                    thing.Destroy();
+                    if (!thing.Destroyed)
+                    {
+                        thing.Destroy();
+                    }
                 }
                 finally
                 {
@@ -466,7 +470,7 @@ namespace RimWorldOnlineCity
                 {
                     var st = toClient.UpdateState[i];
                     Thing thing = GetThingByHostId(st.HostThingID);
-                    if (thing == null) continue;
+                    if (thing == null || thing.Destroyed) continue;
 
                     try
                     {
@@ -477,8 +481,8 @@ namespace RimWorldOnlineCity
                             float distSq = p.Position.DistanceToSquared(targetCell);
                             bool sameHealthState = (int)p.health.State == (int)st.DownState;
 
-                            // Уникаємо візуальних телепортацій під час руху, якщо розбіжність у межах мережевої затримки (до 4 клітинок)
-                            if (sameHealthState && ((p.pather != null && p.pather.Moving && distSq <= 16f) || distSq <= 2f))
+                            // Якщо пішак рухається своїм шляхом у межах допустимого вікна Lockstep, не смикаємо його координати
+                            if (sameHealthState && ((p.pather != null && p.pather.Moving && distSq <= 25f) || distSq <= 2f))
                             {
                                 if (p.def.useHitPoints && st.HitPoints > 0)
                                 {
@@ -510,6 +514,8 @@ namespace RimWorldOnlineCity
 
         private void ExecuteRemoteCommandOnPawn(Pawn pawn, AttackPawnCommand comm)
         {
+            if (pawn == null || pawn.Dead || pawn.Downed || !pawn.Spawned) return;
+
             try
             {
                 if (comm.Command == AttackPawnCommand.PawnCommand.SetDrafted)
@@ -627,6 +633,11 @@ namespace RimWorldOnlineCity
             bool inTimerEvent = false;
             try
             {
+                if (SessionClientController.Data?.AttackModule != this)
+                {
+                    return;
+                }
+
                 if (TerribleFatalError)
                 {
                     ModBaseData.RunMainThread(() => Find.TickManager?.Pause());
@@ -638,7 +649,12 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                bool isPrepPhase = DateTime.UtcNow < PreparationEndTimeUtc || !AttackerReady || !LockstepController.RemoteReady;
+                // Якщо Хост уже завершив відлік підготовки і почав рахувати бойові тіки (RemoteBattleTick > 0),
+                // миттєво знімаємо паузу і на клієнті нападника, усуваючи розбіжність годинників між ПК!
+                bool isPrepPhase = (DateTime.UtcNow < PreparationEndTimeUtc && LockstepController.RemoteBattleTick <= 0)
+                    || !AttackerReady
+                    || !LockstepController.RemoteReady;
+
                 if (isPrepPhase)
                 {
                     GameAttackTrigger_Patch.ForceSpeed = 0f;
@@ -646,6 +662,7 @@ namespace RimWorldOnlineCity
                     {
                         ModBaseData.RunMainThread(() =>
                         {
+                            if (SessionClientController.Data?.AttackModule != this) return;
                             if (Find.TickManager != null && !Find.TickManager.Paused)
                             {
                                 Find.TickManager.Pause();
@@ -661,6 +678,7 @@ namespace RimWorldOnlineCity
                     {
                         ModBaseData.RunMainThread(() =>
                         {
+                            if (SessionClientController.Data?.AttackModule != this) return;
                             if (Find.TickManager != null)
                             {
                                 Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
@@ -746,7 +764,13 @@ namespace RimWorldOnlineCity
                                     try
                                     {
                                         var thingToDestroy = checkSpawn.Value;
-                                        ModBaseData.RunMainThreadSync(() => thingToDestroy.Destroy());
+                                        ModBaseData.RunMainThreadSync(() =>
+                                        {
+                                            if (thingToDestroy != null && !thingToDestroy.Destroyed)
+                                            {
+                                                thingToDestroy.Destroy();
+                                            }
+                                        });
                                     }
                                     catch (Exception ext2)
                                     {
@@ -833,7 +857,6 @@ namespace RimWorldOnlineCity
                                             var hostid = toClient.NewPawnsId[i];
                                             Thing existingThing = GetThingByHostId(hostid);
 
-                                            // Якщо живий пішак уже є на карті, не знищуємо і не переспавнюємо його посеред бою
                                             if (existingThing is Pawn existingPawn && existingPawn.Spawned && !existingPawn.Destroyed && !existingPawn.Dead)
                                             {
                                                 continue;
@@ -915,15 +938,27 @@ namespace RimWorldOnlineCity
 
                                                             if (AttackerPawns.Count == 1)
                                                             {
-                                                                CameraJumper.TryJump(p.Position, GameMap);
+                                                                CameraJumper.TryJump(new GlobalTargetInfo(p.Position, GameMap));
                                                                 Find.ColonistBar?.MarkColonistsDirty();
                                                             }
                                                         }
-                                                        else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
+                                                        else if (p != null)
                                                         {
-                                                            var hostileFac = SessionClientController.Data?.FactionPirate
-                                                                ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
-                                                            p.SetFaction(hostileFac);
+                                                            if (p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
+                                                            {
+                                                                var hostileFac = SessionClientController.Data?.FactionPirate
+                                                                    ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+                                                                p.SetFaction(hostileFac);
+                                                            }
+                                                            if (!p.Dead && !p.Downed && p.jobs != null)
+                                                            {
+                                                                p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                                {
+                                                                    playerForced = true,
+                                                                    expiryInterval = int.MaxValue,
+                                                                    checkOverrideOnExpire = false,
+                                                                }, JobCondition.InterruptForced);
+                                                            }
                                                         }
                                                     }
                                                 });
@@ -1232,6 +1267,7 @@ namespace RimWorldOnlineCity
         public void Clear()
         {
             if (TimerObj != null) SessionClientController.Timers.Remove(TimerObj);
+            TimerObj = null;
             if (GameMap != null) GameAttackTrigger_Patch.ActiveAttacker.Remove(GameMap);
             SessionClientController.Data.AttackModule = null;
             SessionClientController.Data.BackgroundSaveGameOff = false;
@@ -1309,14 +1345,24 @@ namespace RimWorldOnlineCity
 
                 SessionClientController.SaveGameNow(true, () =>
                 {
-                    GameUtils.ShowDialodOKCancel(
-                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
-                        victoryAttacker
-                            ? "OCity_GameAttacker_Settlement_TakenOver".Translate()
-                            : "OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate(),
-                        () => { },
-                        null
-                    );
+                    ModBaseData.RunMainThread(() =>
+                    {
+                        GameUtils.ShowDialodOKCancel(
+                            "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                            victoryAttacker
+                                ? "OCity_GameAttacker_Settlement_TakenOver".Translate()
+                                : "OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate(),
+                            () =>
+                            {
+                                GameAttackTrigger_Patch.ForceSpeed = -1f;
+                                if (Find.TickManager != null && Find.TickManager.Paused)
+                                {
+                                    Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                }
+                            },
+                            null
+                        );
+                    });
                 });
 
                 Loger.Log("Client AttackerFinish end");

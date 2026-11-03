@@ -16,6 +16,7 @@ using System.Xml;
 using UnityEngine;
 using Util;
 using Verse;
+using Verse.AI;
 
 namespace RimWorldOnlineCity
 {
@@ -582,7 +583,9 @@ namespace RimWorldOnlineCity
                 var res = new List<Thing>(things.Count);
                 for (int i = 0; i < things.Count; i++)
                 {
-                    res.Add(things[i].CreateThing());
+                    var th = things[i].CreateThing();
+                    if (th is Pawn p) ReassignUniquePawnSubIds(p);
+                    res.Add(th);
                 }
                 return res;
             }
@@ -592,6 +595,45 @@ namespace RimWorldOnlineCity
             !errorText.Contains("during LoadingVars. pathRelToParent=/leader, parent")
             && !errorText.Contains("PostLoadInit on RimWorld.Pawn_IdeoTracker: System.NullReferenceException")
             );
+
+        /// <summary>
+        /// Оновлює loadID для всіх Hediff та Gene у десеріалізованого з чужого світу пішака,
+        /// щоб уникнути помилок DebugLoadIDsSavingErrorsChecker під час збереження гри.
+        /// </summary>
+        public static void ReassignUniquePawnSubIds(Pawn pawn)
+        {
+            if (pawn == null || Find.UniqueIDsManager == null) return;
+            try
+            {
+                var hediffs = pawn.health?.hediffSet?.hediffs;
+                if (hediffs != null)
+                {
+                    for (int i = 0; i < hediffs.Count; i++)
+                    {
+                        if (hediffs[i] != null)
+                        {
+                            hediffs[i].loadID = Find.UniqueIDsManager.GetNextHediffID();
+                        }
+                    }
+                }
+
+                if (ModsConfig.BiotechActive && pawn.genes != null)
+                {
+                    var genes = pawn.genes.GenesListForReading;
+                    if (genes != null)
+                    {
+                        for (int i = 0; i < genes.Count; i++)
+                        {
+                            if (genes[i] != null)
+                            {
+                                genes[i].loadID = Find.UniqueIDsManager.GetNextGeneID();
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
 
         public static void ShortSetupForQuickTestPlay()
         {
@@ -768,6 +810,15 @@ namespace RimWorldOnlineCity
                             var thin = thing.CreateThing();
                             if (thin == null) continue;
 
+                            if (thin is Pawn createdPawn)
+                            {
+                                ReassignUniquePawnSubIds(createdPawn);
+                            }
+                            else if (thin is Corpse createdCorpse && createdCorpse.InnerPawn != null)
+                            {
+                                ReassignUniquePawnSubIds(createdCorpse.InnerPawn);
+                            }
+
                             IntVec3 cell;
                             if (getCell != null)
                             {
@@ -909,13 +960,28 @@ namespace RimWorldOnlineCity
                 var targetPos = state.Position.Get();
                 if (targetPos.InBounds(thing.Map) && (thing.Position.x != state.Position.x || thing.Position.z != state.Position.z))
                 {
-                    float distSq = thing.Position.DistanceToSquared(targetPos);
                     if (thing is Pawn pawn)
                     {
-                        pawn.Position = targetPos;
-                        if (distSq > 9f)
+                        float distSq = pawn.Position.DistanceToSquared(targetPos);
+                        bool isDownOrDead = pawn.Dead || pawn.Downed || state.DownState != AttackThingState.PawnHealthState.Mobile;
+
+                        if (isDownOrDead || distSq > 64f)
                         {
+                            pawn.Position = targetPos;
                             pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
+                        }
+                        else if (distSq > 1.5f)
+                        {
+                            // Якщо пішак не рухається локально, запускаємо плавний крок через PathFollower замість миттєвого телепорту
+                            if (pawn.pather != null && !pawn.pather.Moving)
+                            {
+                                pawn.pather.StartPath(targetPos, PathEndMode.OnCell);
+                            }
+                            else if (pawn.pather != null && pawn.pather.Moving && distSq > 25f)
+                            {
+                                pawn.Position = targetPos;
+                                pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: false);
+                            }
                         }
                     }
                     else
@@ -951,11 +1017,13 @@ namespace RimWorldOnlineCity
                     {
                         if (pawnHealthStateDead)
                         {
+                            targetPawn.pather?.StopDead();
                             HealthUtility.DamageUntilDead(targetPawn);
                         }
                     }
                     else if (state.DownState == AttackThingState.PawnHealthState.Down)
                     {
+                        targetPawn.pather?.StopDead();
                         HealthUtility.DamageUntilDowned(targetPawn, false);
                     }
                     else
@@ -1013,6 +1081,12 @@ namespace RimWorldOnlineCity
 
             lock (DialodQueue)
             {
+                // Якщо попереднє вікно було закрите клавішею Esc, скидаємо прапорець блокування черги
+                if (DialodShowing && Find.WindowStack != null && !Find.WindowStack.IsOpen<Dialog_NodeTreeWithFactionInfo>())
+                {
+                    DialodShowing = false;
+                }
+
                 if (!DialodShowing)
                 {
                     DialodShowing = true;

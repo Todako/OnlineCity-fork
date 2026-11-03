@@ -28,8 +28,8 @@ namespace RimWorldOnlineCity.GameClasses
         public static bool RemoteReady = false;
         public static bool IsInBattleTick { get; private set; }
 
-        // Буфер мережевого випередження (24 тіки = ~400 мс при 60 TPS) для плавного ходу без ривків
-        public const long MaxTickLead = 24;
+        // Буфер мережевого випередження (30 тіків = ~500 мс при 60 TPS) для плавного ходу без мікро-пауз
+        public const long MaxTickLead = 30;
         public const int CommandTickDelay = 2;
 
         private static bool _randStatePushed = false;
@@ -74,7 +74,6 @@ namespace RimWorldOnlineCity.GameClasses
 
             if (LocalBattleTick - RemoteBattleTick > MaxTickLead)
             {
-                // Захист від зависання симуляції на боці хоста, якщо клієнт перестав надсилати тіки
                 if (GameAttackTrigger_Patch.ActiveAttackHost.Count > 0
                     && LastRemoteTickUpdateUtc != DateTime.MinValue
                     && (DateTime.UtcNow - LastRemoteTickUpdateUtc).TotalSeconds > 2.5)
@@ -179,7 +178,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 1.1. Заборона ванільного виходу пішаків за край карти та авто-закриття карти Ambush
+    // 1.1. Блокування ванільного виходу за край карти, авто-закриття Ambush та ШІ втечі
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn))]
@@ -196,7 +195,6 @@ namespace RimWorldOnlineCity.GameClasses
             if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
                 || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map))
             {
-                // Забороняємо ванільному RimWorld виводити колоністів у караван через край карти під час PvP
                 return false;
             }
             return true;
@@ -215,10 +213,56 @@ namespace RimWorldOnlineCity.GameClasses
             if (map != null && (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
                 || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map)))
             {
-                // Не дозволяємо ванільному RimWorld автоматично знищувати карту Ambush при смерті колоністів нападника,
-                // поки сервер та хост офіційно не завершать бій через Finish()
                 return false;
             }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Блокує самовільний запуск ванільного ШІ піратів (JobGiver_ExitMapBest -> Goto (199,0,0) тощо)
+    /// для пішаків, які керуються гравцями через мережу.
+    /// </summary>
+    [HarmonyPatch(typeof(Pawn_JobTracker))]
+    [HarmonyPatch("DetermineNextJob")]
+    public static class Pawn_JobTracker_DetermineNextJob_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Pawn_JobTracker __instance, ref ThinkResult __result, out ThinkTreeDef thinkTree)
+        {
+            thinkTree = null;
+            if (!GameAttackTrigger_Patch.HasActiveAttack) return true;
+            if (Scribe.mode != LoadSaveMode.Inactive || GameXMLUtils.FromXmlIsActive) return true;
+
+            var pawn = __instance.GetPawn();
+            var map = pawn?.Map;
+            if (map == null || pawn.Dead || pawn.Downed || pawn.InMentalState) return true;
+
+            if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var host))
+            {
+                // На боці Хоста пішаки нападника виконують лише накази нападника, а не ванільний ШІ втечі за край карти
+                if (host.AttackingPawns != null && host.AttackingPawns.Contains(pawn))
+                {
+                    var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
+                    waitJob.expiryInterval = int.MaxValue;
+                    waitJob.checkOverrideOnExpire = false;
+                    __result = new ThinkResult(waitJob, null);
+                    return false;
+                }
+            }
+            else if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var attacker))
+            {
+                // На боці Нападника власні задрафтовані пішаки та пішаки Хоста не повинні запускати локальний ШІ піратів
+                if (!attacker.IsMyPawn(pawn) || (pawn.drafter != null && pawn.drafter.Drafted))
+                {
+                    var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
+                    waitJob.expiryInterval = int.MaxValue;
+                    waitJob.checkOverrideOnExpire = false;
+                    __result = new ThinkResult(waitJob, null);
+                    return false;
+                }
+            }
+
             return true;
         }
     }
@@ -506,6 +550,8 @@ namespace RimWorldOnlineCity.GameClasses
             if (map == null) return;
 
             var curJob = __instance.curJob;
+            if (curJob == null) return;
+
             if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var client))
             {
                 client.UIEventNewJob(pawn, curJob);
@@ -515,34 +561,6 @@ namespace RimWorldOnlineCity.GameClasses
                 if (!clientHost.UIEventNewJobDisable)
                 {
                     clientHost.UIEventNewJob(pawn, curJob);
-                }
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(Pawn_JobTracker))]
-    [HarmonyPatch("CleanupCurrentJob")]
-    public static class Pawn_JobTracker_CleanupCurrentJob_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Pawn_JobTracker __instance)
-        {
-            if (!GameAttackTrigger_Patch.HasActiveAttack) return;
-            if (Scribe.mode != LoadSaveMode.Inactive || GameXMLUtils.FromXmlIsActive) return;
-
-            var pawn = __instance.GetPawn();
-            var map = pawn?.Map;
-            if (map == null) return;
-
-            if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var client))
-            {
-                client.UIEventNewJob(pawn, null);
-            }
-            if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
-            {
-                if (!clientHost.UIEventNewJobDisable)
-                {
-                    clientHost.UIEventNewJob(pawn, null);
                 }
             }
         }
@@ -695,7 +713,8 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPostfix]
         public static void Postfix(ref float __result)
         {
-            if (GameAttackTrigger_Patch.ForceSpeed < 0f) return;
+            // Гарантуємо, що після завершення атаки ForceSpeed ніколи не заблокує хід часу в грі
+            if (!GameAttackTrigger_Patch.HasActiveAttack || GameAttackTrigger_Patch.ForceSpeed < 0f) return;
             __result = GameAttackTrigger_Patch.ForceSpeed;
         }
     }
@@ -718,7 +737,7 @@ namespace RimWorldOnlineCity.GameClasses
                 if (clientHost.UIEventNewJobDisable) return;
                 if (clientHost.AttackingPawns == null || !clientHost.AttackingPawns.Contains(pawn)) return;
 
-                const int mapBorder = 2;
+                const int mapBorder = 1;
                 if (pawn.Position.x < mapBorder || pawn.Position.x > map.Size.x - 1 - mapBorder
                     || pawn.Position.z < mapBorder || pawn.Position.z > map.Size.z - 1 - mapBorder)
                 {
@@ -728,9 +747,7 @@ namespace RimWorldOnlineCity.GameClasses
                         {
                             clientHost.UIEventNewJobDisable = true;
                             pawn.Position = resPos;
-                            pawn.pather?.StopDead();
-                            pawn.Notify_Teleported(true, true);
-                            clientHost.AttackingPawnJobDic.Remove(pawn.thingIDNumber);
+                            pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: false);
                         }
                         catch (Exception e)
                         {

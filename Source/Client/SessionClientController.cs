@@ -501,15 +501,33 @@ namespace RimWorldOnlineCity
             Loger.Log("Client SaveGameNow single=" + single.ToString());
             SaveGame((content) =>
             {
-                if (content != null && content.Length > 1024)
+                // Виконуємо мережеву синхронізацію UpdateWorld у фоновому потоці,
+                // щоб ніколи не блокувати головний потік Unity і не створювати deadlock із таймером UpdateWorldPeriodic!
+                Task.Run(() =>
                 {
-                    Data.SaveFileData = content;
-                    Data.SingleSave = single;
-                    UpdateWorld(false);
+                    try
+                    {
+                        if (content != null && content.Length > 1024)
+                        {
+                            Data.SaveFileData = content;
+                            Data.SingleSave = single;
+                            UpdateWorld(false);
 
-                    Loger.Log("Client SaveGameNow OK");
-                }
-                after?.Invoke();
+                            Loger.Log("Client SaveGameNow OK");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Loger.Log("Client SaveGameNow Exception: " + ex.Message, Loger.LogLevel.WARNING);
+                    }
+                    finally
+                    {
+                        if (after != null)
+                        {
+                            ModBaseData.RunMainThread(after);
+                        }
+                    }
+                });
             });
         }
 
