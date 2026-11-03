@@ -24,7 +24,7 @@ namespace RimWorldOnlineCity
         public int SendDelayedFillPawnsSeconds { get; } = 30;
         public int CheckVictoryDelay { get; } = 20;
         public int MapBorder { get; } = 10;
-        public float TickTimeSpeed { get; } = 0.5f;
+        public float TickTimeSpeed { get; } = 1f;
         public float HostPawnMoveSpeed { get; } = 0.5f;
 
         public bool TestMode { get; set; }
@@ -203,7 +203,9 @@ namespace RimWorldOnlineCity
                     for (int t = 0; t < thingsAtCell.Count; t++)
                     {
                         var thc = thingsAtCell[t];
-                        if (thc is Pawn) continue;
+                        // Не передаємо пішаків, трупи та тимчасові ефекти через ThingTrade
+                        if (thc is Pawn || thc is Corpse || thc is Blueprint || thc is Frame || thc is UnfinishedThing || thc is Filth || thc is Mote)
+                            continue;
                         if (thc is Fire fire) FireList.Add(fire);
 
                         var isPlant = thc.def.category == ThingCategory.Plant && !thc.def.plant.IsTree;
@@ -265,25 +267,31 @@ namespace RimWorldOnlineCity
                     AttackingPawnJobDic = new Dictionary<int, AttackPawnCommand>();
 
                     AllPawns.Clear();
-                    var mapPawns = GameMap.mapPawns.AllPawnsSpawned;
-                    for (int i = 0; i < mapPawns.Count; i++)
-                    {
-                        var p = mapPawns[i];
-                        AllPawns[p.thingIDNumber] = p;
-                        ToSendAddId.Add(p.thingIDNumber);
-                    }
 
+                    // Спочатку спавнимо та додаємо в чергу пішаків нападника, щоб вони першими надійшли на клієнт нападника
                     var mainCann = GameUtils.SpawnCaravanPirate(GameMap, fromClient2.Pawns, (thin, thingEntry) =>
                     {
                         if (thin is Pawn pawn)
                         {
+                            int origId = thingEntry.OriginalID != 0 ? thingEntry.OriginalID : pawn.thingIDNumber;
                             AllPawns[pawn.thingIDNumber] = pawn;
                             ToSendAddId.Add(pawn.thingIDNumber);
                             AttackingPawns.Add(pawn);
-                            AttackingPawnDic[pawn.thingIDNumber] = thingEntry.OriginalID;
+                            AttackingPawnDic[pawn.thingIDNumber] = origId;
                             AttackingPawnsLastPos[pawn] = pawn.Position;
                         }
                     });
+
+                    var mapPawns = GameMap.mapPawns.AllPawnsSpawned;
+                    for (int i = 0; i < mapPawns.Count; i++)
+                    {
+                        var p = mapPawns[i];
+                        if (!AllPawns.ContainsKey(p.thingIDNumber))
+                        {
+                            AllPawns[p.thingIDNumber] = p;
+                            ToSendAddId.Add(p.thingIDNumber);
+                        }
+                    }
 
                     ModBaseData.RunMainThreadSync(() =>
                     {
@@ -478,17 +486,40 @@ namespace RimWorldOnlineCity
 
                 AttackUpdateTick++;
 
-                if (IsPause)
+                if (IsPause || !_localSceneReady || !LockstepController.RemoteReady)
                 {
                     GameAttackTrigger_Patch.ForceSpeed = 0f;
+                    if (Find.TickManager != null && !Find.TickManager.Paused)
+                    {
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            if (Find.TickManager != null && !Find.TickManager.Paused)
+                            {
+                                Find.TickManager.Pause();
+                                GameAttackTrigger_Patch.ForceSpeed = 0f;
+                            }
+                        });
+                    }
                 }
                 else
                 {
                     if (TimeStartGameAttack == DateTime.MinValue)
                     {
                         TimeStartGameAttack = DateTime.UtcNow;
+                        SessionClientController.Data.DontCheckTimerFail = false;
                     }
                     GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
+                    if (Find.TickManager != null && (Find.TickManager.Paused || Find.TickManager.CurTimeSpeed != TimeSpeed.Normal))
+                    {
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            if (Find.TickManager != null)
+                            {
+                                Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                GameAttackTrigger_Patch.ForceSpeed = TickTimeSpeed;
+                            }
+                        });
+                    }
                 }
 
                 _newPawnsBuffer.Clear();
@@ -571,7 +602,9 @@ namespace RimWorldOnlineCity
 
                         if (ToSendAddId.Count > 0)
                         {
-                            int cnt = ToSendAddId.Count < 3 || ToSendAddId.Count > 6 || AttackUpdateTick <= 2 ? ToSendAddId.Count : 3;
+                            int cnt = !LockstepController.RemoteReady || ToSendAddId.Count < 3 || ToSendAddId.Count > 6 || AttackUpdateTick <= 2
+                                ? ToSendAddId.Count
+                                : 3;
                             foreach (var id in ToSendAddId)
                             {
                                 if (cnt-- <= 0) break;
@@ -606,6 +639,12 @@ namespace RimWorldOnlineCity
                                 if (AttackingPawnDic.TryGetValue(id, out int origId))
                                 {
                                     sendPawn.OriginalID = origId;
+                                    sendPawn.TransportID = origId;
+                                }
+                                else
+                                {
+                                    sendPawn.OriginalID = id;
+                                    sendPawn.TransportID = 0;
                                 }
                                 _newPawnsBuffer.Add(sendPawn);
                                 _newPawnsIdBuffer.Add(id);

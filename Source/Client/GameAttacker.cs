@@ -42,6 +42,7 @@ namespace RimWorldOnlineCity
         public DateTime PreparationEndTimeUtc { get; private set; }
         public bool AttackerReady { get; private set; }
         private bool _prepDialogShown;
+        private bool _pauseTimeSentToHost;
 
         public int AttackUpdateTick { get; set; }
         private object TimerObj;
@@ -53,6 +54,7 @@ namespace RimWorldOnlineCity
         private Dictionary<int, Thing> ThingsObjDic { get; set; }
         private Dictionary<Pawn, int> AttackerPawns { get; set; }
         private List<string> AttackerOriginalPawnLabels { get; set; }
+        private HashSet<int> AttackerOriginalPawnIds { get; set; }
 
         private readonly List<AttackPawnCommand> OutgoingCommands = new List<AttackPawnCommand>(32);
         private readonly List<AttackPawnCommand> ScheduledHostCommands = new List<AttackPawnCommand>(32);
@@ -111,6 +113,7 @@ namespace RimWorldOnlineCity
                         connect.ErrorMessage = null;
                         AttackerReady = false;
                         _prepDialogShown = false;
+                        _pauseTimeSentToHost = false;
 
                         Loger.Log("Client GameAttack State 0");
                         var res = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
@@ -160,9 +163,14 @@ namespace RimWorldOnlineCity
                         });
 
                         AttackerOriginalPawnLabels = new List<string>(pawnsToSend.Count);
+                        AttackerOriginalPawnIds = new HashSet<int>();
                         for (int i = 0; i < pawnsToSend.Count; i++)
                         {
                             AttackerOriginalPawnLabels.Add(pawnsToSend[i].Name);
+                            if (pawnsToSend[i].OriginalID != 0)
+                            {
+                                AttackerOriginalPawnIds.Add(pawnsToSend[i].OriginalID);
+                            }
                         }
 
                         var response = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
@@ -251,35 +259,42 @@ namespace RimWorldOnlineCity
                             CheckDestroy = new Dictionary<int, Thing>(32);
                             CheckSpawn = new Dictionary<int, Thing>(32);
 
-                            for (int i = 0; i < thingCount; i++)
+                            using (GameUtils.NormalGameError())
                             {
-                                try
+                                for (int i = 0; i < thingCount; i++)
                                 {
-                                    var current = response.ThingCell[i]?.Get() ?? IntVec3.Invalid;
-                                    if (!current.InBounds(map)) continue;
-
-                                    var tt = response.Thing[i];
-                                    if (tt == null) continue;
-
-                                    var th = tt.CreateThing();
-                                    if (th == null || th is Blueprint || th is Frame || th is UnfinishedThing || th is Filth || th is Mote)
-                                        continue;
-
-                                    if (th is MinifiedThing minified && minified.InnerThing == null)
-                                        continue;
-
-                                    GenSpawn.Spawn(th, current, map, new Rot4(tt.Rotation), WipeMode.Vanish);
-
-                                    if (tt.OriginalID != 0 && th.thingIDNumber != 0)
+                                    try
                                     {
-                                        ThingsIDDicRev[tt.OriginalID] = th.thingIDNumber;
-                                        ThingsIDDic[th.thingIDNumber] = tt.OriginalID;
-                                        ThingsObjDic[th.thingIDNumber] = th;
+                                        var current = response.ThingCell[i]?.Get() ?? IntVec3.Invalid;
+                                        if (!current.InBounds(map)) continue;
+
+                                        var tt = response.Thing[i];
+                                        if (tt == null) continue;
+
+                                        // Пропускаємо трупи з ThingTrade, оскільки вони не містять InnerPawn і викликають помилки SpawnSetup
+                                        if (tt.Def != null && typeof(Corpse).IsAssignableFrom(tt.Def.thingClass))
+                                            continue;
+
+                                        var th = tt.CreateThing();
+                                        if (th == null || th is Corpse || th is Blueprint || th is Frame || th is UnfinishedThing || th is Filth || th is Mote)
+                                            continue;
+
+                                        if (th is MinifiedThing minified && minified.InnerThing == null)
+                                            continue;
+
+                                        GenSpawn.Spawn(th, current, map, new Rot4(tt.Rotation), WipeMode.Vanish);
+
+                                        if (tt.OriginalID != 0 && th.thingIDNumber != 0)
+                                        {
+                                            ThingsIDDicRev[tt.OriginalID] = th.thingIDNumber;
+                                            ThingsIDDic[th.thingIDNumber] = tt.OriginalID;
+                                            ThingsObjDic[th.thingIDNumber] = th;
+                                        }
                                     }
-                                }
-                                catch (Exception exThing)
-                                {
-                                    Loger.Log("Client CreateClearMap skip thing warning: " + exThing.Message, Loger.LogLevel.WARNING);
+                                    catch (Exception exThing)
+                                    {
+                                        Loger.Log("Client CreateClearMap skip thing warning: " + exThing.Message, Loger.LogLevel.WARNING);
+                                    }
                                 }
                             }
 
@@ -294,8 +309,8 @@ namespace RimWorldOnlineCity
 
                             PreparationEndTimeUtc = DateTime.UtcNow + DefaultPauseTimeToHost;
                             AttackUpdateTick = 0;
-                            AttackUpdate();
 
+                            // Запускаємо цикл оновлення через фоновий таймер, щоб не блокувати головний потік Unity у LongEventHandler
                             TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
                         });
                     }
@@ -351,7 +366,10 @@ namespace RimWorldOnlineCity
             var sendThings = new List<ThingEntry>(select.Count);
             for (int i = 0; i < select.Count; i++)
             {
-                sendThings.Add(ThingEntry.CreateEntry(select[i], 1));
+                var entry = ThingEntry.CreateEntry(select[i], 1);
+                if (entry.OriginalID == 0) entry.OriginalID = select[i].thingIDNumber;
+                entry.TransportID = entry.OriginalID;
+                sendThings.Add(entry);
             }
 
             try
@@ -610,10 +628,16 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
+                if (LongEventHandler.AnyEventNowOrWaiting)
+                {
+                    return;
+                }
+
                 bool isPrepPhase = DateTime.UtcNow < PreparationEndTimeUtc || !AttackerReady || !LockstepController.RemoteReady;
                 if (isPrepPhase)
                 {
-                    if (!Find.TickManager.Paused)
+                    GameAttackTrigger_Patch.ForceSpeed = 0f;
+                    if (Find.TickManager != null && !Find.TickManager.Paused)
                     {
                         ModBaseData.RunMainThread(() =>
                         {
@@ -627,7 +651,8 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    if (Find.TickManager.Paused || Find.TickManager.CurTimeSpeed != TimeSpeed.Normal)
+                    GameAttackTrigger_Patch.ForceSpeed = 1f;
+                    if (Find.TickManager != null && (Find.TickManager.Paused || Find.TickManager.CurTimeSpeed != TimeSpeed.Normal))
                     {
                         ModBaseData.RunMainThread(() =>
                         {
@@ -652,6 +677,7 @@ namespace RimWorldOnlineCity
                 if (!AttackerReady && AttackerPawns.Count >= AttackerOriginalPawnLabels.Count && AttackerOriginalPawnLabels.Count > 0)
                 {
                     AttackerReady = true;
+                    PreparationEndTimeUtc = DateTime.UtcNow + DefaultPauseTimeToHost;
                     SessionClientController.Data.DontCheckTimerFail = false;
 
                     ModBaseData.RunMainThreadSync(() =>
@@ -746,13 +772,24 @@ namespace RimWorldOnlineCity
                             }
                         }
 
+                        TimeSpan pauseToSend = TimeSpan.MinValue;
+                        if (AttackerReady && !_pauseTimeSentToHost)
+                        {
+                            _pauseTimeSentToHost = true;
+                            pauseToSend = DefaultPauseTimeToHost;
+                        }
+                        else if (AttackUpdateTick == 2)
+                        {
+                            pauseToSend = DefaultPauseTimeToHost;
+                        }
+
                         var toClient = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
                         {
                             State = 10,
                             CurrentBattleTick = LockstepController.LocalBattleTick,
                             AttackerReady = AttackerReady,
                             UpdateCommand = _commandsBuffer,
-                            SetPauseOnTimeToHost = AttackUpdateTick == 2 ? DefaultPauseTimeToHost : TimeSpan.MinValue,
+                            SetPauseOnTimeToHost = pauseToSend,
                             VictoryHostToHost = VictoryHostToHost,
                             NeedNewThingIDs = _needNewThingsBuffer,
                         });
@@ -784,11 +821,32 @@ namespace RimWorldOnlineCity
                                 {
                                     if (hasNewPawns && toClient.NewPawnsId != null)
                                     {
-                                        for (int i = 0; i < toClient.NewPawnsId.Count; i++)
+                                        int pairCount = Math.Min(toClient.NewPawns.Count, toClient.NewPawnsId.Count);
+                                        for (int i = 0; i < pairCount; i++)
                                         {
                                             var hostid = toClient.NewPawnsId[i];
                                             Thing thing = GetThingByHostId(hostid);
                                             if (thing != null) DestroyThing(thing, hostid);
+
+                                            var te = toClient.NewPawns[i];
+                                            if (te != null)
+                                            {
+                                                // КРИТИЧНЕ ВИПРАВЛЕННЯ: відновлюємо TransportID для пішаків нападника
+                                                // та записуємо актуальний hostid у te.OriginalID перед викликом SpawnList!
+                                                bool isAttackerPawn = te.TransportID != 0
+                                                    || (te.OriginalID != 0 && te.OriginalID != hostid)
+                                                    || (te.OriginalID != 0 && AttackerOriginalPawnIds != null && AttackerOriginalPawnIds.Contains(te.OriginalID));
+
+                                                if (isAttackerPawn)
+                                                {
+                                                    te.TransportID = te.OriginalID != 0 ? te.OriginalID : hostid;
+                                                }
+                                                else
+                                                {
+                                                    te.TransportID = 0;
+                                                }
+                                                te.OriginalID = hostid;
+                                            }
                                         }
 
                                         GameUtils.SpawnList(GameMap, toClient.NewPawns, false,
@@ -817,6 +875,24 @@ namespace RimWorldOnlineCity
                                                         AttackerPawns[p] = te.OriginalID;
                                                         if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
                                                         if (p.drafter != null) p.drafter.Drafted = true;
+
+                                                        // Гарантоване відкриття туману війни навколо заспавненого колоніста нападника
+                                                        try
+                                                        {
+                                                            if (GameMap.fogGrid != null)
+                                                            {
+                                                                FloodFillerFog.FloodUnfog(p.Position, GameMap);
+                                                                foreach (var adj in GenAdj.CellsAdjacent8Way(p))
+                                                                {
+                                                                    if (adj.InBounds(GameMap) && GameMap.fogGrid.IsFogged(adj))
+                                                                    {
+                                                                        FloodFillerFog.FloodUnfog(adj, GameMap);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        catch { }
+
                                                         p.jobs?.StartJob(new Job(JobDefOf.Wait_Combat)
                                                         {
                                                             playerForced = true,
@@ -827,6 +903,7 @@ namespace RimWorldOnlineCity
                                                         if (AttackerPawns.Count == 1)
                                                         {
                                                             CameraJumper.TryJump(p.Position, GameMap);
+                                                            Find.ColonistBar?.MarkColonistsDirty();
                                                         }
                                                     }
                                                     else if (p != null && p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
@@ -837,6 +914,8 @@ namespace RimWorldOnlineCity
                                                     }
                                                 }
                                             });
+
+                                        Find.ColonistBar?.MarkColonistsDirty();
                                     }
 
                                     if (hasNewCorpses)
