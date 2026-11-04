@@ -14,7 +14,7 @@ namespace RimWorldOnlineCity
 {
     /// <summary>
     /// Контролер сторони нападника в режимі Instanced Lockstep PvP («Гібридний міст»).
-    /// Працює в синхронному потоці тіків із детермінованим RNG та двостороннім обміном наказами.
+    /// Підтримує атаки як на поселення (BaseOnline), так і на каравани (CaravanOnline).
     /// </summary>
     public class GameAttacker
     {
@@ -39,6 +39,7 @@ namespace RimWorldOnlineCity
         public static GameAttacker Get => SessionClientController.Data.AttackModule;
 
         public bool TestMode { get; set; }
+        public bool IsCaravanTarget { get; private set; }
         public DateTime PreparationEndTimeUtc { get; private set; }
         public bool AttackerReady { get; private set; }
         private bool _prepDialogShown;
@@ -55,6 +56,9 @@ namespace RimWorldOnlineCity
         private Dictionary<Pawn, int> AttackerPawns { get; set; }
         private List<string> AttackerOriginalPawnLabels { get; set; }
         private HashSet<int> AttackerOriginalPawnIds { get; set; }
+
+        // Вікно інерції після руху для захисту від відкидання назад запізнілими пакетами UpdateState
+        private readonly Dictionary<int, long> _ignorePosSyncUntilTick = new Dictionary<int, long>(32);
 
         private readonly List<AttackPawnCommand> OutgoingCommands = new List<AttackPawnCommand>(32);
         private readonly List<AttackPawnCommand> ScheduledHostCommands = new List<AttackPawnCommand>(32);
@@ -74,6 +78,7 @@ namespace RimWorldOnlineCity
         private readonly object CheckSpawnDestroySync = new object();
 
         public bool VictoryHostToHost { get; set; }
+        private DateTime _victoryHostSentTimeUtc = DateTime.MinValue;
         public bool TerribleFatalError { get; set; }
 
         public bool IsMyPawn(Pawn pawn)
@@ -95,14 +100,20 @@ namespace RimWorldOnlineCity
 
         public void Start(Caravan caravan, BaseOnline attackedBase, bool testMode)
         {
+            Start(caravan, (CaravanOnline)attackedBase, testMode);
+        }
+
+        public void Start(Caravan caravan, CaravanOnline attackedTarget, bool testMode)
+        {
             ModBaseData.RunMainThreadSync(() => Find.TickManager?.Pause());
             SessionClientController.Data.DontCheckTimerFail = true;
             SessionClientController.SaveGameNowInEvent(false);
 
-            string hostLogin = attackedBase.Player.Public.Login;
-            long hostPlaceId = attackedBase.OnlineWObject.PlaceServerId;
+            IsCaravanTarget = !(attackedTarget is BaseOnline);
+            string hostLogin = attackedTarget.Player.Public.Login;
+            long hostPlaceId = attackedTarget.OnlineWObject.PlaceServerId;
             long initiatorPlaceId = UpdateWorldController.GetServerInfo(caravan).PlaceServerId;
-            int targetTile = attackedBase.Tile;
+            int targetTile = attackedTarget.Tile;
 
             LongEventHandler.QueueLongEvent(delegate
             {
@@ -114,8 +125,9 @@ namespace RimWorldOnlineCity
                         AttackerReady = false;
                         _prepDialogShown = false;
                         _pauseTimeSentToHost = false;
+                        _victoryHostSentTimeUtc = DateTime.MinValue;
 
-                        Loger.Log("Client GameAttack State 0");
+                        Loger.Log("Client GameAttack State 0 (IsCaravanTarget=" + IsCaravanTarget + ")");
                         var res = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
                         {
                             State = 0,
@@ -251,6 +263,7 @@ namespace RimWorldOnlineCity
                             ThingsIDDic = new Dictionary<int, int>(thingCount);
                             ThingsObjDic = new Dictionary<int, Thing>(thingCount);
                             AttackerPawns = new Dictionary<Pawn, int>(16);
+                            _ignorePosSyncUntilTick.Clear();
                             lock (CommandSync)
                             {
                                 OutgoingCommands.Clear();
@@ -466,6 +479,7 @@ namespace RimWorldOnlineCity
 
             if (toClient.UpdateState != null)
             {
+                long curTick = LockstepController.LocalBattleTick;
                 for (int i = 0; i < toClient.UpdateState.Count; i++)
                 {
                     var st = toClient.UpdateState[i];
@@ -481,17 +495,47 @@ namespace RimWorldOnlineCity
                             float distSq = p.Position.DistanceToSquared(targetCell);
                             bool sameHealthState = (int)p.health.State == (int)st.DownState;
 
-                            // Якщо пішак рухається своїм шляхом у межах допустимого вікна Lockstep, не смикаємо його координати
-                            if (sameHealthState && ((p.pather != null && p.pather.Moving && distSq <= 25f) || distSq <= 2f))
+                            if (sameHealthState)
                             {
-                                if (p.def.useHitPoints && st.HitPoints > 0)
+                                bool isMoving = p.pather != null && p.pather.Moving;
+                                if (isMoving)
                                 {
-                                    p.HitPoints = st.HitPoints;
+                                    _ignorePosSyncUntilTick[p.thingIDNumber] = curTick + 90;
+                                    if (distSq <= 36f)
+                                    {
+                                        if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                        continue;
+                                    }
                                 }
-                                continue;
+                                else
+                                {
+                                    if (_ignorePosSyncUntilTick.TryGetValue(p.thingIDNumber, out long ignoreUntil)
+                                        && curTick <= ignoreUntil
+                                        && distSq <= 36f)
+                                    {
+                                        if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                        continue;
+                                    }
+
+                                    if (AttackerPawns.ContainsKey(p) && distSq <= 4f)
+                                    {
+                                        if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                        continue;
+                                    }
+                                }
                             }
                         }
-                        GameUtils.ApplyState(thing, st);
+
+                        bool prevApplying = ApplyingRemoteCommand;
+                        ApplyingRemoteCommand = true;
+                        try
+                        {
+                            GameUtils.ApplyState(thing, st);
+                        }
+                        finally
+                        {
+                            ApplyingRemoteCommand = prevApplying;
+                        }
                     }
                     finally
                     {
@@ -518,6 +562,8 @@ namespace RimWorldOnlineCity
 
             try
             {
+                _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 90;
+
                 if (comm.Command == AttackPawnCommand.PawnCommand.SetDrafted)
                 {
                     if (pawn.drafter != null && pawn.drafter.Drafted != comm.DraftState)
@@ -649,8 +695,6 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                // Якщо Хост уже завершив відлік підготовки і почав рахувати бойові тіки (RemoteBattleTick > 0),
-                // миттєво знімаємо паузу і на клієнті нападника, усуваючи розбіжність годинників між ПК!
                 bool isPrepPhase = (DateTime.UtcNow < PreparationEndTimeUtc && LockstepController.RemoteBattleTick <= 0)
                     || !AttackerReady
                     || !LockstepController.RemoteReady;
@@ -812,6 +856,11 @@ namespace RimWorldOnlineCity
                             pauseToSend = DefaultPauseTimeToHost;
                         }
 
+                        if (VictoryHostToHost && _victoryHostSentTimeUtc == DateTime.MinValue)
+                        {
+                            _victoryHostSentTimeUtc = DateTime.UtcNow;
+                        }
+
                         var toClient = connect.AttackOnlineInitiator(new AttackInitiatorToSrv
                         {
                             State = 10,
@@ -848,193 +897,202 @@ namespace RimWorldOnlineCity
                             {
                                 ModBaseData.RunMainThreadSync(() =>
                                 {
-                                    if (hasNewPawns && toClient.NewPawnsId != null)
+                                    bool prevApplying = ApplyingRemoteCommand;
+                                    ApplyingRemoteCommand = true;
+                                    try
                                     {
-                                        var filteredPawns = new List<ThingEntry>(toClient.NewPawns.Count);
-                                        int pairCount = Math.Min(toClient.NewPawns.Count, toClient.NewPawnsId.Count);
-                                        for (int i = 0; i < pairCount; i++)
+                                        if (hasNewPawns && toClient.NewPawnsId != null)
                                         {
-                                            var hostid = toClient.NewPawnsId[i];
-                                            Thing existingThing = GetThingByHostId(hostid);
-
-                                            if (existingThing is Pawn existingPawn && existingPawn.Spawned && !existingPawn.Destroyed && !existingPawn.Dead)
+                                            var filteredPawns = new List<ThingEntry>(toClient.NewPawns.Count);
+                                            int pairCount = Math.Min(toClient.NewPawns.Count, toClient.NewPawnsId.Count);
+                                            for (int i = 0; i < pairCount; i++)
                                             {
-                                                continue;
-                                            }
+                                                var hostid = toClient.NewPawnsId[i];
+                                                Thing existingThing = GetThingByHostId(hostid);
 
-                                            if (existingThing != null) DestroyThing(existingThing, hostid);
-
-                                            var te = toClient.NewPawns[i];
-                                            if (te != null)
-                                            {
-                                                bool isAttackerPawn = te.TransportID != 0
-                                                    || (te.OriginalID != 0 && te.OriginalID != hostid)
-                                                    || (te.OriginalID != 0 && AttackerOriginalPawnIds != null && AttackerOriginalPawnIds.Contains(te.OriginalID));
-
-                                                if (isAttackerPawn)
+                                                if (existingThing is Pawn existingPawn && existingPawn.Spawned && !existingPawn.Destroyed && !existingPawn.Dead)
                                                 {
-                                                    te.TransportID = te.OriginalID != 0 ? te.OriginalID : hostid;
+                                                    continue;
                                                 }
-                                                else
-                                                {
-                                                    te.TransportID = 0;
-                                                }
-                                                te.OriginalID = hostid;
-                                                filteredPawns.Add(te);
-                                            }
-                                        }
 
-                                        if (filteredPawns.Count > 0)
-                                        {
-                                            GameUtils.SpawnList(GameMap, filteredPawns, false,
-                                                p => p.TransportID == 0,
-                                                (th, te) =>
+                                                if (existingThing != null) DestroyThing(existingThing, hostid);
+
+                                                var te = toClient.NewPawns[i];
+                                                if (te != null)
                                                 {
-                                                    CheckDestroy.Remove(th.thingIDNumber);
-                                                    var p = th as Pawn;
-                                                    if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                                    bool isAttackerPawn = te.TransportID != 0
+                                                        || (te.OriginalID != 0 && te.OriginalID != hostid)
+                                                        || (te.OriginalID != 0 && AttackerOriginalPawnIds != null && AttackerOriginalPawnIds.Contains(te.OriginalID));
+
+                                                    if (isAttackerPawn)
                                                     {
-                                                        ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
-                                                        ThingsIDDic[th.thingIDNumber] = te.OriginalID;
-                                                        ThingsObjDic[th.thingIDNumber] = th;
+                                                        te.TransportID = te.OriginalID != 0 ? te.OriginalID : hostid;
+                                                    }
+                                                    else
+                                                    {
+                                                        te.TransportID = 0;
+                                                    }
+                                                    te.OriginalID = hostid;
+                                                    filteredPawns.Add(te);
+                                                }
+                                            }
 
-                                                        if (te.TransportID != 0 && p != null)
+                                            if (filteredPawns.Count > 0)
+                                            {
+                                                GameUtils.SpawnList(GameMap, filteredPawns, false,
+                                                    p => p.TransportID == 0,
+                                                    (th, te) =>
+                                                    {
+                                                        CheckDestroy.Remove(th.thingIDNumber);
+                                                        var p = th as Pawn;
+                                                        if (te.OriginalID != 0 && th.thingIDNumber != 0)
                                                         {
-                                                            if (p.Faction != Faction.OfPlayer)
-                                                            {
-                                                                p.SetFaction(Faction.OfPlayer);
-                                                            }
-                                                            if (p.jobs != null && p.jobs.jobQueue == null)
-                                                            {
-                                                                p.jobs.jobQueue = new JobQueue();
-                                                            }
+                                                            ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
+                                                            ThingsIDDic[th.thingIDNumber] = te.OriginalID;
+                                                            ThingsObjDic[th.thingIDNumber] = th;
 
-                                                            AttackerPawns[p] = te.OriginalID;
-                                                            if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
-                                                            if (p.drafter != null) p.drafter.Drafted = true;
-
-                                                            try
+                                                            if (te.TransportID != 0 && p != null)
                                                             {
-                                                                if (GameMap.fogGrid != null)
+                                                                if (p.Faction != Faction.OfPlayer)
                                                                 {
-                                                                    FloodFillerFog.FloodUnfog(p.Position, GameMap);
-                                                                    foreach (var adj in GenAdj.CellsAdjacent8Way(p))
+                                                                    p.SetFaction(Faction.OfPlayer);
+                                                                }
+                                                                if (p.jobs != null && p.jobs.jobQueue == null)
+                                                                {
+                                                                    p.jobs.jobQueue = new JobQueue();
+                                                                }
+
+                                                                AttackerPawns[p] = te.OriginalID;
+                                                                if (p.playerSettings != null) p.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
+                                                                if (p.drafter != null) p.drafter.Drafted = true;
+
+                                                                try
+                                                                {
+                                                                    if (GameMap.fogGrid != null)
                                                                     {
-                                                                        if (adj.InBounds(GameMap) && GameMap.fogGrid.IsFogged(adj))
+                                                                        FloodFillerFog.FloodUnfog(p.Position, GameMap);
+                                                                        foreach (var adj in GenAdj.CellsAdjacent8Way(p))
                                                                         {
-                                                                            FloodFillerFog.FloodUnfog(adj, GameMap);
+                                                                            if (adj.InBounds(GameMap) && GameMap.fogGrid.IsFogged(adj))
+                                                                            {
+                                                                                FloodFillerFog.FloodUnfog(adj, GameMap);
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
-                                                            }
-                                                            catch { }
+                                                                catch { }
 
-                                                            p.jobs?.StartJob(new Job(JobDefOf.Wait_Combat)
-                                                            {
-                                                                playerForced = true,
-                                                                expiryInterval = int.MaxValue,
-                                                                checkOverrideOnExpire = false,
-                                                            }, JobCondition.InterruptForced);
-
-                                                            if (AttackerPawns.Count == 1)
-                                                            {
-                                                                CameraJumper.TryJump(new GlobalTargetInfo(p.Position, GameMap));
-                                                                Find.ColonistBar?.MarkColonistsDirty();
-                                                            }
-                                                        }
-                                                        else if (p != null)
-                                                        {
-                                                            if (p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
-                                                            {
-                                                                var hostileFac = SessionClientController.Data?.FactionPirate
-                                                                    ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
-                                                                p.SetFaction(hostileFac);
-                                                            }
-                                                            if (!p.Dead && !p.Downed && p.jobs != null)
-                                                            {
-                                                                p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                                p.jobs?.StartJob(new Job(JobDefOf.Wait_Combat)
                                                                 {
                                                                     playerForced = true,
                                                                     expiryInterval = int.MaxValue,
                                                                     checkOverrideOnExpire = false,
                                                                 }, JobCondition.InterruptForced);
+
+                                                                if (AttackerPawns.Count == 1)
+                                                                {
+                                                                    CameraJumper.TryJump(new GlobalTargetInfo(p.Position, GameMap));
+                                                                    Find.ColonistBar?.MarkColonistsDirty();
+                                                                }
+                                                            }
+                                                            else if (p != null)
+                                                            {
+                                                                if (p.def.CanHaveFaction && p.Faction != null && p.Faction.IsPlayer)
+                                                                {
+                                                                    var hostileFac = SessionClientController.Data?.FactionPirate
+                                                                        ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+                                                                    p.SetFaction(hostileFac);
+                                                                }
+                                                                if (!p.Dead && !p.Downed && p.jobs != null)
+                                                                {
+                                                                    p.jobs.StartJob(new Job(JobDefOf.Wait_Combat)
+                                                                    {
+                                                                        playerForced = true,
+                                                                        expiryInterval = int.MaxValue,
+                                                                        checkOverrideOnExpire = false,
+                                                                    }, JobCondition.InterruptForced);
+                                                                }
                                                             }
                                                         }
+                                                    });
+
+                                                Find.ColonistBar?.MarkColonistsDirty();
+                                            }
+                                        }
+
+                                        if (hasNewCorpses)
+                                        {
+                                            for (int i = 0; i < toClient.NewCorpses.Count; i++)
+                                            {
+                                                var hostid = toClient.NewCorpses[i].PawnId;
+                                                Thing thing = GetThingByHostId(hostid);
+                                                if (thing != null) DestroyThing(thing, hostid);
+
+                                                var corpseHostId = toClient.NewCorpses[i].CorpseId;
+                                                Thing cThing = GetThingByHostId(corpseHostId);
+                                                if (cThing != null) DestroyThing(cThing, corpseHostId);
+                                            }
+
+                                            _corpseListBuffer.Clear();
+                                            for (int i = 0; i < toClient.NewCorpses.Count; i++)
+                                            {
+                                                _corpseListBuffer.Add(toClient.NewCorpses[i].CorpseWithPawn);
+                                            }
+
+                                            GameUtils.SpawnList(GameMap, _corpseListBuffer, false,
+                                                p => p.TransportID == 0,
+                                                (th, te) =>
+                                                {
+                                                    int corpsId = 0;
+                                                    lock (CheckSpawnDestroySync)
+                                                    {
+                                                        foreach (var cs in CheckSpawn)
+                                                        {
+                                                            if (cs.Value is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.thingIDNumber == th.thingIDNumber)
+                                                            {
+                                                                corpsId = cs.Key;
+                                                                break;
+                                                            }
+                                                        }
+                                                        CheckDestroy.Remove(th.thingIDNumber);
+                                                        if (corpsId != 0) CheckDestroy.Remove(corpsId);
+                                                    }
+
+                                                    if (te.OriginalID != 0 && corpsId != 0)
+                                                    {
+                                                        ThingsIDDicRev[te.OriginalID] = corpsId;
+                                                        ThingsIDDic[corpsId] = te.OriginalID;
+                                                        ThingsObjDic[corpsId] = th;
                                                     }
                                                 });
-
-                                            Find.ColonistBar?.MarkColonistsDirty();
                                         }
-                                    }
 
-                                    if (hasNewCorpses)
-                                    {
-                                        for (int i = 0; i < toClient.NewCorpses.Count; i++)
+                                        if (hasNewThings && toClient.NewThingsId != null)
                                         {
-                                            var hostid = toClient.NewCorpses[i].PawnId;
-                                            Thing thing = GetThingByHostId(hostid);
-                                            if (thing != null) DestroyThing(thing, hostid);
-
-                                            var corpseHostId = toClient.NewCorpses[i].CorpseId;
-                                            Thing cThing = GetThingByHostId(corpseHostId);
-                                            if (cThing != null) DestroyThing(cThing, corpseHostId);
-                                        }
-
-                                        _corpseListBuffer.Clear();
-                                        for (int i = 0; i < toClient.NewCorpses.Count; i++)
-                                        {
-                                            _corpseListBuffer.Add(toClient.NewCorpses[i].CorpseWithPawn);
-                                        }
-
-                                        GameUtils.SpawnList(GameMap, _corpseListBuffer, false,
-                                            p => p.TransportID == 0,
-                                            (th, te) =>
+                                            for (int i = 0; i < toClient.NewThingsId.Count; i++)
                                             {
-                                                int corpsId = 0;
-                                                lock (CheckSpawnDestroySync)
+                                                var hostid = toClient.NewThingsId[i];
+                                                Thing thing = GetThingByHostId(hostid);
+                                                if (thing != null) DestroyThing(thing, hostid);
+                                            }
+
+                                            GameUtils.SpawnList(GameMap, toClient.NewThings, false,
+                                                p => false,
+                                                (th, te) =>
                                                 {
-                                                    foreach (var cs in CheckSpawn)
-                                                    {
-                                                        if (cs.Value is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.thingIDNumber == th.thingIDNumber)
-                                                        {
-                                                            corpsId = cs.Key;
-                                                            break;
-                                                        }
-                                                    }
                                                     CheckDestroy.Remove(th.thingIDNumber);
-                                                    if (corpsId != 0) CheckDestroy.Remove(corpsId);
-                                                }
-
-                                                if (te.OriginalID != 0 && corpsId != 0)
-                                                {
-                                                    ThingsIDDicRev[te.OriginalID] = corpsId;
-                                                    ThingsIDDic[corpsId] = te.OriginalID;
-                                                    ThingsObjDic[corpsId] = th;
-                                                }
-                                            });
-                                    }
-
-                                    if (hasNewThings && toClient.NewThingsId != null)
-                                    {
-                                        for (int i = 0; i < toClient.NewThingsId.Count; i++)
-                                        {
-                                            var hostid = toClient.NewThingsId[i];
-                                            Thing thing = GetThingByHostId(hostid);
-                                            if (thing != null) DestroyThing(thing, hostid);
+                                                    if (te.OriginalID != 0 && th.thingIDNumber != 0)
+                                                    {
+                                                        ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
+                                                        ThingsIDDic[th.thingIDNumber] = te.OriginalID;
+                                                        ThingsObjDic[th.thingIDNumber] = th;
+                                                    }
+                                                });
                                         }
-
-                                        GameUtils.SpawnList(GameMap, toClient.NewThings, false,
-                                            p => false,
-                                            (th, te) =>
-                                            {
-                                                CheckDestroy.Remove(th.thingIDNumber);
-                                                if (te.OriginalID != 0 && th.thingIDNumber != 0)
-                                                {
-                                                    ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
-                                                    ThingsIDDic[th.thingIDNumber] = te.OriginalID;
-                                                    ThingsObjDic[th.thingIDNumber] = th;
-                                                }
-                                            });
+                                    }
+                                    finally
+                                    {
+                                        ApplyingRemoteCommand = prevApplying;
                                     }
 
                                     ApplyStateAndDeletions(toClient);
@@ -1052,7 +1110,10 @@ namespace RimWorldOnlineCity
                             InTimer = false;
                         }
 
-                        if (toClient.Finishing) Finish(toClient.VictoryAttacker);
+                        if (toClient.Finishing || (VictoryHostToHost && _victoryHostSentTimeUtc != DateTime.MinValue && (DateTime.UtcNow - _victoryHostSentTimeUtc).TotalSeconds > 2.0))
+                        {
+                            Finish(toClient.Finishing ? toClient.VictoryAttacker : false);
+                        }
                     }
                     catch (Exception ext)
                     {
@@ -1089,12 +1150,20 @@ namespace RimWorldOnlineCity
         {
             if (ApplyingRemoteCommand || job == null || pawn == null) return;
 
-            if (!job.playerForced && job.def != JobDefOf.AttackStatic && job.def != JobDefOf.AttackMelee && job.def != JobDefOf.Wait_Combat)
+            if (job.def == JobDefOf.Wait_Combat || job.def == JobDefOf.Wait || job.def == JobDefOf.Wait_MaintainPosture || job.def == JobDefOf.GotoWander)
+            {
+                if (!job.playerForced) return;
+            }
+            else if (!job.playerForced && job.def != JobDefOf.AttackStatic && job.def != JobDefOf.AttackMelee)
+            {
                 return;
+            }
 
             try
             {
                 if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
+
+                _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 120;
 
                 var comm = new AttackPawnCommand
                 {
@@ -1280,8 +1349,10 @@ namespace RimWorldOnlineCity
         {
             ModBaseData.RunMainThreadSync(() =>
             {
+                if (SessionClientController.Data?.AttackModule != this) return;
+
                 Find.TickManager.Pause();
-                Loger.Log("Client AttackerFinish");
+                Loger.Log("Client AttackerFinish (victoryAttacker=" + victoryAttacker + ", IsCaravanTarget=" + IsCaravanTarget + ")");
 
                 Clear();
 
@@ -1298,8 +1369,9 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                if (victoryAttacker)
+                if (victoryAttacker && !IsCaravanTarget)
                 {
+                    // Перемога над поселенням: карта переходить у власність нападника
                     var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
                     for (int i = 0; i < mapPawnsA.Count; i++)
                     {
@@ -1308,8 +1380,129 @@ namespace RimWorldOnlineCity
                         pawn.SetFaction(null);
                     }
                 }
+                else if (victoryAttacker && IsCaravanTarget)
+                {
+                    // Перемога над караваном: збираємо всіх живих колоністів/тварин нападника + трофеї з карти і формуємо караван
+                    var listPawn = new List<Pawn>(AttackerPawns.Count);
+                    foreach (var pawn in AttackerPawns.Keys)
+                    {
+                        if (pawn != null && !pawn.Dead && !pawn.Destroyed)
+                        {
+                            if (pawn.carryTracker?.CarriedThing != null && pawn.inventory?.innerContainer != null)
+                            {
+                                pawn.carryTracker.innerContainer.TryTransferAllToContainer(pawn.inventory.innerContainer);
+                            }
+                            listPawn.Add(pawn);
+                        }
+                    }
+
+                    // Збираємо трофеї з повалених/мертвих ворогів та речі на землі
+                    var lootThings = new List<Thing>();
+                    if (GameMap != null)
+                    {
+                        var allThings = GameMap.listerThings.AllThings;
+                        for (int i = allThings.Count - 1; i >= 0; i--)
+                        {
+                            var th = allThings[i];
+                            if (th == null || th.Destroyed) continue;
+
+                            if (th is Corpse corpse && corpse.InnerPawn != null && !AttackerPawns.ContainsKey(corpse.InnerPawn))
+                            {
+                                var innerP = corpse.InnerPawn;
+                                if (innerP.equipment?.AllEquipmentListForReading != null)
+                                {
+                                    for (int e = innerP.equipment.AllEquipmentListForReading.Count - 1; e >= 0; e--)
+                                    {
+                                        var eq = innerP.equipment.AllEquipmentListForReading[e];
+                                        innerP.equipment.Remove(eq);
+                                        lootThings.Add(eq);
+                                    }
+                                }
+                                if (innerP.apparel?.WornApparel != null)
+                                {
+                                    for (int a = innerP.apparel.WornApparel.Count - 1; a >= 0; a--)
+                                    {
+                                        var ap = innerP.apparel.WornApparel[a];
+                                        innerP.apparel.Remove(ap);
+                                        lootThings.Add(ap);
+                                    }
+                                }
+                                if (innerP.inventory?.innerContainer != null)
+                                {
+                                    for (int inv = innerP.inventory.innerContainer.Count - 1; inv >= 0; inv--)
+                                    {
+                                        var item = innerP.inventory.innerContainer[inv];
+                                        innerP.inventory.innerContainer.Remove(item);
+                                        lootThings.Add(item);
+                                    }
+                                }
+                            }
+                            else if (th.def.category == ThingCategory.Item && !(th is Corpse))
+                            {
+                                if (th.Spawned) th.DeSpawn();
+                                lootThings.Add(th);
+                            }
+                        }
+
+                        var allPawns = GameMap.mapPawns.AllPawnsSpawned;
+                        for (int i = allPawns.Count - 1; i >= 0; i--)
+                        {
+                            var p = allPawns[i];
+                            if (p != null && !AttackerPawns.ContainsKey(p))
+                            {
+                                if (p.equipment?.AllEquipmentListForReading != null)
+                                {
+                                    for (int e = p.equipment.AllEquipmentListForReading.Count - 1; e >= 0; e--)
+                                    {
+                                        var eq = p.equipment.AllEquipmentListForReading[e];
+                                        p.equipment.Remove(eq);
+                                        lootThings.Add(eq);
+                                    }
+                                }
+                                if (p.inventory?.innerContainer != null)
+                                {
+                                    for (int inv = p.inventory.innerContainer.Count - 1; inv >= 0; inv--)
+                                    {
+                                        var item = p.inventory.innerContainer[inv];
+                                        p.inventory.innerContainer.Remove(item);
+                                        lootThings.Add(item);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    int mapTile = GameMap.Tile;
+                    Caravan newCaravan = null;
+                    if (listPawn.Count > 0)
+                    {
+                        newCaravan = CaravanMaker.MakeCaravan(listPawn, Faction.OfPlayer, mapTile, false);
+                        for (int i = 0; i < lootThings.Count; i++)
+                        {
+                            var item = lootThings[i];
+                            if (item == null || item.Destroyed) continue;
+                            var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, newCaravan.PawnsListForReading, null);
+                            if (recipient?.inventory?.innerContainer != null)
+                            {
+                                recipient.inventory.innerContainer.TryAdd(item, true);
+                            }
+                        }
+                    }
+
+                    GameUtils.DeinitAndRemoveMapSafe(GameMap);
+
+                    for (int i = 0; i < listPawn.Count; i++)
+                    {
+                        var pawn = listPawn[i];
+                        if (!pawn.IsWorldPawn())
+                        {
+                            Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
+                        }
+                    }
+                }
                 else
                 {
+                    // Поразка або відступ: повертаємо в караван усіх не збитих з ніг колоністів із прикордонної зони
                     var listPawn = new List<Pawn>(AttackerPawns.Count);
                     foreach (var pawn in AttackerPawns.Keys)
                     {

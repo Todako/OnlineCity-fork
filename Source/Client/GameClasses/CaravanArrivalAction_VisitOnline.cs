@@ -3,10 +3,6 @@ using OCUnion;
 using RimWorld;
 using RimWorld.Planet;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading;
 using Verse;
 
 namespace RimWorldOnlineCity
@@ -26,7 +22,6 @@ namespace RimWorldOnlineCity
             this.mode = mode;
         }
 
-        // Приклад: відвідати
         public override string Label
         {
             get
@@ -39,14 +34,7 @@ namespace RimWorldOnlineCity
             }
         }
 
-        // Приклад: відвідує
-        public override string ReportString
-        {
-            get
-            {
-                return Label;
-            }
-        }
+        public override string ReportString => Label;
 
         public override void Arrived(Caravan caravan)
         {
@@ -62,22 +50,28 @@ namespace RimWorldOnlineCity
 
         private void attack(Caravan caravan)
         {
-            Find.TickManager.Pause();
-            Action<bool> att = (testMode) =>
-            {
-                if (GameAttacker.Create())
-                {
-                    GameAttacker.Get.Start(caravan, (BaseOnline)сaravanOnline, testMode);
-                }
-            };
+            if (сaravanOnline == null || caravan == null) return;
 
-            GameUtils.ShowDialodOKCancel("OCity_Caravan_Go_Attack_Target".Translate() + " " + сaravanOnline.Label
-                , "OCity_Caravan_Confirm_Attack_TestBattle_Possible".Translate()
-                , () => att(false)
-                , () => { }
-                , null
-                , "OCity_Caravan_Practive".Translate()
-                , () => att(true)
+            Find.TickManager.Pause();
+
+            // Залишаємо лише перше речення з питанням підтвердження атаки (без згадки про тренувальний бій)
+            string rawConfirmText = "OCity_Caravan_Confirm_Attack_TestBattle_Possible".Translate().ToString();
+            int qIdx = rawConfirmText.IndexOf('?');
+            string confirmText = qIdx >= 0
+                ? rawConfirmText.Substring(0, qIdx + 1)
+                : ("OCity_Caravan_Go_Attack_Target".Translate(сaravanOnline.Label).ToString() + "?");
+
+            GameUtils.ShowDialodOKCancel(
+                "OCity_Caravan_Go_Attack_Target".Translate(сaravanOnline.Label),
+                confirmText,
+                () =>
+                {
+                    if (GameAttacker.Create())
+                    {
+                        GameAttacker.Get.Start(caravan, сaravanOnline, false);
+                    }
+                },
+                () => { }
             );
         }
     }

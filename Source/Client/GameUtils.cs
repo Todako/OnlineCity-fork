@@ -596,10 +596,6 @@ namespace RimWorldOnlineCity
             && !errorText.Contains("PostLoadInit on RimWorld.Pawn_IdeoTracker: System.NullReferenceException")
             );
 
-        /// <summary>
-        /// Оновлює loadID для всіх Hediff та Gene у десеріалізованого з чужого світу пішака,
-        /// щоб уникнути помилок DebugLoadIDsSavingErrorsChecker під час збереження гри.
-        /// </summary>
         public static void ReassignUniquePawnSubIds(Pawn pawn)
         {
             if (pawn == null || Find.UniqueIDsManager == null) return;
@@ -970,18 +966,17 @@ namespace RimWorldOnlineCity
                             pawn.Position = targetPos;
                             pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
                         }
-                        else if (distSq > 1.5f)
+                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving && pawn.jobs != null)
                         {
-                            // Якщо пішак не рухається локально, запускаємо плавний крок через PathFollower замість миттєвого телепорту
-                            if (pawn.pather != null && !pawn.pather.Moving)
+                            // Замість миттєвої зміни координат запускаємо плавний JobDefOf.Goto,
+                            // щоб PawnTweener плавно анімував переміщення між клітинками
+                            var gotoJob = new Job(JobDefOf.Goto, targetPos)
                             {
-                                pawn.pather.StartPath(targetPos, PathEndMode.OnCell);
-                            }
-                            else if (pawn.pather != null && pawn.pather.Moving && distSq > 25f)
-                            {
-                                pawn.Position = targetPos;
-                                pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: false);
-                            }
+                                playerForced = false,
+                                expiryInterval = 240,
+                                checkOverrideOnExpire = true
+                            };
+                            pawn.jobs.StartJob(gotoJob, JobCondition.InterruptForced);
                         }
                     }
                     else
@@ -990,7 +985,7 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                if (thing.Rotation.AsByte != state.Rotation)
+                if (thing.Rotation.AsByte != state.Rotation && (!(thing is Pawn pRot) || pRot.pather == null || !pRot.pather.Moving))
                 {
                     thing.Rotation = new Rot4(state.Rotation);
                 }
@@ -1081,7 +1076,6 @@ namespace RimWorldOnlineCity
 
             lock (DialodQueue)
             {
-                // Якщо попереднє вікно було закрите клавішею Esc, скидаємо прапорець блокування черги
                 if (DialodShowing && Find.WindowStack != null && !Find.WindowStack.IsOpen<Dialog_NodeTreeWithFactionInfo>())
                 {
                     DialodShowing = false;

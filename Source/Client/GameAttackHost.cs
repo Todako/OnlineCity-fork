@@ -14,8 +14,7 @@ namespace RimWorldOnlineCity
 {
     /// <summary>
     /// Контролер сторони захисника (хоста) в онлайн-битві PvP («Гібридний міст» / Instanced Lockstep).
-    /// Передає початковий стан карти, синхронізує команди обох гравців за тактами симуляції
-    /// та контролює життєвий цикл об'єктів на карті бою.
+    /// Підтримує захист як власного поселення (MapParent), так і власного каравану на глобальній карті (Caravan).
     /// </summary>
     public class GameAttackHost
     {
@@ -57,6 +56,7 @@ namespace RimWorldOnlineCity
 
         public long AttackUpdateTick { get; set; }
         private Map GameMap { get; set; }
+        private bool _isTemporaryCaravanMap = false;
 
         private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
 
@@ -64,7 +64,6 @@ namespace RimWorldOnlineCity
         private HashSet<Thing> ThingPrepareChange0 = new HashSet<Thing>();
 
         public DateTime CurrentPauseToTime;
-        // Використовуємо синхронізований із сервером час, щоб уникнути розбіжності годинників між ПК гравців
         public bool IsPause => CurrentPauseToTime > (DateTime.UtcNow + SessionClientController.ServerTimeDelta);
 
         public bool HostPawnMoveSpeedActive => false;
@@ -158,6 +157,7 @@ namespace RimWorldOnlineCity
             if (_battleSeed == 0) _battleSeed = 1936507579;
             LockstepController.Reset(_battleSeed);
             _localSceneReady = false;
+            _isTemporaryCaravanMap = false;
 
             Loger.Log($"Client GameAttackHost Start 2 {HostPlaceServerId} TestMode={TestMode} Seed={_battleSeed}");
 
@@ -172,8 +172,42 @@ namespace RimWorldOnlineCity
                 CurrentPauseToTime = DateTime.UtcNow + SessionClientController.ServerTimeDelta + TimeSpan.FromMinutes(5);
                 Loger.Log("HostAttackUpdate Set 1 CurrentPauseToTime=" + CurrentPauseToTime.ToGoodUtcString());
 
-                var hostPlace = UpdateWorldController.GetWOByServerId(HostPlaceServerId) as MapParent;
-                GameMap = hostPlace.Map;
+                var hostWorldObj = UpdateWorldController.GetWOByServerId(HostPlaceServerId);
+                if (hostWorldObj is MapParent hostPlace && hostPlace.Map != null)
+                {
+                    _isTemporaryCaravanMap = false;
+                    GameMap = hostPlace.Map;
+                }
+                else if (hostWorldObj is Caravan hostCaravan)
+                {
+                    // Якщо атакували наш караван — генеруємо тактичну карту зустрічі (Ambush 150x150) і розгортаємо караван у центрі
+                    _isTemporaryCaravanMap = true;
+                    int caravanTile = hostCaravan.Tile;
+                    Rand.PushState();
+                    try
+                    {
+                        TileFinder_IsValidTileForNewSettlement_Patch.Off = true;
+                        Rand.Seed = Gen.HashCombineInt(Find.World.info.Seed, caravanTile);
+
+                        var ambushParent = (MapParent)WorldObjectMaker.MakeWorldObject(WorldObjectDefOf.Ambush);
+                        ambushParent.Tile = caravanTile;
+                        Find.WorldObjects.Add(ambushParent);
+                        ambushParent.SetFaction(Faction.OfPlayer);
+
+                        GameMap = MapGenerator.GenerateMap(new IntVec3(150, 1, 150), ambushParent, ambushParent.MapGeneratorDef, ambushParent.ExtraGenStepDefs, null);
+                        CaravanEnterMapUtility.Enter(hostCaravan, GameMap, CaravanEnterMode.Center, CaravanDropInventoryMode.DoNotDrop, draftColonists: true);
+                    }
+                    finally
+                    {
+                        TileFinder_IsValidTileForNewSettlement_Patch.Off = false;
+                        Rand.PopState();
+                    }
+                }
+                else
+                {
+                    ErrorBreak("Target WorldObject not found for PlaceServerId=" + HostPlaceServerId);
+                    return;
+                }
 
                 var toSrvMap = new AttackHostToSrv
                 {
@@ -278,7 +312,6 @@ namespace RimWorldOnlineCity
                             AttackingPawnDic[pawn.thingIDNumber] = origId;
                             AttackingPawnsLastPos[pawn] = pawn.Position;
 
-                            // Призначаємо Wait_Combat одразу при спавні, щоб ванільний ШІ піратів не скеровував їх за край карти
                             if (!pawn.Dead && !pawn.Downed && pawn.jobs != null)
                             {
                                 if (pawn.jobs.jobQueue == null) pawn.jobs.jobQueue = new JobQueue();
@@ -305,7 +338,6 @@ namespace RimWorldOnlineCity
 
                     ModBaseData.RunMainThreadSync(() =>
                     {
-                        // Примусово закриваємо глобальну карту планети (якщо відкрита) і наводимо камеру на точку вторгнення
                         CameraJumper.TryJump(new GlobalTargetInfo(mainCann, GameMap));
                     });
 
@@ -345,6 +377,8 @@ namespace RimWorldOnlineCity
         {
             ModBaseData.RunMainThreadSync(() =>
             {
+                if (SessionClientController.Data?.AttackUsModule != this) return;
+
                 Find.TickManager.Pause();
                 Clear();
 
@@ -363,7 +397,84 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
-                if (victoryAttacker)
+                if (_isTemporaryCaravanMap && GameMap != null)
+                {
+                    int mapTile = GameMap.Tile;
+
+                    if (!victoryAttacker)
+                    {
+                        // Захисник каравану переміг: видаляємо відступивших ворогів, збираємо своїх колоністів/тварин + трофеї у караван
+                        if (AttackingPawns != null)
+                        {
+                            foreach (var enemy in AttackingPawns)
+                            {
+                                if (enemy != null && !enemy.Dead && !enemy.Downed &&
+                                    (enemy.Position.x < MapBorder || enemy.Position.x > GameMap.Size.x - 1 - MapBorder
+                                     || enemy.Position.z < MapBorder || enemy.Position.z > GameMap.Size.z - 1 - MapBorder))
+                                {
+                                    GameUtils.PawnDestroy(enemy);
+                                }
+                            }
+                        }
+
+                        var hostPawnsToPack = new List<Pawn>();
+                        var spawnedPawns = GameMap.mapPawns.AllPawnsSpawned;
+                        for (int i = 0; i < spawnedPawns.Count; i++)
+                        {
+                            var p = spawnedPawns[i];
+                            if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer
+                                && (AttackingPawns == null || !AttackingPawns.Contains(p)))
+                            {
+                                if (p.carryTracker?.CarriedThing != null && p.inventory?.innerContainer != null)
+                                {
+                                    p.carryTracker.innerContainer.TryTransferAllToContainer(p.inventory.innerContainer);
+                                }
+                                hostPawnsToPack.Add(p);
+                            }
+                        }
+
+                        var lootThings = new List<Thing>();
+                        var allThings = GameMap.listerThings.AllThings;
+                        for (int i = allThings.Count - 1; i >= 0; i--)
+                        {
+                            var th = allThings[i];
+                            if (th == null || th.Destroyed) continue;
+                            if (th.def.category == ThingCategory.Item && !(th is Corpse))
+                            {
+                                if (th.Spawned) th.DeSpawn();
+                                lootThings.Add(th);
+                            }
+                        }
+
+                        if (hostPawnsToPack.Count > 0)
+                        {
+                            var restoredCaravan = CaravanMaker.MakeCaravan(hostPawnsToPack, Faction.OfPlayer, mapTile, false);
+                            for (int i = 0; i < lootThings.Count; i++)
+                            {
+                                var item = lootThings[i];
+                                if (item == null || item.Destroyed) continue;
+                                var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, restoredCaravan.PawnsListForReading, null);
+                                if (recipient?.inventory?.innerContainer != null)
+                                {
+                                    recipient.inventory.innerContainer.TryAdd(item, true);
+                                }
+                            }
+                        }
+
+                        for (int i = 0; i < hostPawnsToPack.Count; i++)
+                        {
+                            var pawn = hostPawnsToPack[i];
+                            if (!pawn.IsWorldPawn())
+                            {
+                                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
+                            }
+                        }
+                    }
+
+                    // Знищуємо тимчасову карту бою каравану в обох випадках (і при перемозі, і при поразці)
+                    GameUtils.DeinitAndRemoveMapSafe(GameMap);
+                }
+                else if (victoryAttacker)
                 {
                     if (GameMap?.Parent != null)
                     {
@@ -863,6 +974,14 @@ namespace RimWorldOnlineCity
                             if (toClient.VictoryHost)
                             {
                                 ConfirmedVictoryAttacker = false;
+                                connect.AttackOnlineHost(new AttackHostToSrv
+                                {
+                                    State = 10,
+                                    BattleSeed = _battleSeed,
+                                    CurrentBattleTick = LockstepController.LocalBattleTick,
+                                    HostReady = _localSceneReady,
+                                    VictoryAttacker = false
+                                });
                             }
 
                             if (ConfirmedVictoryAttacker != null)
@@ -1040,7 +1159,6 @@ namespace RimWorldOnlineCity
 
         private void ApplyAttackingPawnJob(Pawn pawn, AttackPawnCommand explicitComm = null)
         {
-            // КРИТИЧНО: не призначаємо жодних робіт збитим з ніг (Downed) або мертвим пішакам
             if (pawn == null || pawn.Dead || pawn.Downed || pawn.Destroyed || !pawn.Spawned) return;
 
             bool prevDisable = UIEventNewJobDisable;
@@ -1327,10 +1445,26 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                if (!AttackingPawnDic.ContainsKey(pawnId))
+                if (!AttackingPawnDic.ContainsKey(pawnId) && job.def != null)
                 {
-                    if (job.playerForced && job.def != null
-                        && job.def != JobDefOf.Wait_Combat && job.def != JobDefOf.Wait)
+                    bool isIdleWait = job.def == JobDefOf.Wait_Combat
+                        || job.def == JobDefOf.Wait
+                        || job.def == JobDefOf.Wait_MaintainPosture
+                        || job.def == JobDefOf.Wait_Wander
+                        || job.def == JobDefOf.GotoWander;
+
+                    bool shouldSync = (job.playerForced && !isIdleWait)
+                        || job.def == JobDefOf.Goto
+                        || job.def == JobDefOf.AttackMelee
+                        || job.def == JobDefOf.AttackStatic
+                        || job.def == JobDefOf.Flee
+                        || job.def == JobDefOf.FleeAndCower
+                        || job.def == JobDefOf.Follow
+                        || job.def == JobDefOf.FollowClose
+                        || job.def == JobDefOf.Rescue
+                        || job.def == JobDefOf.TendPatient;
+
+                    if (shouldSync)
                     {
                         var hostCmd = new AttackPawnCommand
                         {
@@ -1354,6 +1488,17 @@ namespace RimWorldOnlineCity
 
                         lock (_commandsSync)
                         {
+                            if (_outgoingHostCommands.Count > 0)
+                            {
+                                var last = _outgoingHostCommands[_outgoingHostCommands.Count - 1];
+                                if (last.HostPawnID == hostCmd.HostPawnID
+                                    && last.JobDefName == hostCmd.JobDefName
+                                    && last.TargetID == hostCmd.TargetID
+                                    && last.ScheduledTick == hostCmd.ScheduledTick)
+                                {
+                                    return;
+                                }
+                            }
                             _outgoingHostCommands.Add(hostCmd);
                         }
                     }

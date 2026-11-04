@@ -28,7 +28,6 @@ namespace RimWorldOnlineCity.GameClasses
         public static bool RemoteReady = false;
         public static bool IsInBattleTick { get; private set; }
 
-        // Буфер мережевого випередження (30 тіків = ~500 мс при 60 TPS) для плавного ходу без мікро-пауз
         public const long MaxTickLead = 30;
         public const int CommandTickDelay = 2;
 
@@ -221,7 +220,7 @@ namespace RimWorldOnlineCity.GameClasses
 
     /// <summary>
     /// Блокує самовільний запуск ванільного ШІ піратів (JobGiver_ExitMapBest -> Goto (199,0,0) тощо)
-    /// для пішаків, які керуються гравцями через мережу.
+    /// для пішаків, які синхронізуються через мережу.
     /// </summary>
     [HarmonyPatch(typeof(Pawn_JobTracker))]
     [HarmonyPatch("DetermineNextJob")]
@@ -240,7 +239,6 @@ namespace RimWorldOnlineCity.GameClasses
 
             if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var host))
             {
-                // На боці Хоста пішаки нападника виконують лише накази нападника, а не ванільний ШІ втечі за край карти
                 if (host.AttackingPawns != null && host.AttackingPawns.Contains(pawn))
                 {
                     var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
@@ -252,7 +250,6 @@ namespace RimWorldOnlineCity.GameClasses
             }
             else if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var attacker))
             {
-                // На боці Нападника власні задрафтовані пішаки та пішаки Хоста не повинні запускати локальний ШІ піратів
                 if (!attacker.IsMyPawn(pawn) || (pawn.drafter != null && pawn.drafter.Drafted))
                 {
                     var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
@@ -473,7 +470,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 4. Перехоплення вхідних наказів гравця (Drafted, OrderedJob, InventoryDrop)
+    // 4. Перехоплення вхідних наказів гравця (Drafted, StartJob, InventoryDrop)
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn_DraftController))]
@@ -501,40 +498,6 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
-    [HarmonyPatch]
-    public static class Pawn_JobTracker_TryTakeOrderedJob_Patch
-    {
-        public static bool Prepare() => TargetMethod() != null;
-
-        public static MethodBase TargetMethod()
-        {
-            return AccessTools.Method(typeof(Pawn_JobTracker), "TryTakeOrderedJob");
-        }
-
-        [HarmonyPostfix]
-        public static void Postfix(Pawn_JobTracker __instance, Job job, bool __result)
-        {
-            if (!__result || job == null || !GameAttackTrigger_Patch.HasActiveAttack) return;
-            if (Scribe.mode != LoadSaveMode.Inactive || GameXMLUtils.FromXmlIsActive) return;
-
-            var pawn = __instance.GetPawn();
-            var map = pawn?.Map;
-            if (map == null) return;
-
-            if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var client))
-            {
-                client.UIEventNewJob(pawn, job);
-            }
-            if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
-            {
-                if (!clientHost.UIEventNewJobDisable)
-                {
-                    clientHost.UIEventNewJob(pawn, job);
-                }
-            }
-        }
-    }
-
     [HarmonyPatch(typeof(Pawn_JobTracker))]
     [HarmonyPatch("StartJob")]
     public static class Pawn_JobTracker_StartJob_Patch
@@ -554,7 +517,10 @@ namespace RimWorldOnlineCity.GameClasses
 
             if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var client))
             {
-                client.UIEventNewJob(pawn, curJob);
+                if (!client.ApplyingRemoteCommand)
+                {
+                    client.UIEventNewJob(pawn, curJob);
+                }
             }
             if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
             {
@@ -713,7 +679,6 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPostfix]
         public static void Postfix(ref float __result)
         {
-            // Гарантуємо, що після завершення атаки ForceSpeed ніколи не заблокує хід часу в грі
             if (!GameAttackTrigger_Patch.HasActiveAttack || GameAttackTrigger_Patch.ForceSpeed < 0f) return;
             __result = GameAttackTrigger_Patch.ForceSpeed;
         }

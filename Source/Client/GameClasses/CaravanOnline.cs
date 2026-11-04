@@ -133,7 +133,7 @@ namespace RimWorldOnlineCity
 
             _lastInspectStringTime = now;
             bool online = IsOnline;
-            bool pvp = (this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false);
+            bool pvp = SessionClientController.My?.EnablePVP ?? false;
             float mv = OnlineWObject?.MarketValue ?? 0f;
             float mvp = OnlineWObject?.MarketValuePawn ?? 0f;
             float mvt = (OnlineWObject?.MarketValueBalance ?? 0f) + (OnlineWObject?.MarketValueStorage ?? 0f);
@@ -185,7 +185,7 @@ namespace RimWorldOnlineCity
             {
                 sb.AppendLine();
                 sb.Append("OCity_Caravan_PlayerAttackCost".Translate(
-                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, true).ToStringMoney()));
+                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, this is BaseOnline).ToStringMoney()));
             }
 
             if (fw > 0 && fw < 999999)
@@ -223,7 +223,7 @@ namespace RimWorldOnlineCity
 
             _lastInspectExtendedTime = now;
             bool online = IsOnline;
-            bool pvp = (this is BaseOnline) && (SessionClientController.My?.EnablePVP ?? false);
+            bool pvp = SessionClientController.My?.EnablePVP ?? false;
             float mv = OnlineWObject?.MarketValue ?? 0f;
             float mvp = OnlineWObject?.MarketValuePawn ?? 0f;
             float mvt = (OnlineWObject?.MarketValueBalance ?? 0f) + (OnlineWObject?.MarketValueStorage ?? 0f);
@@ -282,7 +282,7 @@ namespace RimWorldOnlineCity
             {
                 sb.AppendLine();
                 sb.Append("OCity_Caravan_PlayerAttackCost".Translate(
-                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, true).ToStringMoney()));
+                    AttackUtils.MaxCostAttackerCaravan(OnlineWObject.MarketValueTotal, this is BaseOnline).ToStringMoney()));
             }
 
             if (fw > 0 && fw < 999999)
@@ -358,9 +358,8 @@ namespace RimWorldOnlineCity
                 yield return fmoTrade;
             }
 
-            if (SessionClientController.My.EnablePVP
-                && this is BaseOnline
-                && GameAttacker.CanStart)
+            // Дозволяємо атаку як на поселення (BaseOnline), так і на каравани (CaravanOnline)
+            if (SessionClientController.My.EnablePVP && GameAttacker.CanStart)
             {
                 FloatMenuOption fmo = null;
                 try
@@ -379,7 +378,8 @@ namespace RimWorldOnlineCity
                             player,
                             myEntry.PlaceServerId,
                             this.OnlineWObject.PlaceServerId,
-                            SessionClientController.Data.ProtectingNovice
+                            SessionClientController.Data.ProtectingNovice,
+                            this is BaseOnline
                         );
                     }
 
@@ -387,7 +387,14 @@ namespace RimWorldOnlineCity
                         + (dis != null ? " (" + dis + ")" : ""),
                         delegate
                         {
-                            caravan.pather.StartPath(this.Tile, new CaravanArrivalAction_VisitOnline(this, "attack"), true);
+                            if (caravan.Tile == this.Tile)
+                            {
+                                new CaravanArrivalAction_VisitOnline(this, "attack").Arrived(caravan);
+                            }
+                            else
+                            {
+                                caravan.pather.StartPath(this.Tile, new CaravanArrivalAction_VisitOnline(this, "attack"), true);
+                            }
                         },
                         MenuOptionPriority.Default, null, null, 0f, null, this);
 

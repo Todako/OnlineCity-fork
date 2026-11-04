@@ -70,8 +70,33 @@ namespace ServerOnlineCity.Model
                 return "Attack not possible: player offline";
             }
 
+            HostPlaceServerId = fromClient.HostPlaceServerId;
+            InitiatorPlaceServerId = fromClient.InitiatorPlaceServerId;
+
+            bool isHostSettlement = true;
+            var data = Repository.GetData;
+            if (data?.WorldObjects != null)
+            {
+                lock (data)
+                {
+                    for (int i = 0; i < data.WorldObjects.Count; i++)
+                    {
+                        var wo = data.WorldObjects[i];
+                        if (wo == null) continue;
+                        if (wo.PlaceServerId == InitiatorPlaceServerId)
+                        {
+                            InitiatorPlaceTile = wo.Tile;
+                        }
+                        if (wo.PlaceServerId == HostPlaceServerId)
+                        {
+                            isHostSettlement = wo.Type == WorldObjectEntryType.Base;
+                        }
+                    }
+                }
+            }
+
             var err = AttackUtils.CheckPossibilityAttack(player, hostPlayer, fromClient.InitiatorPlaceServerId, fromClient.HostPlaceServerId,
-                ServerManager.ServerSettings.ProtectingNovice);
+                ServerManager.ServerSettings.ProtectingNovice, isHostSettlement);
 
             if (err != null)
             {
@@ -84,25 +109,6 @@ namespace ServerOnlineCity.Model
             Host = hostPlayer;
             Attacker.AttackData = this;
             Host.AttackData = this;
-            HostPlaceServerId = fromClient.HostPlaceServerId;
-            InitiatorPlaceServerId = fromClient.InitiatorPlaceServerId;
-
-            var data = Repository.GetData;
-            if (data?.WorldObjects != null)
-            {
-                lock (data)
-                {
-                    for (int i = 0; i < data.WorldObjects.Count; i++)
-                    {
-                        var wo = data.WorldObjects[i];
-                        if (wo != null && wo.PlaceServerId == InitiatorPlaceServerId)
-                        {
-                            InitiatorPlaceTile = wo.Tile;
-                            break;
-                        }
-                    }
-                }
-            }
 
             NewPawns = new List<ThingEntry>();
             NewPawnsId = new List<int>();
@@ -127,7 +133,7 @@ namespace ServerOnlineCity.Model
                 Host.Public.LastPVPTime = DateTime.UtcNow;
             }
 
-            Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} New");
+            Loger.Log($"Server AttackServer {Attacker.Public.Login} -> {Host.Public.Login} New (isSettlement={isHostSettlement})");
             return null;
         }
 
