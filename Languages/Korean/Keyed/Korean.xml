@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>거래 대상에 대한 서버 데이터가 없습니다</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>상단 교환: 상단 전체 선택</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>공격</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>정말 이 정착지를 공격하시겠습니까? 결과에 영향이 없는 모의 전투를 진행할 수도 있습니다</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>아니요, 모의 전투만 진행합니다.</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>플레이어 {1}의 {0}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@
 	<OCity_Caravan_Trade>{0}(와)과 물품 거래</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>플레이 기간이 1년 미만이거나 기지 가치가 부족합니다</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>{0} 공격</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>정착지 {0}을(를) 공격하시겠습니까?</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>상단 {0}을(를) 공격하시겠습니까?</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>상단 공격</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>적 상단을 격파했습니다! 생존한 정착민과 전리품이 세계 지도에 상단으로 편성되었습니다.</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0}이(가) 당신의 상단을 공격하고 있습니다</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>상단이 전투에서 패배했습니다.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>상단 습격을 격퇴했습니다! 생존한 정착민과 전리품이 세계 지도로 복귀했습니다.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>테스트</OCity_DevTest_Test>

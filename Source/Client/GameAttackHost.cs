@@ -13,8 +13,8 @@ using Verse.AI;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Контролер сторони захисника (хоста) в онлайн-битві PvP («Гібридний міст» / Instanced Lockstep).
-    /// Підтримує захист як власного поселення (MapParent), так і власного каравану на глобальній карті (Caravan).
+    /// Host-side (defender) controller for Instanced Lockstep PvP.
+    /// Supports defending both player settlements (MapParent) and player caravans (Caravan).
     /// </summary>
     public class GameAttackHost
     {
@@ -22,7 +22,7 @@ namespace RimWorldOnlineCity
         public bool PlantNotSend { get; } = false;
         public int SendDelayedFillPawnsSeconds { get; } = 30;
         public int CheckVictoryDelay { get; } = 3;
-        public int MapBorder { get; } = 10;
+        public int MapBorder { get; } = 15;
         public float TickTimeSpeed { get; } = 1f;
         public float HostPawnMoveSpeed { get; } = 1f;
 
@@ -80,7 +80,7 @@ namespace RimWorldOnlineCity
 
         private readonly Dictionary<int, Pawn> AllPawns = new Dictionary<int, Pawn>(64);
 
-        // Буфери багаторазового використання для усунення виділень пам'яті кожні 50 мс
+        // Reusable buffers to avoid GC allocations every 50ms
         private readonly List<ThingEntry> _newPawnsBuffer = new List<ThingEntry>(16);
         private readonly List<int> _newPawnsIdBuffer = new List<int>(16);
         private readonly List<ThingTrade> _newThingsBuffer = new List<ThingTrade>(32);
@@ -90,7 +90,7 @@ namespace RimWorldOnlineCity
         private readonly List<int> _deleteBuffer = new List<int>(16);
         private readonly List<int> _addedIdBuffer = new List<int>(16);
 
-        // Черги команд для детермінованого Lockstep
+        // Lockstep command queues
         private readonly List<AttackPawnCommand> _outgoingHostCommands = new List<AttackPawnCommand>(32);
         private readonly List<AttackPawnCommand> _scheduledCommands = new List<AttackPawnCommand>(64);
         private readonly object _commandsSync = new object();
@@ -115,14 +115,25 @@ namespace RimWorldOnlineCity
             return false;
         }
 
+        private string GetHostDialogTitle()
+        {
+            if (TestMode)
+            {
+                return "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin);
+            }
+            if (_isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Attacking".CanTranslate())
+            {
+                return "OCity_GameAttack_Host_Caravan_Attacking".Translate(AttackerLogin);
+            }
+            return "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin);
+        }
+
         private void PauseMessage()
         {
             ModBaseData.RunMainThread(() =>
             {
                 GameUtils.ShowDialodOKCancel(
-                    TestMode
-                        ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                        : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                    GetHostDialogTitle(),
                     TestMode
                         ? "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
                             + "OCity_GameAttack_Host_Cancel_Action".Translate() + Environment.NewLine
@@ -167,7 +178,6 @@ namespace RimWorldOnlineCity
 
                 Find.TickManager.Pause();
                 GameAttackTrigger_Patch.ForceSpeed = 0f;
-                PauseMessage();
 
                 CurrentPauseToTime = DateTime.UtcNow + SessionClientController.ServerTimeDelta + TimeSpan.FromMinutes(5);
                 Loger.Log("HostAttackUpdate Set 1 CurrentPauseToTime=" + CurrentPauseToTime.ToGoodUtcString());
@@ -180,7 +190,6 @@ namespace RimWorldOnlineCity
                 }
                 else if (hostWorldObj is Caravan hostCaravan)
                 {
-                    // Якщо атакували наш караван — генеруємо тактичну карту зустрічі (Ambush 150x150) і розгортаємо караван у центрі
                     _isTemporaryCaravanMap = true;
                     int caravanTile = hostCaravan.Tile;
                     Rand.PushState();
@@ -208,6 +217,8 @@ namespace RimWorldOnlineCity
                     ErrorBreak("Target WorldObject not found for PlaceServerId=" + HostPlaceServerId);
                     return;
                 }
+
+                PauseMessage();
 
                 var toSrvMap = new AttackHostToSrv
                 {
@@ -385,9 +396,7 @@ namespace RimWorldOnlineCity
                 if (TestMode)
                 {
                     GameUtils.ShowDialodOKCancel(
-                        TestMode
-                            ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                            : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
+                        GetHostDialogTitle(),
                         victoryAttacker
                             ? "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate()
                             : "OCity_GameAttack_Host_Training_Attack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Card_Restored".Translate(),
@@ -403,7 +412,7 @@ namespace RimWorldOnlineCity
 
                     if (!victoryAttacker)
                     {
-                        // Захисник каравану переміг: видаляємо відступивших ворогів, збираємо своїх колоністів/тварин + трофеї у караван
+                        // Host defended the caravan: remove retreating enemies, pack surviving host pawns and loot back into a caravan
                         if (AttackingPawns != null)
                         {
                             foreach (var enemy in AttackingPawns)
@@ -470,8 +479,18 @@ namespace RimWorldOnlineCity
                             }
                         }
                     }
+                    else
+                    {
+                        // Host lost or surrendered the caravan: destroy remaining pawns on the temporary map before unloading it
+                        var remainingPawns = new List<Pawn>(GameMap.mapPawns.AllPawns);
+                        for (int i = 0; i < remainingPawns.Count; i++)
+                        {
+                            GameUtils.PawnDestroy(remainingPawns[i]);
+                        }
+                    }
 
-                    // Знищуємо тимчасову карту бою каравану в обох випадках (і при перемозі, і при поразці)
+                    // Switch camera away from the temporary map before removing it
+                    try { CameraJumper.TryShowWorld(); } catch { }
                     GameUtils.DeinitAndRemoveMapSafe(GameMap);
                 }
                 else if (victoryAttacker)
@@ -499,17 +518,27 @@ namespace RimWorldOnlineCity
                     }
                 }
 
+                string finishBodyText;
+                if (victoryAttacker)
+                {
+                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Defeated".CanTranslate()
+                        ? "OCity_GameAttack_Host_Caravan_Defeated".Translate().ToString()
+                        : "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate().ToString();
+                }
+                else
+                {
+                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Attack_Repulsed".CanTranslate()
+                        ? "OCity_GameAttack_Host_Caravan_Attack_Repulsed".Translate().ToString()
+                        : ("OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate()).ToString();
+                }
+
                 SessionClientController.SaveGameNow(true, () =>
                 {
                     ModBaseData.RunMainThread(() =>
                     {
                         GameUtils.ShowDialodOKCancel(
-                            TestMode
-                                ? "OCity_GameAttack_Host_Test_Attack".Translate(AttackerLogin)
-                                : "OCity_GameAttack_Host_Settlement_Attacking".Translate(AttackerLogin),
-                            victoryAttacker
-                                ? "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate()
-                                : "OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate(),
+                            GetHostDialogTitle(),
+                            finishBodyText,
                             () =>
                             {
                                 GameAttackTrigger_Patch.ForceSpeed = -1f;
@@ -1494,7 +1523,9 @@ namespace RimWorldOnlineCity
                                 if (last.HostPawnID == hostCmd.HostPawnID
                                     && last.JobDefName == hostCmd.JobDefName
                                     && last.TargetID == hostCmd.TargetID
-                                    && last.ScheduledTick == hostCmd.ScheduledTick)
+                                    && (last.TargetPos == null && hostCmd.TargetPos == null
+                                        || last.TargetPos != null && hostCmd.TargetPos != null && last.TargetPos.x == hostCmd.TargetPos.x && last.TargetPos.z == hostCmd.TargetPos.z)
+                                    && Math.Abs(last.ScheduledTick - hostCmd.ScheduledTick) <= 2)
                                 {
                                     return;
                                 }

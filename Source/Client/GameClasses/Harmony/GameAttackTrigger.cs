@@ -14,9 +14,9 @@ using Verse.Sound;
 namespace RimWorldOnlineCity.GameClasses
 {
     /// <summary>
-    /// Ядро «Гібридного мосту» (Instanced Lockstep PvP).
-    /// Забезпечує детерміноване виконання тіків, ізоляцію візуального RNG
-    /// та синхронне виконання черги наказів на карті активного бою.
+    /// Core controller for Instanced Lockstep PvP.
+    /// Ensures deterministic tick execution, isolates visual/sound RNG,
+    /// and synchronizes command queues on the active battle map.
     /// </summary>
     public static class LockstepController
     {
@@ -137,7 +137,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 1. Патчі детермінізму Lockstep (DoSingleTick / MapPreTick / MapPostTick)
+    // 1. Lockstep determinism patches (DoSingleTick / MapPreTick / MapPostTick)
     // ====================================================================================
 
     [HarmonyPatch(typeof(TickManager))]
@@ -177,7 +177,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 1.1. Блокування ванільного виходу за край карти, авто-закриття Ambush та ШІ втечі
+    // 1.1. Prevent vanilla edge map exit, premature Ambush map removal, and Pirate flee AI
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn))]
@@ -219,8 +219,8 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     /// <summary>
-    /// Блокує самовільний запуск ванільного ШІ піратів (JobGiver_ExitMapBest -> Goto (199,0,0) тощо)
-    /// для пішаків, які синхронізуються через мережу.
+    /// Prevents remote-controlled pawns (spawned with Pirate faction) from running vanilla
+    /// JobGiver_ExitMapBest AI when idle, without overriding their active network jobs.
     /// </summary>
     [HarmonyPatch(typeof(Pawn_JobTracker))]
     [HarmonyPatch("DetermineNextJob")]
@@ -241,6 +241,11 @@ namespace RimWorldOnlineCity.GameClasses
             {
                 if (host.AttackingPawns != null && host.AttackingPawns.Contains(pawn))
                 {
+                    if (__instance.curJob != null)
+                    {
+                        __result = ThinkResult.NoJob;
+                        return false;
+                    }
                     var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
                     waitJob.expiryInterval = int.MaxValue;
                     waitJob.checkOverrideOnExpire = false;
@@ -250,8 +255,13 @@ namespace RimWorldOnlineCity.GameClasses
             }
             else if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var attacker))
             {
-                if (!attacker.IsMyPawn(pawn) || (pawn.drafter != null && pawn.drafter.Drafted))
+                if (!attacker.IsMyPawn(pawn))
                 {
+                    if (__instance.curJob != null)
+                    {
+                        __result = ThinkResult.NoJob;
+                        return false;
+                    }
                     var waitJob = JobMaker.MakeJob(JobDefOf.Wait_Combat);
                     waitJob.expiryInterval = int.MaxValue;
                     waitJob.checkOverrideOnExpire = false;
@@ -265,7 +275,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 2. Ізоляція клієнтських звуків, візуальних ефектів та Scribe-десеріалізації (1.1–1.4)
+    // 2. Client sound, mote RNG isolation and Scribe deserialization guards (1.1-1.4)
     // ====================================================================================
 
     [HarmonyPatch]
@@ -440,7 +450,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 3. Розмежування прав керування пішаками (Faction Authority)
+    // 3. Faction authority separation for player orders
     // ====================================================================================
 
     [HarmonyPatch(typeof(FloatMenuMakerMap))]
@@ -470,7 +480,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 4. Перехоплення вхідних наказів гравця (Drafted, StartJob, InventoryDrop)
+    // 4. Intercept player commands (Drafted, TryTakeOrderedJob, StartJob, InventoryDrop)
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn_DraftController))]
@@ -494,6 +504,46 @@ namespace RimWorldOnlineCity.GameClasses
             if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
             {
                 clientHost.UIEventDraftChanged(pawn, __instance.Drafted);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Captures player-ordered jobs AFTER RimWorld sets job.playerForced = true.
+    /// </summary>
+    [HarmonyPatch]
+    public static class Pawn_JobTracker_TryTakeOrderedJob_Patch
+    {
+        public static bool Prepare() => TargetMethod() != null;
+
+        public static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(Pawn_JobTracker), "TryTakeOrderedJob");
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(Pawn_JobTracker __instance, Job job, bool __result)
+        {
+            if (!__result || job == null || !GameAttackTrigger_Patch.HasActiveAttack) return;
+            if (Scribe.mode != LoadSaveMode.Inactive || GameXMLUtils.FromXmlIsActive) return;
+
+            var pawn = __instance.GetPawn();
+            var map = pawn?.Map;
+            if (map == null) return;
+
+            if (GameAttackTrigger_Patch.ActiveAttacker.TryGetValue(map, out var client))
+            {
+                if (!client.ApplyingRemoteCommand)
+                {
+                    client.UIEventNewJob(pawn, job);
+                }
+            }
+            if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
+            {
+                if (!clientHost.UIEventNewJobDisable)
+                {
+                    clientHost.UIEventNewJob(pawn, job);
+                }
             }
         }
     }
@@ -558,7 +608,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 5. Відстеження життєвого циклу об'єктів на карті та швидкості часу
+    // 5. Map object lifecycle tracking and time speed control
     // ====================================================================================
 
     [HarmonyPatch(typeof(Thing))]

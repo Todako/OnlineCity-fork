@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>No server data on trade object</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Caravan exchange: select entire caravan</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Attack</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>Do you really want to attack this settlement? You can conduct a practice battle without consequences</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>No, practice only.</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} of player {1}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@ Exchange wealth: {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Trade>Trade items with {0}</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>You have played for less than a year or your wealth is too low</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>Attack {0}</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>Are you sure you want to attack the settlement {0}?</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>Are you sure you want to attack the caravan {0}?</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Caravan attack</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>You have defeated the enemy caravan! Surviving colonists and captured loot have been formed into a caravan.</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} is attacking your caravan</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Your caravan was defeated in battle.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>You have repelled the attack on your caravan! Your surviving colonists and loot have been packed back into the caravan.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>

@@ -13,14 +13,14 @@ using Verse.AI;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Контролер сторони нападника в режимі Instanced Lockstep PvP («Гібридний міст»).
-    /// Підтримує атаки як на поселення (BaseOnline), так і на каравани (CaravanOnline).
+    /// Attacker-side controller for Instanced Lockstep PvP.
+    /// Supports attacking both player settlements (BaseOnline) and player caravans (CaravanOnline).
     /// </summary>
     public class GameAttacker
     {
         public int AttackUpdateDelay { get; } = 50;
         public int TimeStopBeforeAttack { get; } = 15;
-        public int MapBorder { get; } = 10;
+        public int MapBorder { get; } = 15;
 
         private static readonly TimeSpan DefaultPauseTimeToHost = new TimeSpan(0, 0, 15);
 
@@ -57,14 +57,14 @@ namespace RimWorldOnlineCity
         private List<string> AttackerOriginalPawnLabels { get; set; }
         private HashSet<int> AttackerOriginalPawnIds { get; set; }
 
-        // Вікно інерції після руху для захисту від відкидання назад запізнілими пакетами UpdateState
+        // Inertia window after local movement to prevent delayed UpdateState packets from snapping pawns back
         private readonly Dictionary<int, long> _ignorePosSyncUntilTick = new Dictionary<int, long>(32);
 
         private readonly List<AttackPawnCommand> OutgoingCommands = new List<AttackPawnCommand>(32);
         private readonly List<AttackPawnCommand> ScheduledHostCommands = new List<AttackPawnCommand>(32);
         private readonly object CommandSync = new object();
 
-        // Багаторазові буфери для 50-мс циклу
+        // Reusable buffers for the 50ms network loop
         private readonly List<AttackPawnCommand> _commandsBuffer = new List<AttackPawnCommand>(32);
         private readonly List<int> _needNewThingsBuffer = new List<int>(16);
         private readonly List<ThingEntry> _corpseListBuffer = new List<ThingEntry>(16);
@@ -84,6 +84,15 @@ namespace RimWorldOnlineCity
         public bool IsMyPawn(Pawn pawn)
         {
             return pawn != null && AttackerPawns != null && AttackerPawns.ContainsKey(pawn);
+        }
+
+        private string GetAttackDialogTitle()
+        {
+            if (IsCaravanTarget && "OCity_GameAttacker_Dialog_Caravan_Attack".CanTranslate())
+            {
+                return "OCity_GameAttacker_Dialog_Caravan_Attack".Translate();
+            }
+            return "OCity_GameAttacker_Dialog_Settlement_Attack".Translate();
         }
 
         public static bool Create()
@@ -781,7 +790,7 @@ namespace RimWorldOnlineCity
                     ModBaseData.RunMainThread(() =>
                     {
                         GameUtils.ShowDialodOKCancel(
-                            "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                            GetAttackDialogTitle(),
                             "OCity_GameAttacker_Main_Preparation_Dialog".Translate() + Environment.NewLine
                                 + "OCity_GameAttacker_Main_Dialog".Translate() + Environment.NewLine
                                 + "OCity_GameAttacker_Withdraw".Translate(),
@@ -1149,20 +1158,29 @@ namespace RimWorldOnlineCity
         public void UIEventNewJob(Pawn pawn, Job job)
         {
             if (ApplyingRemoteCommand || job == null || pawn == null) return;
+            if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
 
-            if (job.def == JobDefOf.Wait_Combat || job.def == JobDefOf.Wait || job.def == JobDefOf.Wait_MaintainPosture || job.def == JobDefOf.GotoWander)
+            // Ignore automatic idle/wander transitions when a job finishes,
+            // so the Host pawn completes its movement path instead of stopping 1-2 cells early
+            if (job.def == JobDefOf.Wait_Combat
+                || job.def == JobDefOf.Wait
+                || job.def == JobDefOf.Wait_MaintainPosture
+                || job.def == JobDefOf.Wait_Wander
+                || job.def == JobDefOf.GotoWander)
             {
                 if (!job.playerForced) return;
             }
-            else if (!job.playerForced && job.def != JobDefOf.AttackStatic && job.def != JobDefOf.AttackMelee)
+            else if (!job.playerForced
+                && job.def != JobDefOf.Goto
+                && job.def != JobDefOf.AttackStatic
+                && job.def != JobDefOf.AttackMelee
+                && job.ability == null)
             {
                 return;
             }
 
             try
             {
-                if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
-
                 _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 120;
 
                 var comm = new AttackPawnCommand
@@ -1211,7 +1229,9 @@ namespace RimWorldOnlineCity
                         if (last.HostPawnID == comm.HostPawnID
                             && last.JobDefName == comm.JobDefName
                             && last.TargetID == comm.TargetID
-                            && last.ScheduledTick == comm.ScheduledTick)
+                            && (last.TargetPos == null && comm.TargetPos == null
+                                || last.TargetPos != null && comm.TargetPos != null && last.TargetPos.x == comm.TargetPos.x && last.TargetPos.z == comm.TargetPos.z)
+                            && Math.Abs(last.ScheduledTick - comm.ScheduledTick) <= 2)
                         {
                             return;
                         }
@@ -1359,7 +1379,7 @@ namespace RimWorldOnlineCity
                 if (TestMode)
                 {
                     GameUtils.ShowDialodOKCancel(
-                        "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                        GetAttackDialogTitle(),
                         victoryAttacker
                             ? "Ocity_GameAttacker_TrainingFight_Won".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate()
                             : "Ocity_GameAttacker_TrainingFight_Lost".Translate() + Environment.NewLine + "Ocity_GameAttacker_TrainingFight_Caravan_Restore".Translate(),
@@ -1371,7 +1391,7 @@ namespace RimWorldOnlineCity
 
                 if (victoryAttacker && !IsCaravanTarget)
                 {
-                    // Перемога над поселенням: карта переходить у власність нападника
+                    // Settlement victory: keep the conquered map
                     var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
                     for (int i = 0; i < mapPawnsA.Count; i++)
                     {
@@ -1382,7 +1402,7 @@ namespace RimWorldOnlineCity
                 }
                 else if (victoryAttacker && IsCaravanTarget)
                 {
-                    // Перемога над караваном: збираємо всіх живих колоністів/тварин нападника + трофеї з карти і формуємо караван
+                    // Caravan victory: pack all surviving attacker pawns and battle loot into a world caravan
                     var listPawn = new List<Pawn>(AttackerPawns.Count);
                     foreach (var pawn in AttackerPawns.Keys)
                     {
@@ -1396,7 +1416,6 @@ namespace RimWorldOnlineCity
                         }
                     }
 
-                    // Збираємо трофеї з повалених/мертвих ворогів та речі на землі
                     var lootThings = new List<Thing>();
                     if (GameMap != null)
                     {
@@ -1468,6 +1487,7 @@ namespace RimWorldOnlineCity
                                         lootThings.Add(item);
                                     }
                                 }
+                                GameUtils.PawnDestroy(p);
                             }
                         }
                     }
@@ -1489,6 +1509,7 @@ namespace RimWorldOnlineCity
                         }
                     }
 
+                    try { CameraJumper.TryShowWorld(); } catch { }
                     GameUtils.DeinitAndRemoveMapSafe(GameMap);
 
                     for (int i = 0; i < listPawn.Count; i++)
@@ -1502,7 +1523,7 @@ namespace RimWorldOnlineCity
                 }
                 else
                 {
-                    // Поразка або відступ: повертаємо в караван усіх не збитих з ніг колоністів із прикордонної зони
+                    // Defeat or retreat: return all non-downed attacker pawns within the 15-cell MapBorder zone to a caravan
                     var listPawn = new List<Pawn>(AttackerPawns.Count);
                     foreach (var pawn in AttackerPawns.Keys)
                     {
@@ -1524,6 +1545,7 @@ namespace RimWorldOnlineCity
                         CaravanMaker.MakeCaravan(listPawn, Faction.OfPlayer, mapTile, false);
                     }
 
+                    try { CameraJumper.TryShowWorld(); } catch { }
                     GameUtils.DeinitAndRemoveMapSafe(GameMap);
 
                     for (int i = 0; i < listPawn.Count; i++)
@@ -1536,15 +1558,19 @@ namespace RimWorldOnlineCity
                     }
                 }
 
+                string victoryBodyText = IsCaravanTarget && "OCity_GameAttacker_Caravan_TakenOver".CanTranslate()
+                    ? "OCity_GameAttacker_Caravan_TakenOver".Translate().ToString()
+                    : "OCity_GameAttacker_Settlement_TakenOver".Translate().ToString();
+
                 SessionClientController.SaveGameNow(true, () =>
                 {
                     ModBaseData.RunMainThread(() =>
                     {
                         GameUtils.ShowDialodOKCancel(
-                            "OCity_GameAttacker_Dialog_Settlement_Attack".Translate(),
+                            GetAttackDialogTitle(),
                             victoryAttacker
-                                ? "OCity_GameAttacker_Settlement_TakenOver".Translate()
-                                : "OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate(),
+                                ? victoryBodyText
+                                : ("OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate()).ToString(),
                             () =>
                             {
                                 GameAttackTrigger_Patch.ForceSpeed = -1f;

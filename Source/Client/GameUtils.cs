@@ -712,17 +712,38 @@ namespace RimWorldOnlineCity
             return new IntVec3(sumX / count, 0, sumZ / count);
         }
 
-        private static IntVec3 ClampAwayFromEdge(IntVec3 cell, Map map, int minBorder = 7)
+        /// <summary>
+        /// Keeps spawn cells between minBorder (3..4) and maxBorder (8) from the nearest map edge
+        /// so pawns never trigger edge-exit but always remain well within the 15-cell retreat zone.
+        /// </summary>
+        private static IntVec3 ClampSpawnBorderCell(IntVec3 cell, Map map, int minBorder = 3, int maxBorder = 8)
         {
             int x = Mathf.Clamp(cell.x, minBorder, map.Size.x - 1 - minBorder);
             int z = Mathf.Clamp(cell.z, minBorder, map.Size.z - 1 - minBorder);
+
+            int distLeft = x;
+            int distRight = map.Size.x - 1 - x;
+            int distBottom = z;
+            int distTop = map.Size.z - 1 - z;
+            int minDist = Mathf.Min(Mathf.Min(distLeft, distRight), Mathf.Min(distBottom, distTop));
+
+            if (minDist > maxBorder)
+            {
+                if (minDist == distLeft) x = maxBorder;
+                else if (minDist == distRight) x = map.Size.x - 1 - maxBorder;
+                else if (minDist == distBottom) z = maxBorder;
+                else z = map.Size.z - 1 - maxBorder;
+            }
+
             var clamped = new IntVec3(x, 0, z);
             if (clamped.InBounds(map) && clamped.Standable(map) && !clamped.Fogged(map))
             {
                 return clamped;
             }
-            if (CellFinder.TryFindRandomCellNear(clamped, map, 6, c => c.InBounds(map) && c.Standable(map) && !c.Fogged(map)
-                && c.x >= 4 && c.x <= map.Size.x - 5 && c.z >= 4 && c.z <= map.Size.z - 5, out var valid))
+            if (CellFinder.TryFindRandomCellNear(clamped, map, 4, c => c.InBounds(map) && c.Standable(map) && !c.Fogged(map)
+                && c.x >= minBorder && c.x <= map.Size.x - 1 - minBorder
+                && c.z >= minBorder && c.z <= map.Size.z - 1 - minBorder
+                && (c.x <= maxBorder + 2 || c.x >= map.Size.x - 1 - maxBorder - 2 || c.z <= maxBorder + 2 || c.z >= map.Size.z - 1 - maxBorder - 2), out var valid))
             {
                 return valid;
             }
@@ -731,11 +752,11 @@ namespace RimWorldOnlineCity
 
         public static Func<IntVec3> GetAttackCells(Map map)
         {
-            IntVec3 enterCell = ClampAwayFromEdge(FindNearEdgeCell(map, null), map, 8);
+            IntVec3 enterCell = ClampSpawnBorderCell(FindNearEdgeCell(map, null), map, 4, 6);
             return () =>
             {
-                var c = CellFinder.RandomSpawnCellForPawnNear(enterCell, map, 4);
-                return ClampAwayFromEdge(c, map, 5);
+                var c = CellFinder.RandomSpawnCellForPawnNear(enterCell, map, 3);
+                return ClampSpawnBorderCell(c, map, 3, 8);
             };
         }
 
@@ -782,7 +803,7 @@ namespace RimWorldOnlineCity
                         {
                             baseEdgeCell = CellFinder.RandomEdgeCell(map);
                         }
-                        baseEdgeCell = ClampAwayFromEdge(baseEdgeCell, map, 8);
+                        baseEdgeCell = ClampSpawnBorderCell(baseEdgeCell, map, 4, 6);
                     }
 
                     for (int i = 0; i < pawns.Count; i++)
@@ -822,7 +843,7 @@ namespace RimWorldOnlineCity
                             }
                             else if (attackCell && baseEdgeCell.IsValid)
                             {
-                                cell = ClampAwayFromEdge(CellFinder.RandomClosewalkCellNear(baseEdgeCell, map, 5), map, 5);
+                                cell = ClampSpawnBorderCell(CellFinder.RandomClosewalkCellNear(baseEdgeCell, map, 3), map, 3, 8);
                             }
                             else
                             {
@@ -887,9 +908,6 @@ namespace RimWorldOnlineCity
             Find.WorldPawns?.RemovePawn(pawn);
         }
 
-        /// <summary>
-        /// Безпечне вивантаження тимчасової карти бою для RimWorld 1.1–1.4.
-        /// </summary>
         private static MethodInfo _deinitMapMethod;
         private static int _deinitMapParamCount = -1;
 
@@ -966,17 +984,9 @@ namespace RimWorldOnlineCity
                             pawn.Position = targetPos;
                             pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
                         }
-                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving && pawn.jobs != null)
+                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving)
                         {
-                            // Замість миттєвої зміни координат запускаємо плавний JobDefOf.Goto,
-                            // щоб PawnTweener плавно анімував переміщення між клітинками
-                            var gotoJob = new Job(JobDefOf.Goto, targetPos)
-                            {
-                                playerForced = false,
-                                expiryInterval = 240,
-                                checkOverrideOnExpire = true
-                            };
-                            pawn.jobs.StartJob(gotoJob, JobCondition.InterruptForced);
+                            pawn.pather.StartPath(targetPos, PathEndMode.OnCell);
                         }
                     }
                     else

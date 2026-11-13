@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>Немає серверних даних про об'єкт торгівлі</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Караван обмін: вибрати весь караван</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Атака</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>Ви дійсно хочете напасти на це поселення? Можна провести тренувальний бій без наслідків</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>Ні, лише тренування.</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} гравця {1}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@
 	<OCity_Caravan_Trade>Обмін товарами з {0}</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>Вам менше року або ваша вартість менша</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>Атакувати {0}</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>Ви впевнені, що бажаєте напасти на поселення {0}?</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>Ви впевнені, що бажаєте напасти на караван {0}?</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Напад на караван</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Ви розгромили ворожий караван! Ваші вцілілі колоністи та трофеї сформовані в караван на карті світу.</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} нападає на ваш караван</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Ваш караван зазнав поразки в бою.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Ви відбили напад на караван! Вцілілі колоністи та трофеї повернулися на карту світу.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Тест</OCity_DevTest_Test>

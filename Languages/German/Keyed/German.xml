@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>Keine Serverdaten über das Handelsobjekt vorhanden</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Karawanentausch: Gesamte Karawane auswählen</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Angriff</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>Möchtest du diese Siedlung wirklich angreifen? Du kannst einen Übungskampf ohne Konsequenzen durchführen</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>Nein, nur Übung.</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} von Spieler {1}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@ Börsenwert: {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Trade>Warentausch mit {0}</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>Du spielst seit weniger als einem Jahr oder dein Koloniewert ist zu gering</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>{0} angreifen</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>Bist du sicher, dass du die Siedlung {0} angreifen möchtest?</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>Bist du sicher, dass du die Karawane {0} angreifen möchtest?</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Angriff auf Karawane</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Du hast die feindliche Karawane vernichtet! Deine überlebenden Kolonisten und die Beute wurden auf der Weltkarte zu einer Karawane zusammengestellt.</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} greift deine Karawane an</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Deine Karawane wurde im Kampf besiegt.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Du hast den Angriff auf die Karawane abgewehrt! Überlebende Kolonisten und Beute sind auf die Weltkarte zurückgekehrt.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>

@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>Aucune donnée serveur sur l'objet du commerce</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Échange de caravane : sélectionner toute la caravane</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Attaque</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>Voulez-vous vraiment attaquer cette colonie ? Vous pouvez mener un combat d'entraînement sans conséquences</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>Non, entraînement uniquement.</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} du joueur {1}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@ Valeur en bourse : {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Trade>Échange de marchandises avec {0}</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>Vous jouez depuis moins d'un an ou votre valeur est trop faible</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>Attaquer {0}</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>Êtes-vous sûr de vouloir attaquer la colonie {0} ?</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>Êtes-vous sûr de vouloir attaquer la caravane {0} ?</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Attaque de caravane</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Vous avez anéanti la caravane ennemie ! Vos colons survivants et le butin ont été reformés en caravane sur la carte du monde.</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} attaque votre caravane</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Votre caravane a été vaincue au combat.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Vous avez repoussé l'attaque contre la caravane ! Les colons survivants et le butin sont retournés sur la carte du monde.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>

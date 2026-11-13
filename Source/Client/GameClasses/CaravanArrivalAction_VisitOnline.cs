@@ -54,12 +54,14 @@ namespace RimWorldOnlineCity
 
             Find.TickManager.Pause();
 
-            // Залишаємо лише перше речення з питанням підтвердження атаки (без згадки про тренувальний бій)
-            string rawConfirmText = "OCity_Caravan_Confirm_Attack_TestBattle_Possible".Translate().ToString();
-            int qIdx = rawConfirmText.IndexOf('?');
-            string confirmText = qIdx >= 0
-                ? rawConfirmText.Substring(0, qIdx + 1)
-                : ("OCity_Caravan_Go_Attack_Target".Translate(сaravanOnline.Label).ToString() + "?");
+            bool isSettlement = сaravanOnline is BaseOnline;
+            string confirmKey = isSettlement
+                ? "OCity_Caravan_Confirm_Attack_Settlement"
+                : "OCity_Caravan_Confirm_Attack_Caravan";
+
+            string confirmText = confirmKey.CanTranslate()
+                ? confirmKey.Translate(сaravanOnline.Label).ToString()
+                : "OCity_Caravan_Go_Attack_Target".Translate(сaravanOnline.Label).ToString();
 
             GameUtils.ShowDialodOKCancel(
                 "OCity_Caravan_Go_Attack_Target".Translate(сaravanOnline.Label),

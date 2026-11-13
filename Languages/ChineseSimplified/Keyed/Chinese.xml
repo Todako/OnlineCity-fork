@@ -15,8 +15,6 @@
 	<OCity_Caravan_LOGNoData>没有关于该贸易目标的服务器数据</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>远行队交换：选择整支远行队</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>攻击</OCity_Caravan_Go_Attack_Target>
-	<OCity_Caravan_Confirm_Attack_TestBattle_Possible>你确定要攻击该定居点吗？你可以先进行一场无损失的模拟战</OCity_Caravan_Confirm_Attack_TestBattle_Possible>
-	<OCity_Caravan_Practive>不，仅进行模拟演习。</OCity_Caravan_Practive>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>玩家{1}的{0}</OCity_Caravan_Player>
@@ -28,6 +26,13 @@
 	<OCity_Caravan_Trade>与{0}交易物资</OCity_Caravan_Trade>
 	<OCity_Caravan_Abort>你的游戏时间不足一年或基地财富过低</OCity_Caravan_Abort>
 	<OCity_Caravan_Attack>攻击{0}</OCity_Caravan_Attack>
+	<OCity_Caravan_Confirm_Attack_Settlement>你确定要袭击定居点 {0} 吗？</OCity_Caravan_Confirm_Attack_Settlement>
+	<OCity_Caravan_Confirm_Attack_Caravan>你确定要袭击远行队 {0} 吗？</OCity_Caravan_Confirm_Attack_Caravan>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>袭击远行队</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>你击败了敌方远行队！你幸存的殖民者和战利品已在世界地图上组成了一支远行队。</OCity_GameAttacker_Caravan_TakenOver>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} 正在袭击你的远行队</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>你的远行队在战斗中被击败了。</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>你击退了对远行队的袭击！幸存的殖民者和战利品已返回世界地图。</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
 
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>测试</OCity_DevTest_Test>
