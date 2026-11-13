@@ -57,6 +57,7 @@ namespace RimWorldOnlineCity
         public long AttackUpdateTick { get; set; }
         private Map GameMap { get; set; }
         private bool _isTemporaryCaravanMap = false;
+        private readonly HashSet<int> _hostCaravanInitialItemIds = new HashSet<int>();
 
         private readonly Dictionary<int, Thing> ThingPrepareChange2 = new Dictionary<int, Thing>(16);
 
@@ -169,6 +170,7 @@ namespace RimWorldOnlineCity
             LockstepController.Reset(_battleSeed);
             _localSceneReady = false;
             _isTemporaryCaravanMap = false;
+            _hostCaravanInitialItemIds.Clear();
 
             Loger.Log($"Client GameAttackHost Start 2 {HostPlaceServerId} TestMode={TestMode} Seed={_battleSeed}");
 
@@ -192,6 +194,19 @@ namespace RimWorldOnlineCity
                 {
                     _isTemporaryCaravanMap = true;
                     int caravanTile = hostCaravan.Tile;
+
+                    // Record all items originally belonging to the host's caravan so they are pre-selected after victory
+                    var caravanPawns = hostCaravan.PawnsListForReading;
+                    for (int i = 0; i < caravanPawns.Count; i++)
+                    {
+                        var cp = caravanPawns[i];
+                        if (cp == null) continue;
+                        foreach (var item in cp.EquippedWornOrInventoryThings)
+                        {
+                            if (item != null) _hostCaravanInitialItemIds.Add(item.thingIDNumber);
+                        }
+                    }
+
                     Rand.PushState();
                     try
                     {
@@ -406,13 +421,48 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
+                string finishBodyText;
+                if (victoryAttacker)
+                {
+                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Defeated".CanTranslate()
+                        ? "OCity_GameAttack_Host_Caravan_Defeated".Translate().ToString()
+                        : "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate().ToString();
+                }
+                else
+                {
+                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Attack_Repulsed".CanTranslate()
+                        ? "OCity_GameAttack_Host_Caravan_Attack_Repulsed".Translate().ToString()
+                        : ("OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate()).ToString();
+                }
+
+                Action saveAndShowFinishDialog = () =>
+                {
+                    SessionClientController.SaveGameNow(true, () =>
+                    {
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            GameUtils.ShowDialodOKCancel(
+                                GetHostDialogTitle(),
+                                finishBodyText,
+                                () =>
+                                {
+                                    GameAttackTrigger_Patch.ForceSpeed = -1f;
+                                    if (Find.TickManager != null && Find.TickManager.Paused)
+                                    {
+                                        Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                    }
+                                },
+                                null
+                            );
+                        });
+                    });
+                };
+
                 if (_isTemporaryCaravanMap && GameMap != null)
                 {
-                    int mapTile = GameMap.Tile;
-
                     if (!victoryAttacker)
                     {
-                        // Host defended the caravan: remove retreating enemies, pack surviving host pawns and loot back into a caravan
+                        // Host defended the caravan: remove retreating enemies and open vanilla Dialog_FormCaravan
                         if (AttackingPawns != null)
                         {
                             foreach (var enemy in AttackingPawns)
@@ -426,79 +476,26 @@ namespace RimWorldOnlineCity
                             }
                         }
 
-                        var hostPawnsToPack = new List<Pawn>();
-                        var spawnedPawns = GameMap.mapPawns.AllPawnsSpawned;
-                        for (int i = 0; i < spawnedPawns.Count; i++)
-                        {
-                            var p = spawnedPawns[i];
-                            if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer
-                                && (AttackingPawns == null || !AttackingPawns.Contains(p)))
-                            {
-                                if (p.carryTracker?.CarriedThing != null && p.inventory?.innerContainer != null)
-                                {
-                                    p.carryTracker.innerContainer.TryTransferAllToContainer(p.inventory.innerContainer);
-                                }
-                                hostPawnsToPack.Add(p);
-                            }
-                        }
-
-                        var lootThings = new List<Thing>();
-                        var allThings = GameMap.listerThings.AllThings;
-                        for (int i = allThings.Count - 1; i >= 0; i--)
-                        {
-                            var th = allThings[i];
-                            if (th == null || th.Destroyed) continue;
-                            if (th.def.category == ThingCategory.Item && !(th is Corpse))
-                            {
-                                if (th.Spawned) th.DeSpawn();
-                                lootThings.Add(th);
-                            }
-                        }
-
-                        if (hostPawnsToPack.Count > 0)
-                        {
-                            var restoredCaravan = CaravanMaker.MakeCaravan(hostPawnsToPack, Faction.OfPlayer, mapTile, false);
-                            for (int i = 0; i < lootThings.Count; i++)
-                            {
-                                var item = lootThings[i];
-                                if (item == null || item.Destroyed) continue;
-                                var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, restoredCaravan.PawnsListForReading, null);
-                                if (recipient?.inventory?.innerContainer != null)
-                                {
-                                    recipient.inventory.innerContainer.TryAdd(item, true);
-                                }
-                            }
-                        }
-
-                        for (int i = 0; i < hostPawnsToPack.Count; i++)
-                        {
-                            var pawn = hostPawnsToPack[i];
-                            if (!pawn.IsWorldPawn())
-                            {
-                                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
-                            }
-                        }
+                        GameUtils.OpenCaravanLootSelectionDialog(GameMap, _hostCaravanInitialItemIds, saveAndShowFinishDialog);
                     }
                     else
                     {
-                        // Host lost or surrendered the caravan: destroy remaining pawns on the temporary map before unloading it
                         var remainingPawns = new List<Pawn>(GameMap.mapPawns.AllPawns);
                         for (int i = 0; i < remainingPawns.Count; i++)
                         {
                             GameUtils.PawnDestroy(remainingPawns[i]);
                         }
-                    }
 
-                    // Switch camera away from the temporary map before removing it
-                    try { CameraJumper.TryShowWorld(); } catch { }
-                    GameUtils.DeinitAndRemoveMapSafe(GameMap);
+                        try { CameraJumper.TryShowWorld(); } catch { }
+                        GameUtils.DeinitAndRemoveMapSafe(GameMap);
+                        saveAndShowFinishDialog();
+                    }
                 }
                 else if (victoryAttacker)
                 {
-                    if (GameMap?.Parent != null)
-                    {
-                        Find.WorldObjects.Remove(GameMap.Parent);
-                    }
+                    try { CameraJumper.TryShowWorld(); } catch { }
+                    GameUtils.DeinitAndRemoveMapSafe(GameMap);
+                    saveAndShowFinishDialog();
                 }
                 else if (AttackingPawns != null && GameMap != null)
                 {
@@ -516,41 +513,12 @@ namespace RimWorldOnlineCity
                     {
                         GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
                     }
-                }
-
-                string finishBodyText;
-                if (victoryAttacker)
-                {
-                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Defeated".CanTranslate()
-                        ? "OCity_GameAttack_Host_Caravan_Defeated".Translate().ToString()
-                        : "OCity_GameAttack_Host_Caravan_TransferToNewOwner".Translate().ToString();
+                    saveAndShowFinishDialog();
                 }
                 else
                 {
-                    finishBodyText = _isTemporaryCaravanMap && "OCity_GameAttack_Host_Caravan_Attack_Repulsed".CanTranslate()
-                        ? "OCity_GameAttack_Host_Caravan_Attack_Repulsed".Translate().ToString()
-                        : ("OCity_GameAttack_Host_Atack_Repulsed".Translate() + Environment.NewLine + "OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch".Translate()).ToString();
+                    saveAndShowFinishDialog();
                 }
-
-                SessionClientController.SaveGameNow(true, () =>
-                {
-                    ModBaseData.RunMainThread(() =>
-                    {
-                        GameUtils.ShowDialodOKCancel(
-                            GetHostDialogTitle(),
-                            finishBodyText,
-                            () =>
-                            {
-                                GameAttackTrigger_Patch.ForceSpeed = -1f;
-                                if (Find.TickManager != null && Find.TickManager.Paused)
-                                {
-                                    Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
-                                }
-                            },
-                            null
-                        );
-                    });
-                });
             });
         }
 
@@ -1474,16 +1442,17 @@ namespace RimWorldOnlineCity
                     }
                 }
 
+                // Synchronize movement and combat jobs for all host pawns and animals (including GotoWander)
                 if (!AttackingPawnDic.ContainsKey(pawnId) && job.def != null)
                 {
                     bool isIdleWait = job.def == JobDefOf.Wait_Combat
                         || job.def == JobDefOf.Wait
                         || job.def == JobDefOf.Wait_MaintainPosture
-                        || job.def == JobDefOf.Wait_Wander
-                        || job.def == JobDefOf.GotoWander;
+                        || job.def == JobDefOf.Wait_Wander;
 
                     bool shouldSync = (job.playerForced && !isIdleWait)
                         || job.def == JobDefOf.Goto
+                        || job.def == JobDefOf.GotoWander
                         || job.def == JobDefOf.AttackMelee
                         || job.def == JobDefOf.AttackStatic
                         || job.def == JobDefOf.Flee

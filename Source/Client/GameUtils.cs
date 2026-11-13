@@ -960,6 +960,205 @@ namespace RimWorldOnlineCity
             }
         }
 
+        /// <summary>
+        /// Prepares a temporary caravan battle map for loot selection and opens the vanilla
+        /// Dialog_FormCaravan window with the player's colonists, animals, and personal items pre-selected.
+        /// </summary>
+        public static void OpenCaravanLootSelectionDialog(Map map, HashSet<int> preselectedItemIds, Action onFinished)
+        {
+            if (map == null)
+            {
+                onFinished?.Invoke();
+                return;
+            }
+
+            if (preselectedItemIds == null)
+            {
+                preselectedItemIds = new HashSet<int>();
+            }
+
+            try
+            {
+                // 1. Neutralize any remaining hostile threats and drop enemy caravan cargo onto the map
+                // so all loot appears in Dialog_FormCaravan and reformation is never blocked by threats.
+                var allPawns = new List<Pawn>(map.mapPawns.AllPawnsSpawned);
+                for (int i = 0; i < allPawns.Count; i++)
+                {
+                    var p = allPawns[i];
+                    if (p == null || p.Destroyed) continue;
+
+                    if (p.Faction == Faction.OfPlayer)
+                    {
+                        if (p.drafter != null && p.drafter.Drafted) p.drafter.Drafted = false;
+                        if (p.carryTracker?.CarriedThing != null && p.inventory?.innerContainer != null)
+                        {
+                            p.carryTracker.innerContainer.TryTransferAllToContainer(p.inventory.innerContainer);
+                        }
+
+                        foreach (var item in p.EquippedWornOrInventoryThings)
+                        {
+                            if (item != null) preselectedItemIds.Add(item.thingIDNumber);
+                        }
+                    }
+                    else
+                    {
+                        // Drop inventory and equipment of defeated/downed enemies so the winner can select them in the UI
+                        if (p.inventory?.innerContainer != null && p.inventory.innerContainer.Count > 0)
+                        {
+                            p.inventory.innerContainer.TryDropAll(p.Position, map, ThingPlaceMode.Near);
+                        }
+                        if (p.equipment != null && p.equipment.HasAnything())
+                        {
+                            p.equipment.DropAllEquipment(p.Position, forbid: false);
+                        }
+
+                        if (!p.Dead && !p.Downed)
+                        {
+                            if (p.RaceProps.Animal)
+                            {
+                                p.SetFaction(null);
+                                p.jobs?.StopAll();
+                            }
+                            else
+                            {
+                                PawnDestroy(p);
+                            }
+                        }
+                    }
+                }
+
+                // Also drop hidden inventory containers from enemy corpses (e.g., dead enemy pack animals)
+                var allThings = new List<Thing>(map.listerThings.AllThings);
+                for (int i = 0; i < allThings.Count; i++)
+                {
+                    if (allThings[i] is Corpse corpse && corpse.InnerPawn != null && corpse.InnerPawn.Faction != Faction.OfPlayer)
+                    {
+                        var innerP = corpse.InnerPawn;
+                        if (innerP.inventory?.innerContainer != null && innerP.inventory.innerContainer.Count > 0)
+                        {
+                            innerP.inventory.innerContainer.TryDropAll(corpse.Position, map, ThingPlaceMode.Near);
+                        }
+                    }
+                    if (allThings[i] != null && allThings[i].def.category == ThingCategory.Item)
+                    {
+                        CompForbiddable compForbiddable = (allThings[i] as ThingWithComps)?.GetComp<CompForbiddable>();
+                        if (compForbiddable != null && compForbiddable.Forbidden)
+                        {
+                            compForbiddable.Forbidden = false;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("OpenCaravanLootSelectionDialog prepare warning: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+
+            bool finishedCalled = false;
+            Action finalizeAndCloseMap = () =>
+            {
+                if (finishedCalled) return;
+                finishedCalled = true;
+
+                try
+                {
+                    if (map != null && Current.Game?.Maps != null && Current.Game.Maps.Contains(map))
+                    {
+                        // Fallback: if the player closed Dialog_FormCaravan without forming, pack their surviving pawns automatically
+                        var remainingPlayerPawns = new List<Pawn>();
+                        var spawned = map.mapPawns.AllPawnsSpawned;
+                        for (int i = 0; i < spawned.Count; i++)
+                        {
+                            var p = spawned[i];
+                            if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer)
+                            {
+                                remainingPlayerPawns.Add(p);
+                            }
+                        }
+
+                        if (remainingPlayerPawns.Count > 0)
+                        {
+                            int tile = map.Tile;
+                            CaravanMaker.MakeCaravan(remainingPlayerPawns, Faction.OfPlayer, tile, false);
+                            for (int i = 0; i < remainingPlayerPawns.Count; i++)
+                            {
+                                if (!remainingPlayerPawns[i].IsWorldPawn())
+                                {
+                                    Find.WorldPawns.PassToWorld(remainingPlayerPawns[i], PawnDiscardDecideMode.Decide);
+                                }
+                            }
+                        }
+
+                        var leftoverPawns = new List<Pawn>(map.mapPawns.AllPawns);
+                        for (int i = 0; i < leftoverPawns.Count; i++)
+                        {
+                            if (leftoverPawns[i] != null && leftoverPawns[i].Faction != Faction.OfPlayer)
+                            {
+                                PawnDestroy(leftoverPawns[i]);
+                            }
+                        }
+
+                        try { CameraJumper.TryShowWorld(); } catch { }
+                        DeinitAndRemoveMapSafe(map);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Loger.Log("OpenCaravanLootSelectionDialog finalize warning: " + ex.Message, Loger.LogLevel.WARNING);
+                }
+
+                onFinished?.Invoke();
+            };
+
+            try
+            {
+                CameraJumper.TryJump(new GlobalTargetInfo(map.Center, map));
+                var dialog = new Dialog_FormCaravan(map, reform: true, onClosed: finalizeAndCloseMap, mapAboutToBeRemoved: true);
+                Find.WindowStack.Add(dialog);
+
+                if (dialog.transferables != null)
+                {
+                    for (int i = 0; i < dialog.transferables.Count; i++)
+                    {
+                        var tr = dialog.transferables[i];
+                        if (tr == null || !tr.HasAnyThing) continue;
+
+                        if (tr.AnyThing is Pawn p)
+                        {
+                            if (p.Faction == Faction.OfPlayer && !p.Dead)
+                            {
+                                tr.AdjustTo(tr.GetMaximumToTransfer());
+                            }
+                            else
+                            {
+                                tr.AdjustTo(0);
+                            }
+                        }
+                        else
+                        {
+                            bool isPlayerItem = false;
+                            for (int t = 0; t < tr.things.Count; t++)
+                            {
+                                if (tr.things[t] != null && preselectedItemIds.Contains(tr.things[t].thingIDNumber))
+                                {
+                                    isPlayerItem = true;
+                                    break;
+                                }
+                            }
+                            tr.AdjustTo(isPlayerItem ? tr.GetMaximumToTransfer() : 0);
+                        }
+                    }
+
+                    AccessTools.Method(typeof(Dialog_FormCaravan), "CountToTransferChanged")?.Invoke(dialog, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("OpenCaravanLootSelectionDialog open warning: " + ex.Message, Loger.LogLevel.WARNING);
+                finalizeAndCloseMap();
+            }
+        }
+
         public static void ApplyState(Thing thing, AttackThingState state, bool pawnHealthStateDead = false)
         {
             if (thing == null || state == null || thing.Destroyed) return;

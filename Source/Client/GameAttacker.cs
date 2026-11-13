@@ -40,6 +40,7 @@ namespace RimWorldOnlineCity
 
         public bool TestMode { get; set; }
         public bool IsCaravanTarget { get; private set; }
+        private string _targetSettlementName;
         public DateTime PreparationEndTimeUtc { get; private set; }
         public bool AttackerReady { get; private set; }
         private bool _prepDialogShown;
@@ -119,6 +120,7 @@ namespace RimWorldOnlineCity
             SessionClientController.SaveGameNowInEvent(false);
 
             IsCaravanTarget = !(attackedTarget is BaseOnline);
+            _targetSettlementName = attackedTarget.OnlineName;
             string hostLogin = attackedTarget.Player.Public.Login;
             long hostPlaceId = attackedTarget.OnlineWObject.PlaceServerId;
             long initiatorPlaceId = UpdateWorldController.GetServerInfo(caravan).PlaceServerId;
@@ -656,9 +658,20 @@ namespace RimWorldOnlineCity
                     ? new Job(jobDef, targetA, targetB)
                     : (targetA.IsValid ? new Job(jobDef, targetA) : new Job(jobDef));
 
-                job.playerForced = true;
-                job.expiryInterval = int.MaxValue;
-                job.checkOverrideOnExpire = false;
+                if (jobDef == JobDefOf.GotoWander)
+                {
+                    job.playerForced = false;
+                    job.locomotionUrgency = LocomotionUrgency.Walk;
+                    job.expiryInterval = 400;
+                    job.checkOverrideOnExpire = true;
+                }
+                else
+                {
+                    job.playerForced = true;
+                    job.expiryInterval = int.MaxValue;
+                    job.checkOverrideOnExpire = false;
+                }
+
                 if (comm.Count > 0) job.count = comm.Count;
 
                 if (!string.IsNullOrEmpty(comm.AbilityDefName) && pawn.abilities != null)
@@ -1160,8 +1173,6 @@ namespace RimWorldOnlineCity
             if (ApplyingRemoteCommand || job == null || pawn == null) return;
             if (!AttackerPawns.TryGetValue(pawn, out int id)) return;
 
-            // Ignore automatic idle/wander transitions when a job finishes,
-            // so the Host pawn completes its movement path instead of stopping 1-2 cells early
             if (job.def == JobDefOf.Wait_Combat
                 || job.def == JobDefOf.Wait
                 || job.def == JobDefOf.Wait_MaintainPosture
@@ -1353,6 +1364,100 @@ namespace RimWorldOnlineCity
             }, "GeneratingMapForNewEncounter", false, null);
         }
 
+        /// <summary>
+        /// Converts the temporary Ambush MapParent into a permanent player Settlement
+        /// and transfers ownership of all buildings on the conquered map to Faction.OfPlayer.
+        /// </summary>
+        private void ClaimConqueredSettlement()
+        {
+            if (GameMap == null) return;
+
+            try
+            {
+                int mapTile = GameMap.Tile;
+                var oldParent = GameMap.Parent;
+
+                // Remove any lingering BaseOnline marker on this tile before adding the new Settlement
+                var objectsAtTile = new List<WorldObject>(Find.WorldObjects.ObjectsAt(mapTile));
+                for (int i = 0; i < objectsAtTile.Count; i++)
+                {
+                    if (objectsAtTile[i] is BaseOnline)
+                    {
+                        Find.WorldObjects.Remove(objectsAtTile[i]);
+                    }
+                }
+
+                TileFinder_IsValidTileForNewSettlement_Patch.Off = true;
+                try
+                {
+                    var newSettlement = (Settlement)WorldObjectMaker.MakeWorldObject(WorldObjectDefOf.Settlement);
+                    newSettlement.SetFaction(Faction.OfPlayer);
+                    newSettlement.Tile = mapTile;
+                    newSettlement.Name = !string.IsNullOrEmpty(_targetSettlementName)
+                        ? _targetSettlementName
+                        : SettlementNameGenerator.GenerateSettlementName(newSettlement, null);
+
+                    Find.WorldObjects.Add(newSettlement);
+
+                    // Reassign GameMap.info.parent BEFORE removing oldParent so MapParent.PostRemove does not unload GameMap!
+                    GameMap.info.parent = newSettlement;
+
+                    if (oldParent != null && oldParent != newSettlement && Find.WorldObjects.Contains(oldParent))
+                    {
+                        Find.WorldObjects.Remove(oldParent);
+                    }
+                }
+                finally
+                {
+                    TileFinder_IsValidTileForNewSettlement_Patch.Off = false;
+                }
+
+                // Transfer all buildings/structures on the map to Faction.OfPlayer and un-forbid items
+                var allThings = GameMap.listerThings.AllThings;
+                for (int i = 0; i < allThings.Count; i++)
+                {
+                    var thing = allThings[i];
+                    if (thing == null || thing.Destroyed) continue;
+
+                    if (thing is Building && thing.def.CanHaveFaction && thing.Faction != Faction.OfPlayer)
+                    {
+                        thing.SetFaction(Faction.OfPlayer);
+                    }
+
+                    var compForbiddable = (thing as ThingWithComps)?.GetComp<CompForbiddable>();
+                    if (compForbiddable != null && compForbiddable.Forbidden)
+                    {
+                        compForbiddable.Forbidden = false;
+                    }
+                }
+
+                // Make non-hostile animals neutral and remove remaining hostile humanlike pawns
+                var mapPawnsA = new List<Pawn>(GameMap.mapPawns.AllPawnsSpawned);
+                for (int i = 0; i < mapPawnsA.Count; i++)
+                {
+                    var pawn = mapPawnsA[i];
+                    if (pawn == null || pawn.Faction == Faction.OfPlayer) continue;
+
+                    if (pawn.def.CanHaveFaction && !pawn.RaceProps.Humanlike)
+                    {
+                        pawn.SetFaction(null);
+                    }
+                }
+
+                try
+                {
+                    GameMap.fogGrid?.ClearAllFog();
+                }
+                catch { }
+
+                Find.ColonistBar?.MarkColonistsDirty();
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("ClaimConqueredSettlement Exception: " + ex, Loger.LogLevel.ERROR);
+            }
+        }
+
         public void Clear()
         {
             if (TimerObj != null) SessionClientController.Timers.Remove(TimerObj);
@@ -1389,141 +1494,47 @@ namespace RimWorldOnlineCity
                     return;
                 }
 
+                string victoryBodyText = IsCaravanTarget && "OCity_GameAttacker_Caravan_TakenOver".CanTranslate()
+                    ? "OCity_GameAttacker_Caravan_TakenOver".Translate().ToString()
+                    : "OCity_GameAttacker_Settlement_TakenOver".Translate().ToString();
+
+                Action saveAndShowFinishDialog = () =>
+                {
+                    SessionClientController.SaveGameNow(true, () =>
+                    {
+                        ModBaseData.RunMainThread(() =>
+                        {
+                            GameUtils.ShowDialodOKCancel(
+                                GetAttackDialogTitle(),
+                                victoryAttacker
+                                    ? victoryBodyText
+                                    : ("OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate()).ToString(),
+                                () =>
+                                {
+                                    GameAttackTrigger_Patch.ForceSpeed = -1f;
+                                    if (Find.TickManager != null && Find.TickManager.Paused)
+                                    {
+                                        Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                                    }
+                                },
+                                null
+                            );
+                        });
+                    });
+                };
+
                 if (victoryAttacker && !IsCaravanTarget)
                 {
-                    // Settlement victory: keep the conquered map
-                    var mapPawnsA = GameMap.mapPawns.AllPawnsSpawned;
-                    for (int i = 0; i < mapPawnsA.Count; i++)
-                    {
-                        var pawn = mapPawnsA[i];
-                        if (!pawn.def.CanHaveFaction || pawn.RaceProps.Humanlike || pawn.Faction == null || pawn.Faction.IsPlayer) continue;
-                        pawn.SetFaction(null);
-                    }
+                    ClaimConqueredSettlement();
+                    saveAndShowFinishDialog();
                 }
                 else if (victoryAttacker && IsCaravanTarget)
                 {
-                    // Caravan victory: pack all surviving attacker pawns and battle loot into a world caravan
-                    var listPawn = new List<Pawn>(AttackerPawns.Count);
-                    foreach (var pawn in AttackerPawns.Keys)
-                    {
-                        if (pawn != null && !pawn.Dead && !pawn.Destroyed)
-                        {
-                            if (pawn.carryTracker?.CarriedThing != null && pawn.inventory?.innerContainer != null)
-                            {
-                                pawn.carryTracker.innerContainer.TryTransferAllToContainer(pawn.inventory.innerContainer);
-                            }
-                            listPawn.Add(pawn);
-                        }
-                    }
-
-                    var lootThings = new List<Thing>();
-                    if (GameMap != null)
-                    {
-                        var allThings = GameMap.listerThings.AllThings;
-                        for (int i = allThings.Count - 1; i >= 0; i--)
-                        {
-                            var th = allThings[i];
-                            if (th == null || th.Destroyed) continue;
-
-                            if (th is Corpse corpse && corpse.InnerPawn != null && !AttackerPawns.ContainsKey(corpse.InnerPawn))
-                            {
-                                var innerP = corpse.InnerPawn;
-                                if (innerP.equipment?.AllEquipmentListForReading != null)
-                                {
-                                    for (int e = innerP.equipment.AllEquipmentListForReading.Count - 1; e >= 0; e--)
-                                    {
-                                        var eq = innerP.equipment.AllEquipmentListForReading[e];
-                                        innerP.equipment.Remove(eq);
-                                        lootThings.Add(eq);
-                                    }
-                                }
-                                if (innerP.apparel?.WornApparel != null)
-                                {
-                                    for (int a = innerP.apparel.WornApparel.Count - 1; a >= 0; a--)
-                                    {
-                                        var ap = innerP.apparel.WornApparel[a];
-                                        innerP.apparel.Remove(ap);
-                                        lootThings.Add(ap);
-                                    }
-                                }
-                                if (innerP.inventory?.innerContainer != null)
-                                {
-                                    for (int inv = innerP.inventory.innerContainer.Count - 1; inv >= 0; inv--)
-                                    {
-                                        var item = innerP.inventory.innerContainer[inv];
-                                        innerP.inventory.innerContainer.Remove(item);
-                                        lootThings.Add(item);
-                                    }
-                                }
-                            }
-                            else if (th.def.category == ThingCategory.Item && !(th is Corpse))
-                            {
-                                if (th.Spawned) th.DeSpawn();
-                                lootThings.Add(th);
-                            }
-                        }
-
-                        var allPawns = GameMap.mapPawns.AllPawnsSpawned;
-                        for (int i = allPawns.Count - 1; i >= 0; i--)
-                        {
-                            var p = allPawns[i];
-                            if (p != null && !AttackerPawns.ContainsKey(p))
-                            {
-                                if (p.equipment?.AllEquipmentListForReading != null)
-                                {
-                                    for (int e = p.equipment.AllEquipmentListForReading.Count - 1; e >= 0; e--)
-                                    {
-                                        var eq = p.equipment.AllEquipmentListForReading[e];
-                                        p.equipment.Remove(eq);
-                                        lootThings.Add(eq);
-                                    }
-                                }
-                                if (p.inventory?.innerContainer != null)
-                                {
-                                    for (int inv = p.inventory.innerContainer.Count - 1; inv >= 0; inv--)
-                                    {
-                                        var item = p.inventory.innerContainer[inv];
-                                        p.inventory.innerContainer.Remove(item);
-                                        lootThings.Add(item);
-                                    }
-                                }
-                                GameUtils.PawnDestroy(p);
-                            }
-                        }
-                    }
-
-                    int mapTile = GameMap.Tile;
-                    Caravan newCaravan = null;
-                    if (listPawn.Count > 0)
-                    {
-                        newCaravan = CaravanMaker.MakeCaravan(listPawn, Faction.OfPlayer, mapTile, false);
-                        for (int i = 0; i < lootThings.Count; i++)
-                        {
-                            var item = lootThings[i];
-                            if (item == null || item.Destroyed) continue;
-                            var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, newCaravan.PawnsListForReading, null);
-                            if (recipient?.inventory?.innerContainer != null)
-                            {
-                                recipient.inventory.innerContainer.TryAdd(item, true);
-                            }
-                        }
-                    }
-
-                    try { CameraJumper.TryShowWorld(); } catch { }
-                    GameUtils.DeinitAndRemoveMapSafe(GameMap);
-
-                    for (int i = 0; i < listPawn.Count; i++)
-                    {
-                        var pawn = listPawn[i];
-                        if (!pawn.IsWorldPawn())
-                        {
-                            Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
-                        }
-                    }
+                    // Open vanilla Dialog_FormCaravan so the player can choose which enemy loot to take
+                    GameUtils.OpenCaravanLootSelectionDialog(GameMap, null, saveAndShowFinishDialog);
                 }
                 else
                 {
-                    // Defeat or retreat: return all non-downed attacker pawns within the 15-cell MapBorder zone to a caravan
                     var listPawn = new List<Pawn>(AttackerPawns.Count);
                     foreach (var pawn in AttackerPawns.Keys)
                     {
@@ -1556,33 +1567,9 @@ namespace RimWorldOnlineCity
                             Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
                         }
                     }
+
+                    saveAndShowFinishDialog();
                 }
-
-                string victoryBodyText = IsCaravanTarget && "OCity_GameAttacker_Caravan_TakenOver".CanTranslate()
-                    ? "OCity_GameAttacker_Caravan_TakenOver".Translate().ToString()
-                    : "OCity_GameAttacker_Settlement_TakenOver".Translate().ToString();
-
-                SessionClientController.SaveGameNow(true, () =>
-                {
-                    ModBaseData.RunMainThread(() =>
-                    {
-                        GameUtils.ShowDialodOKCancel(
-                            GetAttackDialogTitle(),
-                            victoryAttacker
-                                ? victoryBodyText
-                                : ("OCity_GameAttacker_Defeated".Translate() + Environment.NewLine + "OCity_GameAttacker_Colonist_Return".Translate()).ToString(),
-                            () =>
-                            {
-                                GameAttackTrigger_Patch.ForceSpeed = -1f;
-                                if (Find.TickManager != null && Find.TickManager.Paused)
-                                {
-                                    Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
-                                }
-                            },
-                            null
-                        );
-                    });
-                });
 
                 Loger.Log("Client AttackerFinish end");
             });
