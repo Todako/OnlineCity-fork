@@ -373,14 +373,14 @@ namespace RimWorldOnlineCity
                     }
                     else
                     {
-                        dis = AttackUtils.CheckPossibilityAttack(
+                        dis = GameUtils.TranslateAttackReason(AttackUtils.CheckPossibilityAttack(
                             SessionClientController.Data.MyEx,
                             player,
                             myEntry.PlaceServerId,
                             this.OnlineWObject.PlaceServerId,
                             SessionClientController.Data.ProtectingNovice,
                             this is BaseOnline
-                        );
+                        ));
                     }
 
                     fmo = new FloatMenuOption("OCity_Caravan_Attack".Translate(OnlinePlayerLogin + " " + OnlineName)

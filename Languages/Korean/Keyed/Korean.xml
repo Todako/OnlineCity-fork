@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>거래 대상에 대한 서버 데이터가 없습니다</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>상단 교환: 상단 전체 선택</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>공격</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>공격자가 오프라인 상태입니다</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>플레이어가 오프라인 상태입니다</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>PvP 모드가 활성화되어 있지 않습니다</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>상대 플레이어의 PvP 모드가 활성화되어 있지 않습니다</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>상단의 가치는 {0} 미만이어야 합니다</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>최근에 이미 공격을 받았습니다. {0}까지 기다려 주세요</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>계산 오류</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>플레이어 {1}의 {0}</OCity_Caravan_Player>

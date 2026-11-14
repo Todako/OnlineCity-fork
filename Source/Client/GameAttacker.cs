@@ -58,7 +58,7 @@ namespace RimWorldOnlineCity
         private List<string> AttackerOriginalPawnLabels { get; set; }
         private HashSet<int> AttackerOriginalPawnIds { get; set; }
 
-        // Inertia window after local movement to prevent delayed UpdateState packets from snapping pawns back
+        // Inertia window after movement commands to prevent delayed UpdateState packets from snapping pawns
         private readonly Dictionary<int, long> _ignorePosSyncUntilTick = new Dictionary<int, long>(32);
 
         private readonly List<AttackPawnCommand> OutgoingCommands = new List<AttackPawnCommand>(32);
@@ -150,12 +150,12 @@ namespace RimWorldOnlineCity
 
                         if (!string.IsNullOrEmpty(res.ErrorText))
                         {
-                            ErrorBreak(res.ErrorText?.ServerTranslate());
+                            ErrorBreak(GameUtils.TranslateAttackReason(res.ErrorText));
                             return;
                         }
                         if (!string.IsNullOrEmpty(connect.ErrorMessage))
                         {
-                            ErrorBreak(connect.ErrorMessage?.ServerTranslate());
+                            ErrorBreak(GameUtils.TranslateAttackReason(connect.ErrorMessage));
                             return;
                         }
 
@@ -166,7 +166,7 @@ namespace RimWorldOnlineCity
                             var res1 = connect.AttackOnlineInitiator(new AttackInitiatorToSrv { State = 1 });
                             if (!string.IsNullOrEmpty(connect.ErrorMessage))
                             {
-                                ErrorBreak(connect.ErrorMessage?.ServerTranslate());
+                                ErrorBreak(GameUtils.TranslateAttackReason(connect.ErrorMessage));
                                 return;
                             }
                             if (res1.State == 2) break;
@@ -204,7 +204,7 @@ namespace RimWorldOnlineCity
 
                         if (!string.IsNullOrEmpty(connect.ErrorMessage))
                         {
-                            ErrorBreak(connect.ErrorMessage?.ServerTranslate());
+                            ErrorBreak(GameUtils.TranslateAttackReason(connect.ErrorMessage));
                             return;
                         }
                         TestMode = response.TestMode;
@@ -216,7 +216,7 @@ namespace RimWorldOnlineCity
                             response = connect.AttackOnlineInitiator(new AttackInitiatorToSrv { State = 3 });
                             if (!string.IsNullOrEmpty(connect.ErrorMessage))
                             {
-                                ErrorBreak(connect.ErrorMessage?.ServerTranslate());
+                                ErrorBreak(GameUtils.TranslateAttackReason(connect.ErrorMessage));
                                 return;
                             }
                             if (response.State >= 4) break;
@@ -342,7 +342,7 @@ namespace RimWorldOnlineCity
                         ErrorBreak(ex.Message);
                     }
                 });
-            }, "Connecting", true, null);
+            }, "OCity_Dialog_Connecting".Translate(), true, null);
         }
 
         private Thing GetThingByHostId(int hostid)
@@ -457,8 +457,23 @@ namespace RimWorldOnlineCity
 
         private void ApplyStateAndDeletions(AttackInitiatorFromSrv toClient)
         {
+            long curTick = LockstepController.LocalBattleTick;
+
             if (toClient.HostCommands != null && toClient.HostCommands.Count > 0)
             {
+                // Pre-register movement immunity for all pawns receiving HostCommands in this packet
+                // so UpdateState in the same packet does not snap them before the scheduled tick runs
+                for (int i = 0; i < toClient.HostCommands.Count; i++)
+                {
+                    var comm = toClient.HostCommands[i];
+                    if (comm == null) continue;
+                    var p = GetThingByHostId(comm.HostPawnID) as Pawn;
+                    if (p != null)
+                    {
+                        _ignorePosSyncUntilTick[p.thingIDNumber] = curTick + 120;
+                    }
+                }
+
                 if (GameAttackTrigger_Patch.ForceSpeed <= 0f)
                 {
                     ApplyingRemoteCommand = true;
@@ -490,7 +505,6 @@ namespace RimWorldOnlineCity
 
             if (toClient.UpdateState != null)
             {
-                long curTick = LockstepController.LocalBattleTick;
                 for (int i = 0; i < toClient.UpdateState.Count; i++)
                 {
                     var st = toClient.UpdateState[i];
@@ -508,31 +522,35 @@ namespace RimWorldOnlineCity
 
                             if (sameHealthState)
                             {
+                                // Attacker's own mobile pawns are locally authoritative on the attacker's screen;
+                                // never snap them back with delayed Host positions unless desynced by > 10 cells
+                                if (AttackerPawns.ContainsKey(p) && distSq <= 100f)
+                                {
+                                    if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                    continue;
+                                }
+
                                 bool isMoving = p.pather != null && p.pather.Moving;
                                 if (isMoving)
                                 {
-                                    _ignorePosSyncUntilTick[p.thingIDNumber] = curTick + 90;
-                                    if (distSq <= 36f)
+                                    _ignorePosSyncUntilTick[p.thingIDNumber] = curTick + 120;
+                                    if (distSq <= 64f)
                                     {
                                         if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
                                         continue;
                                     }
                                 }
-                                else
+                                else if (_ignorePosSyncUntilTick.TryGetValue(p.thingIDNumber, out long ignoreUntil)
+                                    && curTick <= ignoreUntil
+                                    && distSq <= 64f)
                                 {
-                                    if (_ignorePosSyncUntilTick.TryGetValue(p.thingIDNumber, out long ignoreUntil)
-                                        && curTick <= ignoreUntil
-                                        && distSq <= 36f)
-                                    {
-                                        if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
-                                        continue;
-                                    }
-
-                                    if (AttackerPawns.ContainsKey(p) && distSq <= 4f)
-                                    {
-                                        if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
-                                        continue;
-                                    }
+                                    if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                    continue;
+                                }
+                                else if (distSq <= 2f)
+                                {
+                                    if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
+                                    continue;
                                 }
                             }
                         }
@@ -573,7 +591,7 @@ namespace RimWorldOnlineCity
 
             try
             {
-                _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 90;
+                _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 120;
 
                 if (comm.Command == AttackPawnCommand.PawnCommand.SetDrafted)
                 {
@@ -1349,7 +1367,7 @@ namespace RimWorldOnlineCity
                                 Loger.Log("Client CreateClearMap Event Exception: " + exp, Loger.LogLevel.ERROR);
                                 ErrorBreak("Error CreateClearMap2");
                             }
-                        }, "GeneratingMapForNewEncounter", false, null);
+                        }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
                     }
                     finally
                     {
@@ -1361,7 +1379,7 @@ namespace RimWorldOnlineCity
                     Loger.Log("Client CreateClearMap Exception: " + exp, Loger.LogLevel.ERROR);
                     ErrorBreak("Error CreateClearMap1");
                 }
-            }, "GeneratingMapForNewEncounter", false, null);
+            }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
         }
 
         /// <summary>
@@ -1377,7 +1395,6 @@ namespace RimWorldOnlineCity
                 int mapTile = GameMap.Tile;
                 var oldParent = GameMap.Parent;
 
-                // Remove any lingering BaseOnline marker on this tile before adding the new Settlement
                 var objectsAtTile = new List<WorldObject>(Find.WorldObjects.ObjectsAt(mapTile));
                 for (int i = 0; i < objectsAtTile.Count; i++)
                 {
@@ -1412,7 +1429,6 @@ namespace RimWorldOnlineCity
                     TileFinder_IsValidTileForNewSettlement_Patch.Off = false;
                 }
 
-                // Transfer all buildings/structures on the map to Faction.OfPlayer and un-forbid items
                 var allThings = GameMap.listerThings.AllThings;
                 for (int i = 0; i < allThings.Count; i++)
                 {
@@ -1431,7 +1447,6 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                // Make non-hostile animals neutral and remove remaining hostile humanlike pawns
                 var mapPawnsA = new List<Pawn>(GameMap.mapPawns.AllPawnsSpawned);
                 for (int i = 0; i < mapPawnsA.Count; i++)
                 {
@@ -1530,8 +1545,17 @@ namespace RimWorldOnlineCity
                 }
                 else if (victoryAttacker && IsCaravanTarget)
                 {
-                    // Open vanilla Dialog_FormCaravan so the player can choose which enemy loot to take
-                    GameUtils.OpenCaravanLootSelectionDialog(GameMap, null, saveAndShowFinishDialog);
+                    var attackerItemIds = new HashSet<int>();
+                    foreach (var p in AttackerPawns.Keys)
+                    {
+                        if (p == null) continue;
+                        foreach (var item in p.EquippedWornOrInventoryThings)
+                        {
+                            if (item != null) attackerItemIds.Add(item.thingIDNumber);
+                        }
+                    }
+
+                    GameUtils.OpenCaravanLootSelectionDialog(GameMap, attackerItemIds, saveAndShowFinishDialog);
                 }
                 else
                 {

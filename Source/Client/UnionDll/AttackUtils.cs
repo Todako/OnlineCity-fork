@@ -11,15 +11,25 @@ namespace OCUnion
 
             if (isSettlement)
             {
-                // Спрощена середня формула обчислення вартості атакувальних рейдів:
-                // 4 / (25/1000000 + 10/багатство колонії) + 2000 = багатство нападників
                 return 4f / (25f / 1000000f + 10f / costTarget) + 2000f;
             }
             else
             {
-                // Якщо атакують каравани, нападники можуть бути дорожчими на 15% (+ базовий запас 2000 на спорядження/їжу)
                 return costTarget * 1.15f + 2000f;
             }
+        }
+
+        private static bool IsPlayerOnlineSafe(IPlayerEx player)
+        {
+            if (player == null) return false;
+            if (player.Online) return true;
+            if (player.Public != null && player.Public.LastOnlineTime > DateTime.MinValue)
+            {
+                // Fallback against timezone or clock skew between client and server
+                double diffSec = Math.Abs((DateTime.UtcNow - player.Public.LastOnlineTime).TotalSeconds);
+                if (diffSec < 45.0) return true;
+            }
+            return false;
         }
 
         public static string CheckPossibilityAttack(IPlayerEx attacker, IPlayerEx host, long attackerWOServerId, long hostWOServerId,
@@ -28,8 +38,8 @@ namespace OCUnion
             try
             {
                 var res =
-                    !attacker.Online ? "Attacker not online"
-                    : !host.Online ? "Host not online"
+                    !IsPlayerOnlineSafe(attacker) ? "Attacker not online"
+                    : !IsPlayerOnlineSafe(host) ? "Host not online"
                     : !attacker.Public.EnablePVP ? "Attacker not EnablePVP"
                     : !host.Public.EnablePVP ? "Host not EnablePVP"
                     : null;

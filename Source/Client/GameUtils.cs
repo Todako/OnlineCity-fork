@@ -39,6 +39,58 @@ namespace RimWorldOnlineCity
     [StaticConstructorOnStartup]
     public static class GameUtils
     {
+        public static string TranslateAttackReason(string reason)
+        {
+            if (string.IsNullOrEmpty(reason)) return null;
+
+            if (reason == "Attacker not online")
+            {
+                return "OCity_AttackUtils_AttackerNotOnline".CanTranslate()
+                    ? "OCity_AttackUtils_AttackerNotOnline".Translate().ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason == "Host not online")
+            {
+                return "OCity_AttackUtils_HostNotOnline".CanTranslate()
+                    ? "OCity_AttackUtils_HostNotOnline".Translate().ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason == "Attacker not EnablePVP")
+            {
+                return "OCity_AttackUtils_AttackerNotEnablePVP".CanTranslate()
+                    ? "OCity_AttackUtils_AttackerNotEnablePVP".Translate().ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason == "Host not EnablePVP")
+            {
+                return "OCity_AttackUtils_HostNotEnablePVP".CanTranslate()
+                    ? "OCity_AttackUtils_HostNotEnablePVP".Translate().ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason.StartsWith("The cost of the attacker must be less than ", StringComparison.Ordinal))
+            {
+                string val = reason.Substring("The cost of the attacker must be less than ".Length);
+                return "OCity_AttackUtils_MaxCost".CanTranslate()
+                    ? "OCity_AttackUtils_MaxCost".Translate(val).ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason.StartsWith("It was recently attacked. Wait to ", StringComparison.Ordinal))
+            {
+                string val = reason.Substring("It was recently attacked. Wait to ".Length);
+                return "OCity_AttackUtils_RecentlyAttacked".CanTranslate()
+                    ? "OCity_AttackUtils_RecentlyAttacked".Translate(val).ToString()
+                    : reason.ServerTranslate();
+            }
+            if (reason == "Error calc")
+            {
+                return "OCity_AttackUtils_ErrorCalc".CanTranslate()
+                    ? "OCity_AttackUtils_ErrorCalc".Translate().ToString()
+                    : reason.ServerTranslate();
+            }
+
+            return reason.ServerTranslate();
+        }
+
         internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
 
         private static readonly HashSet<ThingTrade> ExceptionDravLineThingTrade = new HashSet<ThingTrade>();
@@ -979,8 +1031,6 @@ namespace RimWorldOnlineCity
 
             try
             {
-                // 1. Neutralize any remaining hostile threats and drop enemy caravan cargo onto the map
-                // so all loot appears in Dialog_FormCaravan and reformation is never blocked by threats.
                 var allPawns = new List<Pawn>(map.mapPawns.AllPawnsSpawned);
                 for (int i = 0; i < allPawns.Count; i++)
                 {
@@ -1002,7 +1052,6 @@ namespace RimWorldOnlineCity
                     }
                     else
                     {
-                        // Drop inventory and equipment of defeated/downed enemies so the winner can select them in the UI
                         if (p.inventory?.innerContainer != null && p.inventory.innerContainer.Count > 0)
                         {
                             p.inventory.innerContainer.TryDropAll(p.Position, map, ThingPlaceMode.Near);
@@ -1027,7 +1076,6 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                // Also drop hidden inventory containers from enemy corpses (e.g., dead enemy pack animals)
                 var allThings = new List<Thing>(map.listerThings.AllThings);
                 for (int i = 0; i < allThings.Count; i++)
                 {
@@ -1064,7 +1112,6 @@ namespace RimWorldOnlineCity
                 {
                     if (map != null && Current.Game?.Maps != null && Current.Game.Maps.Contains(map))
                     {
-                        // Fallback: if the player closed Dialog_FormCaravan without forming, pack their surviving pawns automatically
                         var remainingPlayerPawns = new List<Pawn>();
                         var spawned = map.mapPawns.AllPawnsSpawned;
                         for (int i = 0; i < spawned.Count; i++)
@@ -1112,9 +1159,21 @@ namespace RimWorldOnlineCity
 
             try
             {
-                CameraJumper.TryJump(new GlobalTargetInfo(map.Center, map));
                 var dialog = new Dialog_FormCaravan(map, reform: true, onClosed: finalizeAndCloseMap, mapAboutToBeRemoved: true);
+
+                // Disable route selection so WorldRoutePlanner does not open and the caravan stays on map.Tile
+                AccessTools.Field(typeof(Dialog_FormCaravan), "canChooseRoute")?.SetValue(dialog, false);
+                AccessTools.Field(typeof(Dialog_FormCaravan), "mustChooseRoute")?.SetValue(dialog, false);
+
                 Find.WindowStack.Add(dialog);
+
+                AccessTools.Field(typeof(Dialog_FormCaravan), "canChooseRoute")?.SetValue(dialog, false);
+                AccessTools.Field(typeof(Dialog_FormCaravan), "mustChooseRoute")?.SetValue(dialog, false);
+                if (Find.WorldRoutePlanner != null && Find.WorldRoutePlanner.Active)
+                {
+                    Find.WorldRoutePlanner.Stop();
+                }
+                CameraJumper.TryHideWorld();
 
                 if (dialog.transferables != null)
                 {
@@ -1178,14 +1237,21 @@ namespace RimWorldOnlineCity
                         float distSq = pawn.Position.DistanceToSquared(targetPos);
                         bool isDownOrDead = pawn.Dead || pawn.Downed || state.DownState != AttackThingState.PawnHealthState.Mobile;
 
-                        if (isDownOrDead || distSq > 64f)
+                        if (isDownOrDead || distSq > 100f)
                         {
                             pawn.Position = targetPos;
                             pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
                         }
-                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving)
+                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving && pawn.jobs != null)
                         {
-                            pawn.pather.StartPath(targetPos, PathEndMode.OnCell);
+                            var gotoJob = new Job(JobDefOf.Goto, targetPos)
+                            {
+                                playerForced = false,
+                                locomotionUrgency = LocomotionUrgency.Jog,
+                                expiryInterval = 180,
+                                checkOverrideOnExpire = true
+                            };
+                            pawn.jobs.StartJob(gotoJob, JobCondition.InterruptForced);
                         }
                     }
                     else

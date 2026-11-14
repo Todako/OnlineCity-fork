@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>No server data on trade object</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Caravan exchange: select entire caravan</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Attack</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>Attacker is offline</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>Target player is offline</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>You do not have PvP enabled</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>Target player does not have PvP enabled</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>Attacker caravan value must be less than {0}</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>Target was attacked recently. Wait until {0}</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>Calculation error</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} of player {1}</OCity_Caravan_Player>

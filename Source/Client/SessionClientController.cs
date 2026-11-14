@@ -24,9 +24,8 @@ using Verse.Profile;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Головний контролер клієнтської сесії.
-    /// Керує життєвим циклом підключення до сервера, синхронізацією світу,
-    /// збереженням гри, фоновими таймерами та комунікацією з RimWorld API.
+    /// Main client session controller.
+    /// Manages server connection lifecycle, world synchronization, game saves, and background timers.
     /// </summary>
     public static class SessionClientController
     {
@@ -52,24 +51,17 @@ namespace RimWorldOnlineCity
 
         public static Action UpdateWorldSafelyRun { get; set; }
 
-        // Буфери для усунення регулярних виділень пам'яті в купі GC
         private static readonly List<CaravanOnline> EmptyCaravanList = new List<CaravanOnline>(0);
         private static readonly List<WorldObject> ReusablePlayerObjects = new List<WorldObject>(8);
         private static readonly List<string> ReusableOnlineList = new List<string>(64);
         private static readonly List<string> ReusableTooltipOutList = new List<string>(2);
         private static string CachedSuffix = null;
 
-        /// <summary>
-        /// Потокобезпечне логування у внутрішньоігрову консоль RimWorld через головний потік Unity.
-        /// </summary>
         private static void SafeLogWarning(string text)
         {
             ModBaseData.RunMainThread(() => Log.Warning(text));
         }
 
-        /// <summary>
-        /// Початкова ініціалізація під час завантаження модифікації.
-        /// </summary>
         public static void Init()
         {
             MainHelper.InGame = true;
@@ -90,7 +82,6 @@ namespace RimWorldOnlineCity
                 Loger.PathLog = workPath;
                 Loger.Enable = true;
 
-                // Очищення старих логів (старше 7 днів)
                 var now = DateTime.UtcNow;
                 foreach (var old in Directory.GetDirectories(workPath, "Log_*", SearchOption.TopDirectoryOnly))
                 {
@@ -112,7 +103,6 @@ namespace RimWorldOnlineCity
             Loger.Log($"Client local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss.ffff}");
             Loger.Log($"The difference between time zones: {(DateTime.UtcNow - DateTime.Now):g}");
 
-            // Фоновий розрахунок хешів файлів гри
             Task.Factory.StartNew(() => SessionClientController.CalculateHash());
         }
 
@@ -151,13 +141,9 @@ namespace RimWorldOnlineCity
         private static readonly object UpdatingWorld = new object();
         private static int GetPlayersInfoCountRequest = 0;
 
-        // Кешований словник для повторного використання списків караванів без алокацій
         private static readonly Dictionary<string, List<CaravanOnline>> CachedObjectsByPlayer =
             new Dictionary<string, List<CaravanOnline>>(64, StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>
-        /// Основний цикл оновлення стану планети та синхронізації між клієнтом і сервером.
-        /// </summary>
         private static void UpdateWorld(bool firstRun = false)
         {
             lock (UpdatingWorld)
@@ -167,6 +153,8 @@ namespace RimWorldOnlineCity
                     int step = 0;
                     try
                     {
+                        Data.ServetTimeDelta = ServerTimeDelta;
+
                         var toServ = new ModelPlayToServer
                         {
                             UpdateTime = Data.UpdateTime
@@ -197,26 +185,35 @@ namespace RimWorldOnlineCity
                         }
 
                         step = 6;
+                        // Always request info for all known players so LastOnlineTime never goes stale
+                        ReusableOnlineList.Clear();
                         if (Data.Chats != null && Data.Chats.Count > 0 && Data.Chats[0].PartyLogin != null)
                         {
-                            if (Data.Players == null || Data.Players.Count == 0 || GetPlayersInfoCountRequest % 5 == 0)
+                            var party = Data.Chats[0].PartyLogin;
+                            for (int i = 0; i < party.Count; i++)
                             {
-                                toServ.GetPlayersInfo = Data.Chats[0].PartyLogin;
-                            }
-                            else
-                            {
-                                ReusableOnlineList.Clear();
-                                foreach (var p in Data.Players.Values)
+                                var login = party[i];
+                                if (!string.IsNullOrEmpty(login) && !ReusableOnlineList.Contains(login))
                                 {
-                                    if (p.Online && p.Public?.Login != null)
-                                    {
-                                        ReusableOnlineList.Add(p.Public.Login);
-                                    }
+                                    ReusableOnlineList.Add(login);
                                 }
-                                toServ.GetPlayersInfo = ReusableOnlineList;
                             }
-                            GetPlayersInfoCountRequest++;
                         }
+                        if (Data.Players != null)
+                        {
+                            foreach (var key in Data.Players.Keys)
+                            {
+                                if (!string.IsNullOrEmpty(key) && !ReusableOnlineList.Contains(key))
+                                {
+                                    ReusableOnlineList.Add(key);
+                                }
+                            }
+                        }
+                        if (ReusableOnlineList.Count > 0)
+                        {
+                            toServ.GetPlayersInfo = ReusableOnlineList;
+                        }
+                        GetPlayersInfoCountRequest++;
 
                         step = 7;
                         ModelPlayToClient fromServ = connect.PlayInfo(toServ);
@@ -249,7 +246,6 @@ namespace RimWorldOnlineCity
 
                         if (!string.IsNullOrEmpty(fromServ.KeyReconnect)) Data.KeyReconnect = fromServ.KeyReconnect;
 
-                        // Оновлення наявних об'єктів PlayerClient без створення зайвих екземплярів
                         if (fromServ.PlayersInfo != null && fromServ.PlayersInfo.Count > 0)
                         {
                             for (int i = 0; i < fromServ.PlayersInfo.Count; i++)
@@ -290,7 +286,6 @@ namespace RimWorldOnlineCity
                         }
 
                         step = 9;
-                        // КРИТИЧНО: виконуємо LoadFromServer та обхід Find.WorldObjects строго у головному потоці Unity
                         if (!ModBaseData.RunMainThreadSync(() =>
                         {
                             UpdateWorldController.LoadFromServer(fromServ, firstRun);
@@ -439,7 +434,6 @@ namespace RimWorldOnlineCity
                 GameDataSaveLoader.SaveGame(SaveName);
                 content = ScribeSaver_InitSaving_Patch.SaveData?.ToArray() ?? new byte[0];
 
-                // Безпечне оновлення розміру з готового масиву байтів
                 if (content.Length > 0)
                 {
                     ScribeSaver_InitSaving_Patch.LastSaveSize = content.Length;
@@ -501,8 +495,6 @@ namespace RimWorldOnlineCity
             Loger.Log("Client SaveGameNow single=" + single.ToString());
             SaveGame((content) =>
             {
-                // Виконуємо мережеву синхронізацію UpdateWorld у фоновому потоці,
-                // щоб ніколи не блокувати головний потік Unity і не створювати deadlock із таймером UpdateWorldPeriodic!
                 Task.Run(() =>
                 {
                     try
@@ -591,9 +583,6 @@ namespace RimWorldOnlineCity
         private static bool LastTooltipRelogin = false;
         private static bool LastTooltipConnectFail = false;
 
-        /// <summary>
-        /// Оновлення тултіпа у правому нижньому кутку інтерфейсу (пінг, баланс).
-        /// </summary>
         private static void UpdateGlobalTooltip()
         {
             try
@@ -698,9 +687,6 @@ namespace RimWorldOnlineCity
         private static bool ReloginPauseActived = false;
         private static bool ReloginPauseShowDialog = false;
 
-        /// <summary>
-        /// Безпечна постановка на паузу під час втрати зв'язку через головний потік Unity.
-        /// </summary>
         private static void SetPauseWithRelogin()
         {
             if (SessionClient.IsRelogin
@@ -763,7 +749,8 @@ namespace RimWorldOnlineCity
                             var dc = connect.UpdateChat(Data.ChatsTime);
                             if (dc != null)
                             {
-                                Data.ServetTimeDelta = dc.Time - DateTime.UtcNow;
+                                // Keep true UTC ServerTimeDelta; dc.Time is in server local time and must not overwrite ServetTimeDelta!
+                                Data.ServetTimeDelta = ServerTimeDelta;
                                 Data.ChatsTime.Time = dc.Time;
 
                                 if (Data.ApplyChats(dc) && !test.Value)
@@ -1091,9 +1078,6 @@ namespace RimWorldOnlineCity
         private static int _singleCommandRunning = 0;
         public static bool SingleCommandIsBusy => _singleCommandRunning != 0;
 
-        /// <summary>
-        /// Атомарне виконання разової команди через пул потоків без створення важких Thread.
-        /// </summary>
         public static bool SingleCommand(Action<SessionClient> netAct)
         {
             if (Interlocked.CompareExchange(ref _singleCommandRunning, 1, 0) != 0) return false;
@@ -1238,6 +1222,7 @@ namespace RimWorldOnlineCity
                 var connect = SessionClient.Get;
                 ModelInfo serverInfo = connect.GetInfo(ServerInfoType.Full);
                 ServerTimeDelta = serverInfo.ServerTime - DateTime.UtcNow;
+                Data.ServetTimeDelta = ServerTimeDelta;
                 SetFullInfo(serverInfo);
 
                 Loger.Log($"Server time difference {ServerTimeDelta:hh\\:mm\\:ss\\.ffff}. Server UTC time: {serverInfo.ServerTime:yyyy-MM-dd HH:mm:ss.ffff}");
@@ -1663,7 +1648,7 @@ namespace RimWorldOnlineCity
             }
         }
 
-        #region Фоновий потік оновлення інтерфейсу під час повторного з'єднання
+        #region Background UI update thread during reconnect
         private static Thread ReconnectSupportThread = null;
         private static bool ReconnectSupportRuning = false;
         private static void ReconnectSupportInit()
@@ -1834,6 +1819,7 @@ namespace RimWorldOnlineCity
                 UpdateWorldController.InitGame();
                 ChatController.Init(true);
                 Data.UpdateTime = DateTime.MinValue;
+                Data.ServetTimeDelta = ServerTimeDelta;
 
                 UpdateWorld(true);
                 Data.LastServerConnect = DateTime.MinValue;

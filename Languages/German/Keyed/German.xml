@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>Keine Serverdaten über das Handelsobjekt vorhanden</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Karawanentausch: Gesamte Karawane auswählen</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Angriff</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>Der Angreifer ist offline</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>Der Spieler ist offline</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>Sie haben den PvP-Modus nicht aktiviert</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>Der Spieler hat den PvP-Modus nicht aktiviert</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>Der Wert Ihrer Karawane muss unter {0} liegen</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>Es gab kürzlich bereits einen Angriff. Warten Sie bis {0}</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>Berechnungsfehler</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} von Spieler {1}</OCity_Caravan_Player>

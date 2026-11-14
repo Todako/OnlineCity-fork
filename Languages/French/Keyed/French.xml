@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>Aucune donnée serveur sur l'objet du commerce</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Échange de caravane : sélectionner toute la caravane</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Attaque</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>L'attaquant est hors ligne</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>Le joueur est hors ligne</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>Vous n'avez pas activé le mode JcJ</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>Le joueur n'a pas activé le mode JcJ</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>La valeur de votre caravane doit être inférieure à {0}</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>Une attaque a déjà eu lieu récemment. Veuillez patienter jusqu'à {0}</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>Erreur de calcul</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} du joueur {1}</OCity_Caravan_Player>

@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>Нет данных сервера об объекте торговли</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>Караван обмен: выбран весь караван</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>Атака</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>Нападающий не в сети</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>Игрок не в сети</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>У вас не включён режим PvP</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>У игрока не включён режим PvP</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>Стоимость вашего каравана должна быть меньше {0}</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>Недавно уже была атака. Подождите до {0}</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>Ошибка расчёта</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>{0} игрока {1}</OCity_Caravan_Player>

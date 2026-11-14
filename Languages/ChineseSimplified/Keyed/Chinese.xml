@@ -15,6 +15,13 @@
 	<OCity_Caravan_LOGNoData>没有关于该贸易目标的服务器数据</OCity_Caravan_LOGNoData>
 	<OCity_Caravan_LOGSwap>远行队交换：选择整支远行队</OCity_Caravan_LOGSwap>
 	<OCity_Caravan_Go_Attack_Target>攻击</OCity_Caravan_Go_Attack_Target>
+	<OCity_AttackUtils_AttackerNotOnline>攻击者不在线</OCity_AttackUtils_AttackerNotOnline>
+	<OCity_AttackUtils_HostNotOnline>玩家不在线</OCity_AttackUtils_HostNotOnline>
+	<OCity_AttackUtils_AttackerNotEnablePVP>您尚未开启 PvP 模式</OCity_AttackUtils_AttackerNotEnablePVP>
+	<OCity_AttackUtils_HostNotEnablePVP>该玩家尚未开启 PvP 模式</OCity_AttackUtils_HostNotEnablePVP>
+	<OCity_AttackUtils_MaxCost>您的商队价值必须低于 {0}</OCity_AttackUtils_MaxCost>
+	<OCity_AttackUtils_RecentlyAttacked>近期已发生过攻击。请等待至 {0}</OCity_AttackUtils_RecentlyAttacked>
+	<OCity_AttackUtils_ErrorCalc>计算错误</OCity_AttackUtils_ErrorCalc>
 
 	<!-- OnlineCity_CaravanOnline.cs -->
 	<OCity_Caravan_Player>玩家{1}的{0}</OCity_Caravan_Player>
