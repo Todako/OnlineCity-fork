@@ -199,8 +199,6 @@ namespace RimWorldOnlineCity.GameClasses
                 }
             }
 
-            // If a stranded attacker pawn was fleeing under AI after surrender and reached the map edge,
-            // transfer them back to the attacker player!
             if (GameAttackHost.TryHandleRetreatingPawnExit(__instance))
             {
                 return false;
@@ -281,6 +279,55 @@ namespace RimWorldOnlineCity.GameClasses
             }
 
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Synchronizes all movement paths started on the Host (including animal wandering, grazing,
+    /// hauling, and AI paths) with the exact destination cell and locomotion urgency.
+    /// </summary>
+    [HarmonyPatch(typeof(Pawn_PathFollower))]
+    [HarmonyPatch("StartPath")]
+    public static class Pawn_PathFollower_StartPath_Patch
+    {
+        private static readonly AccessTools.FieldRef<Pawn_PathFollower, Pawn> PatherPawnRef =
+            AccessTools.FieldRefAccess<Pawn_PathFollower, Pawn>("pawn");
+
+        [HarmonyPostfix]
+        public static void Postfix(Pawn_PathFollower __instance, LocalTargetInfo dest)
+        {
+            if (!GameAttackTrigger_Patch.HasActiveAttack || __instance == null) return;
+            if (Scribe.mode != LoadSaveMode.Inactive || GameXMLUtils.FromXmlIsActive) return;
+
+            var pawn = PatherPawnRef(__instance);
+            var map = pawn?.Map;
+            if (map == null || pawn.Dead || pawn.Downed) return;
+
+            if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
+            {
+                if (clientHost.UIEventNewJobDisable) return;
+                if (clientHost.AttackingPawns != null && clientHost.AttackingPawns.Contains(pawn)) return;
+                if (!__instance.Moving) return;
+
+                IntVec3 finalCell = dest.Cell;
+                if (__instance.curPath != null && __instance.curPath.Found
+                    && __instance.curPath.NodesReversed != null && __instance.curPath.NodesReversed.Count > 0)
+                {
+                    finalCell = __instance.curPath.NodesReversed[0];
+                }
+
+                if (finalCell.IsValid && finalCell != pawn.Position)
+                {
+                    LocomotionUrgency urgency = pawn.CurJob != null
+                        ? pawn.CurJob.locomotionUrgency
+                        : LocomotionUrgency.Walk;
+                    if (urgency == LocomotionUrgency.None)
+                    {
+                        urgency = (pawn.Drafted || pawn.InMentalState) ? LocomotionUrgency.Jog : LocomotionUrgency.Walk;
+                    }
+                    clientHost.NotifyHostPawnStartedPath(pawn, finalCell, urgency);
+                }
+            }
         }
     }
 

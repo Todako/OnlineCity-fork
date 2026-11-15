@@ -41,6 +41,7 @@ namespace RimWorldOnlineCity
         public bool TestMode { get; set; }
         public bool IsCaravanTarget { get; private set; }
         private string _targetSettlementName;
+        private string _hostPlayerLogin;
         public DateTime PreparationEndTimeUtc { get; private set; }
         public bool AttackerReady { get; private set; }
         private bool _prepDialogShown;
@@ -121,7 +122,8 @@ namespace RimWorldOnlineCity
 
             IsCaravanTarget = !(attackedTarget is BaseOnline);
             _targetSettlementName = attackedTarget.OnlineName;
-            string hostLogin = attackedTarget.Player.Public.Login;
+            _hostPlayerLogin = attackedTarget.Player.Public.Login;
+            string hostLogin = _hostPlayerLogin;
             long hostPlaceId = attackedTarget.OnlineWObject.PlaceServerId;
             long initiatorPlaceId = UpdateWorldController.GetServerInfo(caravan).PlaceServerId;
             int targetTile = attackedTarget.Tile;
@@ -283,6 +285,9 @@ namespace RimWorldOnlineCity
                             CheckDestroy = new Dictionary<int, Thing>(32);
                             CheckSpawn = new Dictionary<int, Thing>(32);
 
+                            var hostileFac = SessionClientController.Data?.FactionPirate
+                                ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+
                             using (GameUtils.NormalGameError())
                             {
                                 for (int i = 0; i < thingCount; i++)
@@ -304,6 +309,13 @@ namespace RimWorldOnlineCity
 
                                         if (th is MinifiedThing minified && minified.InnerThing == null)
                                             continue;
+
+                                        // Assign Pirate faction to Host buildings and doors during battle so PathFinder
+                                        // treats closed Host doors identically on both Attacker and Host clients!
+                                        if (th is Building && th.def.CanHaveFaction && hostileFac != null)
+                                        {
+                                            th.SetFaction(hostileFac);
+                                        }
 
                                         GenSpawn.Spawn(th, current, map, new Rot4(tt.Rotation), WipeMode.Vanish);
 
@@ -342,7 +354,7 @@ namespace RimWorldOnlineCity
                         ErrorBreak(ex.Message);
                     }
                 });
-            }, "OCity_Dialog_Connecting".Translate(), true, null);
+            }, "OCity_Dialog_Connecting", true, null);
         }
 
         private Thing GetThingByHostId(int hostid)
@@ -461,8 +473,6 @@ namespace RimWorldOnlineCity
 
             if (toClient.HostCommands != null && toClient.HostCommands.Count > 0)
             {
-                // Pre-register movement immunity for all pawns receiving HostCommands in this packet
-                // so UpdateState in the same packet does not snap them before the scheduled tick runs
                 for (int i = 0; i < toClient.HostCommands.Count; i++)
                 {
                     var comm = toClient.HostCommands[i];
@@ -522,8 +532,6 @@ namespace RimWorldOnlineCity
 
                             if (sameHealthState)
                             {
-                                // Attacker's own mobile pawns are locally authoritative on the attacker's screen;
-                                // never snap them back with delayed Host positions unless desynced by > 10 cells
                                 if (AttackerPawns.ContainsKey(p) && distSq <= 100f)
                                 {
                                     if (p.def.useHitPoints && st.HitPoints > 0) p.HitPoints = st.HitPoints;
@@ -676,10 +684,16 @@ namespace RimWorldOnlineCity
                     ? new Job(jobDef, targetA, targetB)
                     : (targetA.IsValid ? new Job(jobDef, targetA) : new Job(jobDef));
 
+                // Restore exact LocomotionUrgency encoded in HostilityMode
+                LocomotionUrgency syncedUrgency = (comm.HostilityMode > 0 && comm.HostilityMode <= (int)LocomotionUrgency.Sprint)
+                    ? (LocomotionUrgency)comm.HostilityMode
+                    : (jobDef == JobDefOf.GotoWander ? LocomotionUrgency.Walk : LocomotionUrgency.Jog);
+
+                job.locomotionUrgency = syncedUrgency;
+
                 if (jobDef == JobDefOf.GotoWander)
                 {
                     job.playerForced = false;
-                    job.locomotionUrgency = LocomotionUrgency.Walk;
                     job.expiryInterval = 400;
                     job.checkOverrideOnExpire = true;
                 }
@@ -1109,6 +1123,9 @@ namespace RimWorldOnlineCity
 
                                         if (hasNewThings && toClient.NewThingsId != null)
                                         {
+                                            var hostileFac = SessionClientController.Data?.FactionPirate
+                                                ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+
                                             for (int i = 0; i < toClient.NewThingsId.Count; i++)
                                             {
                                                 var hostid = toClient.NewThingsId[i];
@@ -1121,6 +1138,10 @@ namespace RimWorldOnlineCity
                                                 (th, te) =>
                                                 {
                                                     CheckDestroy.Remove(th.thingIDNumber);
+                                                    if (th is Building && th.def.CanHaveFaction && hostileFac != null)
+                                                    {
+                                                        th.SetFaction(hostileFac);
+                                                    }
                                                     if (te.OriginalID != 0 && th.thingIDNumber != 0)
                                                     {
                                                         ThingsIDDicRev[te.OriginalID] = th.thingIDNumber;
@@ -1212,6 +1233,12 @@ namespace RimWorldOnlineCity
             {
                 _ignorePosSyncUntilTick[pawn.thingIDNumber] = LockstepController.LocalBattleTick + 120;
 
+                LocomotionUrgency urgency = job.locomotionUrgency;
+                if (urgency == LocomotionUrgency.None)
+                {
+                    urgency = (pawn.Drafted || job.playerForced) ? LocomotionUrgency.Jog : LocomotionUrgency.Walk;
+                }
+
                 var comm = new AttackPawnCommand
                 {
                     HostPawnID = id,
@@ -1219,6 +1246,7 @@ namespace RimWorldOnlineCity
                     JobDefName = job.def?.defName ?? "Wait_Combat",
                     AbilityDefName = job.ability?.def?.defName,
                     Count = job.count,
+                    HostilityMode = (byte)urgency,
                     ScheduledTick = LockstepController.LocalBattleTick + LockstepController.CommandTickDelay
                 };
 
@@ -1367,7 +1395,7 @@ namespace RimWorldOnlineCity
                                 Loger.Log("Client CreateClearMap Event Exception: " + exp, Loger.LogLevel.ERROR);
                                 ErrorBreak("Error CreateClearMap2");
                             }
-                        }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
+                        }, "OCity_GameAttack_Host_Loading", false, null);
                     }
                     finally
                     {
@@ -1379,7 +1407,7 @@ namespace RimWorldOnlineCity
                     Loger.Log("Client CreateClearMap Exception: " + exp, Loger.LogLevel.ERROR);
                     ErrorBreak("Error CreateClearMap1");
                 }
-            }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
+            }, "OCity_GameAttack_Host_Loading", false, null);
         }
 
         /// <summary>
@@ -1416,7 +1444,6 @@ namespace RimWorldOnlineCity
 
                     Find.WorldObjects.Add(newSettlement);
 
-                    // Reassign GameMap.info.parent BEFORE removing oldParent so MapParent.PostRemove does not unload GameMap!
                     GameMap.info.parent = newSettlement;
 
                     if (oldParent != null && oldParent != newSettlement && Find.WorldObjects.Contains(oldParent))
@@ -1555,7 +1582,7 @@ namespace RimWorldOnlineCity
                         }
                     }
 
-                    GameUtils.OpenCaravanLootSelectionDialog(GameMap, attackerItemIds, saveAndShowFinishDialog);
+                    GameUtils.OpenCaravanLootSelectionDialog(GameMap, attackerItemIds, saveAndShowFinishDialog, _hostPlayerLogin);
                 }
                 else
                 {

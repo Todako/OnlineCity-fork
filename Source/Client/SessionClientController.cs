@@ -288,6 +288,26 @@ namespace RimWorldOnlineCity
                         step = 9;
                         if (!ModBaseData.RunMainThreadSync(() =>
                         {
+                            // Automatically process returning PvP colonists without showing a trade confirmation window
+                            if (fromServ.Mails != null && fromServ.Mails.Count > 0)
+                            {
+                                for (int m = fromServ.Mails.Count - 1; m >= 0; m--)
+                                {
+                                    var mail = fromServ.Mails[m];
+                                    if (mail is IModelPlace mailPlace && mailPlace.PlaceServerId == ExchengeUtils.RetreatingPawnMarkerId)
+                                    {
+                                        var thingsProp = mail.GetType().GetProperty("Things") ?? mail.GetType().GetProperty("things");
+                                        var thingsField = mail.GetType().GetField("Things") ?? mail.GetType().GetField("things");
+                                        var thingsList = (thingsProp != null ? thingsProp.GetValue(mail, null) : thingsField?.GetValue(mail)) as List<ThingEntry>;
+                                        if (thingsList != null && thingsList.Count > 0)
+                                        {
+                                            ExchengeUtils.SpawnRetreatingPawnsImmediately(mailPlace.Tile, thingsList);
+                                        }
+                                        fromServ.Mails.RemoveAt(m);
+                                    }
+                                }
+                            }
+
                             UpdateWorldController.LoadFromServer(fromServ, firstRun);
 
                             foreach (var list in CachedObjectsByPlayer.Values)

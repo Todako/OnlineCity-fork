@@ -21,6 +21,114 @@ namespace RimWorldOnlineCity
     {
         public const long RetreatingPawnMarkerId = 999999991L;
 
+        /// <summary>
+        /// Immediately spawns returning PvP colonists (who escaped via AI or were left uncaptured after caravan surrender)
+        /// into an existing player caravan on the tile or forms a new caravan without any confirmation dialog.
+        /// </summary>
+        public static void SpawnRetreatingPawnsImmediately(int tile, List<ThingEntry> things)
+        {
+            if (things == null || things.Count == 0) return;
+
+            try
+            {
+                int targetTile = tile > 0 ? tile : 1;
+                var pawnsToForm = new List<Pawn>();
+                var itemsToForm = new List<Thing>();
+
+                using (GameUtils.NormalGameError())
+                {
+                    for (int i = 0; i < things.Count; i++)
+                    {
+                        var entry = things[i];
+                        if (entry == null) continue;
+                        entry.Affiliation = PawnAffiliation.Colonist;
+
+                        var th = entry.CreateThing();
+                        if (th == null) continue;
+
+                        if (th is Pawn p)
+                        {
+                            GameUtils.ReassignUniquePawnSubIds(p);
+                            if (p.Faction != Faction.OfPlayer) p.SetFaction(Faction.OfPlayer);
+                            if (p.guest != null) p.guest.SetGuestStatus(null);
+                            if (p.drafter != null && p.drafter.Drafted) p.drafter.Drafted = false;
+
+                            // Ensure returning colonists are stabilized so a newly formed caravan does not vanish from AllOwnersDowned
+                            if (p.Downed && p.health?.hediffSet?.hediffs != null)
+                            {
+                                var hediffs = p.health.hediffSet.hediffs;
+                                for (int h = hediffs.Count - 1; h >= 0; h--)
+                                {
+                                    if (hediffs[h] is Hediff_Injury inj && !inj.IsPermanent())
+                                    {
+                                        inj.Severity = Mathf.Min(inj.Severity, 1.5f);
+                                    }
+                                }
+                                p.health.CheckForStateChange(null, null);
+                            }
+
+                            pawnsToForm.Add(p);
+                        }
+                        else
+                        {
+                            itemsToForm.Add(th);
+                        }
+                    }
+                }
+
+                if (pawnsToForm.Count == 0 && itemsToForm.Count == 0) return;
+
+                Caravan existingCaravan = null;
+                var allWorldObjects = Find.WorldObjects.AllWorldObjects;
+                for (int i = 0; i < allWorldObjects.Count; i++)
+                {
+                    var o = allWorldObjects[i];
+                    if (o is Caravan c && c.Tile == targetTile && c.Faction == Faction.OfPlayer)
+                    {
+                        existingCaravan = c;
+                        break;
+                    }
+                }
+
+                if (existingCaravan != null)
+                {
+                    for (int i = 0; i < pawnsToForm.Count; i++)
+                    {
+                        var p = pawnsToForm[i];
+                        existingCaravan.AddPawn(p, true);
+                        GameUtils.SpawnSetupOnCaravan(p);
+                    }
+                    for (int i = 0; i < itemsToForm.Count; i++)
+                    {
+                        var item = itemsToForm[i];
+                        var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, existingCaravan.PawnsListForReading, null);
+                        recipient?.inventory?.innerContainer?.TryAdd(item, true);
+                    }
+                }
+                else if (pawnsToForm.Count > 0)
+                {
+                    var newCaravan = CaravanMaker.MakeCaravan(pawnsToForm, Faction.OfPlayer, targetTile, addToWorldPawnsIfNotAlready: true);
+                    for (int i = 0; i < itemsToForm.Count; i++)
+                    {
+                        var item = itemsToForm[i];
+                        var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(item, newCaravan.PawnsListForReading, null);
+                        recipient?.inventory?.innerContainer?.TryAdd(item, true);
+                    }
+                    for (int i = 0; i < pawnsToForm.Count; i++)
+                    {
+                        GameUtils.SpawnSetupOnCaravan(pawnsToForm[i]);
+                    }
+                }
+
+                Find.ColonistBar?.MarkColonistsDirty();
+                SessionClientController.SaveGameNow(false);
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("SpawnRetreatingPawnsImmediately Exception: " + ex, Loger.LogLevel.ERROR);
+            }
+        }
+
         private static string _cachedDistLabel;
         private static string _cachedCostLabel;
 

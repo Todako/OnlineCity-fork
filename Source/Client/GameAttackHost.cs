@@ -544,7 +544,6 @@ namespace RimWorldOnlineCity
 
         public void Finish(bool victoryAttacker)
         {
-            // Ensure the server is notified if Finish() was called directly from the Main Menu surrender button
             if (ConfirmedVictoryAttacker == null)
             {
                 ConfirmedVictoryAttacker = victoryAttacker;
@@ -626,7 +625,8 @@ namespace RimWorldOnlineCity
                 {
                     if (!victoryAttacker)
                     {
-                        // Host defended the caravan: remove retreating enemies and open Dialog_CaravanLoot
+                        // Host defended the caravan: remove retreating enemies in the border zone and open Dialog_CaravanLoot
+                        // (any surviving enemies outside the border zone can be captured as prisoners or returned if uncaptured)
                         if (AttackingPawns != null)
                         {
                             foreach (var enemy in AttackingPawns)
@@ -640,7 +640,7 @@ namespace RimWorldOnlineCity
                             }
                         }
 
-                        GameUtils.OpenCaravanLootSelectionDialog(GameMap, _hostCaravanInitialItemIds, saveAndShowFinishDialog);
+                        GameUtils.OpenCaravanLootSelectionDialog(GameMap, _hostCaravanInitialItemIds, saveAndShowFinishDialog, AttackerLogin);
                     }
                     else
                     {
@@ -1290,7 +1290,14 @@ namespace RimWorldOnlineCity
         }
         private readonly Dictionary<int, APJBT> ApplyPawnJobByTick = new Dictionary<int, APJBT>(16);
 
-        private void SetPawnJob(Pawn pawn, JobDef def, LocalTargetInfo targetA, LocalTargetInfo targetB = default, int count = -1, string abilityDefName = null)
+        private void SetPawnJob(
+            Pawn pawn,
+            JobDef def,
+            LocalTargetInfo targetA,
+            LocalTargetInfo targetB = default,
+            int count = -1,
+            string abilityDefName = null,
+            LocomotionUrgency urgency = LocomotionUrgency.Jog)
         {
             if (pawn?.jobs == null || def == null || pawn.Dead || pawn.Downed) return;
 
@@ -1301,6 +1308,7 @@ namespace RimWorldOnlineCity
 
             var job = targetB.IsValid ? new Job(def, targetA, targetB) : new Job(def, targetA);
             job.playerForced = true;
+            job.locomotionUrgency = urgency != LocomotionUrgency.None ? urgency : LocomotionUrgency.Jog;
             job.expiryInterval = int.MaxValue;
             job.checkOverrideOnExpire = false;
             if (count > 0) job.count = count;
@@ -1439,6 +1447,10 @@ namespace RimWorldOnlineCity
 
                 if (!stopJob)
                 {
+                    LocomotionUrgency syncedUrgency = (comm.HostilityMode > 0 && comm.HostilityMode <= (int)LocomotionUrgency.Sprint)
+                        ? (LocomotionUrgency)comm.HostilityMode
+                        : LocomotionUrgency.Jog;
+
                     if (comm.Command == AttackPawnCommand.PawnCommand.Wait_Combat)
                     {
                         stopJob = true;
@@ -1457,62 +1469,62 @@ namespace RimWorldOnlineCity
                             LocalTargetInfo targetA = target != null
                                 ? new LocalTargetInfo(target)
                                 : (comm.TargetPos != null ? new LocalTargetInfo(comm.TargetPos.Get()) : LocalTargetInfo.Invalid);
-                            SetPawnJob(pawn, jDef, targetA, targetB, comm.Count, comm.AbilityDefName);
+                            SetPawnJob(pawn, jDef, targetA, targetB, comm.Count, comm.AbilityDefName, syncedUrgency);
                         }
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Goto)
                     {
-                        SetPawnJob(pawn, JobDefOf.Goto, comm.TargetPos.Get());
+                        SetPawnJob(pawn, JobDefOf.Goto, comm.TargetPos.Get(), default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Attack)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.AttackStatic, target);
+                        else SetPawnJob(pawn, JobDefOf.AttackStatic, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.AttackMelee)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.AttackMelee, target);
+                        else SetPawnJob(pawn, JobDefOf.AttackMelee, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Equip)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.Equip, target);
+                        else SetPawnJob(pawn, JobDefOf.Equip, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.TakeInventory)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.TakeInventory, target, default, target.stackCount);
+                        else SetPawnJob(pawn, JobDefOf.TakeInventory, target, default, target.stackCount, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Wear)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.Wear, target);
+                        else SetPawnJob(pawn, JobDefOf.Wear, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.DropEquipment)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.DropEquipment, target);
+                        else SetPawnJob(pawn, JobDefOf.DropEquipment, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.RemoveApparel)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.RemoveApparel, target);
+                        else SetPawnJob(pawn, JobDefOf.RemoveApparel, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Ingest)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.Ingest, target, default, Math.Min(target.stackCount, target.def.ingestible.maxNumToIngestAtOnce));
+                        else SetPawnJob(pawn, JobDefOf.Ingest, target, default, Math.Min(target.stackCount, target.def.ingestible.maxNumToIngestAtOnce), null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.Strip)
                     {
                         if (target == null) stopJob = true;
-                        else SetPawnJob(pawn, JobDefOf.Strip, target);
+                        else SetPawnJob(pawn, JobDefOf.Strip, target, default, -1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.TendPatient)
                     {
                         if (target == null) target = pawn;
-                        SetPawnJob(pawn, JobDefOf.TendPatient, target, default, 1);
+                        SetPawnJob(pawn, JobDefOf.TendPatient, target, default, 1, null, syncedUrgency);
                     }
                     else if (comm.Command == AttackPawnCommand.PawnCommand.OC_InventoryDrop)
                     {
@@ -1567,6 +1579,44 @@ namespace RimWorldOnlineCity
         }
 
         public bool UIEventNewJobDisable = false;
+
+        /// <summary>
+        /// Called by Pawn_PathFollower_StartPath_Patch whenever any Host pawn or animal starts moving
+        /// so the Attacker client immediately starts the exact same path at the exact same speed.
+        /// </summary>
+        public void NotifyHostPawnStartedPath(Pawn pawn, IntVec3 destCell, LocomotionUrgency urgency)
+        {
+            if (UIEventNewJobDisable || pawn == null || !destCell.IsValid) return;
+            int pawnId = pawn.thingIDNumber;
+            if (AttackingPawnDic != null && AttackingPawnDic.ContainsKey(pawnId)) return;
+
+            var hostCmd = new AttackPawnCommand
+            {
+                HostPawnID = pawnId,
+                Command = AttackPawnCommand.PawnCommand.UniversalJob,
+                JobDefName = (urgency == LocomotionUrgency.Walk || urgency == LocomotionUrgency.Amble) ? "GotoWander" : "Goto",
+                TargetPos = new IntVec3S(destCell),
+                HostilityMode = (byte)urgency,
+                ScheduledTick = LockstepController.LocalBattleTick + LockstepController.CommandTickDelay
+            };
+
+            lock (_commandsSync)
+            {
+                if (_outgoingHostCommands.Count > 0)
+                {
+                    var last = _outgoingHostCommands[_outgoingHostCommands.Count - 1];
+                    if (last.HostPawnID == hostCmd.HostPawnID
+                        && last.TargetPos != null
+                        && last.TargetPos.x == destCell.x
+                        && last.TargetPos.z == destCell.z
+                        && Math.Abs(last.ScheduledTick - hostCmd.ScheduledTick) <= 5)
+                    {
+                        return;
+                    }
+                }
+                _outgoingHostCommands.Add(hostCmd);
+            }
+        }
 
         public void UIEventDraftChanged(Pawn pawn, bool drafted)
         {
@@ -1640,6 +1690,12 @@ namespace RimWorldOnlineCity
 
                     if (shouldSync)
                     {
+                        LocomotionUrgency urgency = job.locomotionUrgency;
+                        if (urgency == LocomotionUrgency.None)
+                        {
+                            urgency = (pawn.Drafted || job.playerForced) ? LocomotionUrgency.Jog : LocomotionUrgency.Walk;
+                        }
+
                         var hostCmd = new AttackPawnCommand
                         {
                             HostPawnID = pawnId,
@@ -1647,6 +1703,7 @@ namespace RimWorldOnlineCity
                             JobDefName = job.def.defName,
                             Count = job.count,
                             AbilityDefName = job.ability?.def?.defName,
+                            HostilityMode = (byte)urgency,
                             ScheduledTick = LockstepController.LocalBattleTick + LockstepController.CommandTickDelay
                         };
 

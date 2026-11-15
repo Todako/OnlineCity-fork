@@ -12,6 +12,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using System.Xml;
 using UnityEngine;
 using Util;
@@ -38,9 +39,10 @@ namespace RimWorldOnlineCity
     }
 
     /// <summary>
-    /// Standalone loot selection window after a caravan PvP battle.
+    /// Standalone loot and prisoner selection window after a caravan PvP battle.
     /// Uses vanilla TransferableOneWayWidget tables and mass capacity counters
     /// without invoking WorldRoutePlanner, forming the caravan directly on the current tile.
+    /// Any uncaptured enemy colonists are automatically returned to the defeated player's caravan.
     /// </summary>
     public class Dialog_CaravanLoot : Window
     {
@@ -52,11 +54,13 @@ namespace RimWorldOnlineCity
 
         private readonly Map _map;
         private readonly HashSet<int> _preselectedItemIds;
+        private readonly HashSet<int> _defeatedEnemyPawnIds;
+        private readonly string _defeatedPlayerLogin;
         private readonly Action _onClosed;
         private readonly List<TransferableOneWay> _transferables = new List<TransferableOneWay>();
         private TransferableOneWayWidget _pawnsTransfer;
         private TransferableOneWayWidget _itemsTransfer;
-        private Tab _curTab = Tab.Items;
+        private Tab _curTab = Tab.Pawns;
         private bool _caravanFormed = false;
 
         private static readonly List<TabRecord> _tabsList = new List<TabRecord>(2);
@@ -64,10 +68,17 @@ namespace RimWorldOnlineCity
         public override Vector2 InitialSize => new Vector2(1024f, Verse.UI.screenHeight - 40);
         protected override float Margin => 18f;
 
-        public Dialog_CaravanLoot(Map map, HashSet<int> preselectedItemIds, Action onClosed)
+        public Dialog_CaravanLoot(
+            Map map,
+            HashSet<int> preselectedItemIds,
+            HashSet<int> defeatedEnemyPawnIds,
+            string defeatedPlayerLogin,
+            Action onClosed)
         {
             _map = map;
             _preselectedItemIds = preselectedItemIds ?? new HashSet<int>();
+            _defeatedEnemyPawnIds = defeatedEnemyPawnIds ?? new HashSet<int>();
+            _defeatedPlayerLogin = defeatedPlayerLogin;
             _onClosed = onClosed;
             forcePause = true;
             absorbInputAroundWindow = true;
@@ -103,9 +114,10 @@ namespace RimWorldOnlineCity
             {
                 var p = allPawns[i];
                 if (p == null || p.Destroyed || p.Dead) continue;
-                if (p.Faction == Faction.OfPlayer || p.IsPrisonerOfColony || (p.Downed && p.RaceProps.Humanlike))
+                if (p.Faction == Faction.OfPlayer || p.IsPrisonerOfColony || _defeatedEnemyPawnIds.Contains(p.thingIDNumber))
                 {
-                    AddToTransferables(p, p.Faction == Faction.OfPlayer ? 1 : 0);
+                    int preselect = (p.Faction == Faction.OfPlayer && !_defeatedEnemyPawnIds.Contains(p.thingIDNumber)) ? 1 : 0;
+                    AddToTransferables(p, preselect);
                 }
             }
 
@@ -257,6 +269,7 @@ namespace RimWorldOnlineCity
 
             try
             {
+                int tile = _map.Tile;
                 var selectedPawns = new List<Pawn>();
                 var selectedItems = new List<Pair<Thing, int>>();
 
@@ -303,14 +316,33 @@ namespace RimWorldOnlineCity
                     for (int i = 0; i < spawned.Count; i++)
                     {
                         var p = spawned[i];
-                        if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer)
+                        if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer && !_defeatedEnemyPawnIds.Contains(p.thingIDNumber))
                         {
                             selectedPawns.Add(p);
                         }
                     }
                 }
 
-                int tile = _map.Tile;
+                // Collect any uncaptured enemy colonists to return them to the defeated player's caravan
+                var uncapturedEnemyEntries = new List<ThingEntry>();
+                if (!string.IsNullOrEmpty(_defeatedPlayerLogin) && _defeatedEnemyPawnIds.Count > 0)
+                {
+                    var allMapPawns = _map.mapPawns.AllPawns;
+                    for (int i = 0; i < allMapPawns.Count; i++)
+                    {
+                        var p = allMapPawns[i];
+                        if (p == null || p.Dead || p.Destroyed) continue;
+                        if (_defeatedEnemyPawnIds.Contains(p.thingIDNumber) && !selectedPawns.Contains(p))
+                        {
+                            if (p.guest != null) p.guest.SetGuestStatus(null);
+                            if (p.drafter != null && p.drafter.Drafted) p.drafter.Drafted = false;
+                            var entry = ThingEntry.CreateEntry(p, 1);
+                            entry.Affiliation = PawnAffiliation.Colonist;
+                            uncapturedEnemyEntries.Add(entry);
+                        }
+                    }
+                }
+
                 if (selectedPawns.Count > 0)
                 {
                     for (int i = 0; i < selectedPawns.Count; i++)
@@ -358,6 +390,30 @@ namespace RimWorldOnlineCity
 
                 try { CameraJumper.TryShowWorld(); } catch { }
                 GameUtils.DeinitAndRemoveMapSafe(_map);
+
+                // Send uncaptured enemy colonists back to the defeated player so they form/join their caravan
+                if (uncapturedEnemyEntries.Count > 0 && !string.IsNullOrEmpty(_defeatedPlayerLogin) && SessionClientController.My != null)
+                {
+                    string targetLogin = _defeatedPlayerLogin;
+                    int targetTile = tile;
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            SessionClientController.CommandSafely((connect) =>
+                                connect.SendThings(
+                                    uncapturedEnemyEntries,
+                                    SessionClientController.My.Login,
+                                    targetLogin,
+                                    ExchengeUtils.RetreatingPawnMarkerId,
+                                    targetTile));
+                        }
+                        catch (Exception exNet)
+                        {
+                            Loger.Log("Dialog_CaravanLoot return uncaptured pawns warning: " + exNet.Message, Loger.LogLevel.WARNING);
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -1339,10 +1395,15 @@ namespace RimWorldOnlineCity
         }
 
         /// <summary>
-        /// Prepares a temporary caravan battle map for loot selection and opens Dialog_CaravanLoot
-        /// with the player's colonists, animals, and personal items pre-selected.
+        /// Prepares a temporary caravan battle map for loot and prisoner selection and opens Dialog_CaravanLoot.
+        /// Living enemy colonists are converted to prisoners so the winner can choose to capture them;
+        /// any uncaptured enemy colonists are automatically returned to the defeated player's caravan.
         /// </summary>
-        public static void OpenCaravanLootSelectionDialog(Map map, HashSet<int> preselectedItemIds, Action onFinished)
+        public static void OpenCaravanLootSelectionDialog(
+            Map map,
+            HashSet<int> preselectedItemIds,
+            Action onFinished,
+            string defeatedPlayerLogin = null)
         {
             if (map == null)
             {
@@ -1354,6 +1415,8 @@ namespace RimWorldOnlineCity
             {
                 preselectedItemIds = new HashSet<int>();
             }
+
+            var defeatedEnemyPawnIds = new HashSet<int>();
 
             try
             {
@@ -1386,16 +1449,25 @@ namespace RimWorldOnlineCity
                         {
                             p.equipment.DropAllEquipment(p.Position, forbid: false);
                         }
-                        if (p.apparel != null && p.apparel.WornApparelCount > 0)
-                        {
-                            p.apparel.DropAll(p.Position, forbid: false);
-                        }
 
-                        if (!p.Dead && !p.Downed)
+                        if (!p.Dead)
                         {
-                            if (p.RaceProps.Animal)
+                            if (p.RaceProps != null && p.RaceProps.Humanlike)
                             {
-                                p.SetFaction(null);
+                                // Convert surviving enemy caravan colonists into prisoners so they appear in the Pawns tab
+                                defeatedEnemyPawnIds.Add(p.thingIDNumber);
+                                if (p.drafter != null && p.drafter.Drafted) p.drafter.Drafted = false;
+                                p.jobs?.StopAll();
+                                if (p.guest != null)
+                                {
+                                    p.guest.SetGuestStatus(Faction.OfPlayer, GuestStatus.Prisoner);
+                                }
+                            }
+                            else if (p.RaceProps != null && p.RaceProps.Animal)
+                            {
+                                // Convert enemy caravan animals to player faction (unselected by default) so winner can take them
+                                defeatedEnemyPawnIds.Add(p.thingIDNumber);
+                                p.SetFaction(Faction.OfPlayer);
                                 p.jobs?.StopAll();
                             }
                             else
@@ -1443,7 +1515,12 @@ namespace RimWorldOnlineCity
             try
             {
                 CameraJumper.TryJump(new GlobalTargetInfo(map.Center, map));
-                Find.WindowStack.Add(new Dialog_CaravanLoot(map, preselectedItemIds, onFinished));
+                Find.WindowStack.Add(new Dialog_CaravanLoot(
+                    map,
+                    preselectedItemIds,
+                    defeatedEnemyPawnIds,
+                    defeatedPlayerLogin,
+                    onFinished));
             }
             catch (Exception ex)
             {
@@ -1471,21 +1548,14 @@ namespace RimWorldOnlineCity
                         float distSq = pawn.Position.DistanceToSquared(targetPos);
                         bool isDownOrDead = pawn.Dead || pawn.Downed || state.DownState != AttackThingState.PawnHealthState.Mobile;
 
-                        if (isDownOrDead || distSq > 100f)
+                        if (isDownOrDead || distSq > 144f)
                         {
                             pawn.Position = targetPos;
                             pawn.Notify_Teleported(endCurrentJob: false, resetTweenedPos: true);
                         }
-                        else if (distSq >= 1f && pawn.pather != null && !pawn.pather.Moving && pawn.jobs != null)
+                        else if (distSq >= 2f && pawn.pather != null && !pawn.pather.Moving)
                         {
-                            var gotoJob = new Job(JobDefOf.Goto, targetPos)
-                            {
-                                playerForced = false,
-                                locomotionUrgency = LocomotionUrgency.Jog,
-                                expiryInterval = 180,
-                                checkOverrideOnExpire = true
-                            };
-                            pawn.jobs.StartJob(gotoJob, JobCondition.InterruptForced);
+                            pawn.pather.StartPath(targetPos, PathEndMode.OnCell);
                         }
                     }
                     else
