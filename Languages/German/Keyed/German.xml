@@ -35,12 +35,7 @@ Börsenwert: {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Attack>{0} angreifen</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>Bist du sicher, dass du die Siedlung {0} angreifen möchtest?</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>Bist du sicher, dass du die Karawane {0} angreifen möchtest?</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>Angriff auf Karawane</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>Du hast die feindliche Karawane vernichtet! Deine überlebenden Kolonisten und die Beute wurden auf der Weltkarte zu einer Karawane zusammengestellt.</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0} greift deine Karawane an</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>Deine Karawane wurde im Kampf besiegt.</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Du hast den Angriff auf die Karawane abgewehrt! Überlebende Kolonisten und Beute sind auf die Weltkarte zurückgekehrt.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>TestSpielerName</OCity_DevTest_NameTestPlayer>
@@ -387,29 +382,31 @@ Verringern des Parameters gibt Ressourcen frei, Erhöhen reserviert zusätzliche
 	<OCity_GameAttacker_Dialog_ErrorMessage>Angriffsfehler</OCity_GameAttacker_Dialog_ErrorMessage>
 	<OCity_GameAttacker_Dialog_Settlement_Attack>Du greifst eine Siedlung an</OCity_GameAttacker_Dialog_Settlement_Attack>
 	<OCity_GameAttacker_Withdraw>Zurückziehen</OCity_GameAttacker_Withdraw>
-	<OCity_GameAttacker_Main_Dialog>In diesem Modus muss das Spiel pausiert sein. Dennoch läuft der Kampf weiter und die Situation ändert sich dynamisch. Wenn du den Angriff beenden möchtest, ziehe alle Kolonisten an einen beliebigen Kartenrand zurück und klicke im Hauptmenü auf Zurückziehen.</OCity_GameAttacker_Main_Dialog>
-	<OCity_GameAttacker_Main_Preparation_Dialog>Vorbereitung abgeschlossen. Du hast eine Minute Zeit, um die Karte vor Beginn des Angriffs zu inspizieren.</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>Du hast diesen Übungskampf gewonnen! :)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>Die Karawane wird nun wiederhergestellt. Du musst dich erneut anmelden.</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>Du wurdest in diesem Übungsangriff besiegt. :(</Ocity_GameAttacker_TrainingFight_Lost>
+	<OCity_GameAttacker_Main_Dialog>In diesem Modus muss das Spiel pausiert sein. Trotzdem geht der Kampf weiter und die Situation verändert sich. Wenn du den Angriff beenden möchtest, bringe alle, die du kannst, an einen beliebigen Kartenrand und klicke im Hauptmenü auf „Zurückziehen“.</OCity_GameAttacker_Main_Dialog>
+	<OCity_GameAttacker_Main_Preparation_Dialog>Vorbereitung abgeschlossen. Du hast eine Minute Zeit, dir die Karte vor Beginn des Angriffs anzusehen.</OCity_GameAttacker_Main_Preparation_Dialog>
 	<OCity_GameAttacker_Done>Fertig</OCity_GameAttacker_Done>
-	<OCity_GameAttacker_Settlement_TakenOver>Du hast diese Siedlung erobert! :) </OCity_GameAttacker_Settlement_TakenOver>
+	<OCity_GameAttacker_Settlement_TakenOver>Du hast diese Siedlung eingenommen! :) </OCity_GameAttacker_Settlement_TakenOver>
 	<OCity_GameAttacker_Defeated>Du wurdest besiegt :(</OCity_GameAttacker_Defeated>
-	<OCity_GameAttacker_Colonist_Return>Bewegungsfähige Kolonisten, die sich an die Kartenränder zurückgezogen haben, kehren zurück.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Colonist_Return>Gehfähige Kolonisten, die sich an die Kartenränder zurückgezogen haben, kehren zurück.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Angriff auf eine Karawane</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Du hast die feindliche Karawane zerschlagen! Deine überlebenden Kolonisten und die Beute wurden auf der Weltkarte zu einer Karawane formiert.</OCity_GameAttacker_Caravan_TakenOver>
+	
 
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0} führt einen Testangriff auf deine Siedlung durch</OCity_GameAttack_Host_Test_Attack>
-	<OCity_GameAttack_Host_Settlement_Attacking>Deine Siedlung wird von {0} angegriffen</OCity_GameAttack_Host_Settlement_Attacking>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Warte, bis der Angreifer bereit ist. Danach wird die Spielgeschwindigkeit automatisch auf 1x gesperrt und kann nicht geändert werden.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>Wenn du aufgeben und die Siedlung verlieren möchtest, klicke im Hauptmenü auf</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> Wenn du die Übung beenden und abbrechen möchtest, klicke im Hauptmenü auf </OCity_GameAttack_Host_Cancel_Action>
+	<OCity_GameAttack_Host_Settlement_Attacking>{0} greift deine Siedlung an</OCity_GameAttack_Host_Settlement_Attacking>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Warte, bis der Angreifer bereit ist. Danach wird die Spielgeschwindigkeit automatisch auf 1x gesetzt und kann nicht mehr geändert werden.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>Im Hauptmenü kannst du aufgeben und die Siedlung verlieren</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
 	<OCity_GameAttack_Host_Surrender>Aufgeben</OCity_GameAttack_Host_Surrender>
 	<OCity_GameAttack_Host_Error_Message_Attack>Angriffsfehler</OCity_GameAttack_Host_Error_Message_Attack>
-	<OCity_GameAttack_Host_Card_Restored>Die Karte wird nun wiederhergestellt. Du musst dich erneut anmelden.</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>Du hast diesen Übungsangriff abgewehrt! :)</OCity_GameAttack_Host_Training_Attack_Repulsed>
-	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>Du wurdest besiegt und die Siedlung geht an den neuen Besitzer über :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
+	<OCity_GameAttack_Host_Card_Restored>Die Karte wird jetzt wiederhergestellt, du musst dich erneut anmelden.</OCity_GameAttack_Host_Card_Restored>
+	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>Du wurdest besiegt und die Siedlung geht an den neuen Besitzer über :(</OCity_GameAttacker_Host_Caravan_TransferToNewOwner>
 	<OCity_GameAttack_Host_Atack_Repulsed>Du hast diesen Angriff abgewehrt! :) </OCity_GameAttack_Host_Atack_Repulsed>
-	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Feinde, die nicht entkommen konnten, bleiben auf der Karte, verlieren jedoch die Verbindung zu ihrem Kommandanten.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Feinde, die nicht entkommen konnten, bleiben auf der Karte, verlieren aber den Kontakt zu ihrem Kommandanten.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} greift deine Karawane an</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Deine Karawane wurde im Kampf besiegt.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Du hast den Angriff auf die Karawane abgewehrt! Die überlebenden Kolonisten und die Beute sind auf die Weltkarte zurückgekehrt.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>Kampfkarte wird geladen</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>Wenn du den Kampf nicht fortsetzen kannst, kannst du im Hauptmenü aufgeben und diese Karawane verlieren.</OCity_GameAttack_Host_Surrender_Caravan>
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>3 Argumente erforderlich: Name, Titel, Text</OC_IncdidentMessadge_ArgErr>

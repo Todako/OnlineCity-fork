@@ -35,12 +35,7 @@
 	<OCity_Caravan_Attack>攻击{0}</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>你确定要袭击定居点 {0} 吗？</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>你确定要袭击远行队 {0} 吗？</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>袭击远行队</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>你击败了敌方远行队！你幸存的殖民者和战利品已在世界地图上组成了一支远行队。</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0} 正在袭击你的远行队</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>你的远行队在战斗中被击败了。</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>你击退了对远行队的袭击！幸存的殖民者和战利品已返回世界地图。</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>测试</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>测试玩家名称</OCity_DevTest_NameTestPlayer>
@@ -384,32 +379,34 @@
 	<OCity_GameUtils_Ok>确定</OCity_GameUtils_Ok>
 
 	<!-- GameAttacker.cs -->
-	<OCity_GameAttacker_Dialog_ErrorMessage>进攻错误</OCity_GameAttacker_Dialog_ErrorMessage>
-	<OCity_GameAttacker_Dialog_Settlement_Attack>你正在攻击定居点</OCity_GameAttacker_Dialog_Settlement_Attack>
+	<OCity_GameAttacker_Dialog_ErrorMessage>袭击错误</OCity_GameAttacker_Dialog_ErrorMessage>
+	<OCity_GameAttacker_Dialog_Settlement_Attack>你正在袭击定居点</OCity_GameAttacker_Dialog_Settlement_Attack>
 	<OCity_GameAttacker_Withdraw>撤退</OCity_GameAttacker_Withdraw>
-	<OCity_GameAttacker_Main_Dialog>在此模式下，游戏必须保持暂停状态。即使暂停，战斗仍将继续进行且战况实时变动。如果你想结束进攻，请将尽可能多的成员撤至任意地图边缘，并在主菜单中点击“撤退”。</OCity_GameAttacker_Main_Dialog>
-	<OCity_GameAttacker_Main_Preparation_Dialog>准备完成。在攻击正式开始前，你有1分钟的时间侦察地图。</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>你赢得了这场模拟战！:)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>远行队即将复原，你需要重新登录。</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>你在这场模拟进攻中落败。:(</Ocity_GameAttacker_TrainingFight_Lost>
+	<OCity_GameAttacker_Main_Dialog>在此模式下，游戏必须处于暂停状态。尽管如此，战斗仍将继续，局势也会不断变化。如果你想结束袭击，请将所有能行动的人员撤至地图任意边缘，然后在主菜单中点击“撤退”。</OCity_GameAttacker_Main_Dialog>
+	<OCity_GameAttacker_Main_Preparation_Dialog>准备完成。在袭击开始前，你有一分钟的时间观察地图。</OCity_GameAttacker_Main_Preparation_Dialog>
 	<OCity_GameAttacker_Done>完成</OCity_GameAttacker_Done>
-	<OCity_GameAttacker_Settlement_TakenOver>你占领了该定居点！:) </OCity_GameAttacker_Settlement_TakenOver>
-	<OCity_GameAttacker_Defeated>你失败了 :(</OCity_GameAttacker_Defeated>
-	<OCity_GameAttacker_Colonist_Return>撤退到地图边缘且具备移动能力的殖民者正在返回。</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Settlement_TakenOver>你占领了该定居点！ :) </OCity_GameAttacker_Settlement_TakenOver>
+	<OCity_GameAttacker_Defeated>你被击败了 :(</OCity_GameAttacker_Defeated>
+	<OCity_GameAttacker_Colonist_Return>撤退至地图边缘且仍能行动的殖民者正在返回。</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>袭击远行队</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>你击败了敌方远行队！你幸存的殖民者和战利品已在世界地图上重新编组为远行队。</OCity_GameAttacker_Caravan_TakenOver>
+	
 
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0} 正在对你的定居点发起模拟进攻</OCity_GameAttack_Host_Test_Attack>
-	<OCity_GameAttack_Host_Settlement_Attacking>你的定居点正在遭到 {0} 的攻击</OCity_GameAttack_Host_Settlement_Attacking>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>请等待进攻方准备就绪。随后游戏速度将自动锁定为1倍速且无法更改。</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>如果你想投降并放弃该定居点，请在主菜单中点击</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> 如果你想结束并取消模拟战，请在主菜单中点击 </OCity_GameAttack_Host_Cancel_Action>
+	<OCity_GameAttack_Host_Settlement_Attacking>{0}正在袭击你的定居点</OCity_GameAttack_Host_Settlement_Attacking>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>请等待袭击者准备就绪。之后游戏速度将自动切换为1倍速，且无法更改。</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>你可以在主菜单中投降并放弃定居点</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
 	<OCity_GameAttack_Host_Surrender>投降</OCity_GameAttack_Host_Surrender>
-	<OCity_GameAttack_Host_Error_Message_Attack>进攻错误</OCity_GameAttack_Host_Error_Message_Attack>
-	<OCity_GameAttack_Host_Card_Restored>地图即将复原，你需要重新登录。</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>你击退了这场模拟进攻！:)</OCity_GameAttack_Host_Training_Attack_Repulsed>
-	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>你被击溃，定居点已转交给新的所有者 :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
-	<OCity_GameAttack_Host_Atack_Repulsed>你成功击退了这次攻击！:) </OCity_GameAttack_Host_Atack_Repulsed>
-	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>未能成功撤退的敌军将留在地图上，但会与指挥官失去联系。</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Error_Message_Attack>袭击错误</OCity_GameAttack_Host_Error_Message_Attack>
+	<OCity_GameAttack_Host_Card_Restored>地图即将恢复，你需要重新登录。</OCity_GameAttack_Host_Card_Restored>
+	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>你被击败了，定居点已归新主人所有 :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
+	<OCity_GameAttack_Host_Atack_Repulsed>你击退了这次袭击！ :) </OCity_GameAttack_Host_Atack_Repulsed>
+	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>未能撤离的敌人将留在地图上，但会失去与指挥官的联系。</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0}正在袭击你的远行队</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>你的远行队在战斗中被击败了。</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>你击退了对远行队的袭击！幸存的殖民者和战利品已返回世界地图。</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>正在加载战斗地图</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>如果你无法继续战斗，可以在主菜单中投降并放弃这支远行队。</OCity_GameAttack_Host_Surrender_Caravan>
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>需要3个参数：名称、标题、正文</OC_IncdidentMessadge_ArgErr>

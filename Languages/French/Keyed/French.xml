@@ -35,12 +35,7 @@ Valeur en bourse : {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Attack>Attaquer {0}</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>Êtes-vous sûr de vouloir attaquer la colonie {0} ?</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>Êtes-vous sûr de vouloir attaquer la caravane {0} ?</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>Attaque de caravane</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>Vous avez anéanti la caravane ennemie ! Vos colons survivants et le butin ont été reformés en caravane sur la carte du monde.</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0} attaque votre caravane</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>Votre caravane a été vaincue au combat.</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Vous avez repoussé l'attaque contre la caravane ! Les colons survivants et le butin sont retournés sur la carte du monde.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>NomJoueurTest</OCity_DevTest_NameTestPlayer>
@@ -384,32 +379,33 @@ Diminuer ce paramètre restitue les ressources, l'augmenter en réserve davantag
 	<OCity_GameUtils_Ok>OK</OCity_GameUtils_Ok>
 
 	<!-- GameAttacker.cs -->
-	<OCity_GameAttacker_Dialog_ErrorMessage>Erreur lors de l'attaque</OCity_GameAttacker_Dialog_ErrorMessage>
-	<OCity_GameAttacker_Dialog_Settlement_Attack>Vous attaquez la colonie</OCity_GameAttacker_Dialog_Settlement_Attack>
+	<OCity_GameAttacker_Dialog_ErrorMessage>Erreur d'attaque</OCity_GameAttacker_Dialog_ErrorMessage>
+	<OCity_GameAttacker_Dialog_Settlement_Attack>Vous attaquez une colonie</OCity_GameAttacker_Dialog_Settlement_Attack>
 	<OCity_GameAttacker_Withdraw>Battre en retraite</OCity_GameAttacker_Withdraw>
-	<OCity_GameAttacker_Main_Dialog>Dans ce mode, le jeu doit être mis en pause. Malgré cela, le combat se poursuivra et la situation évoluera. Si vous souhaitez mettre fin à l'attaque, repliez tous les colons possibles vers n'importe quel bord de la carte et cliquez sur Battre en retraite dans le menu principal.</OCity_GameAttacker_Main_Dialog>
-	<OCity_GameAttacker_Main_Preparation_Dialog>Préparation terminée. Vous avez une minute pour inspecter la carte avant le début de l'assaut.</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>Vous avez remporté ce combat d'entraînement ! :)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>La caravane va être restaurée, vous devrez vous reconnecter.</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>Vous avez subi une défaite lors de cette attaque d'entraînement. :(</Ocity_GameAttacker_TrainingFight_Lost>
+	<OCity_GameAttacker_Main_Dialog>Dans ce mode, le jeu doit être en pause. Malgré cela, le combat continuera et la situation évoluera. Si vous souhaitez mettre fin à l'attaque, emmenez tous ceux que vous pouvez vers n'importe quel bord de la carte et cliquez sur « Battre en retraite » dans le menu principal.</OCity_GameAttacker_Main_Dialog>
+	<OCity_GameAttacker_Main_Preparation_Dialog>Préparation terminée. Vous avez une minute pour inspecter la carte avant le début de l'attaque.</OCity_GameAttacker_Main_Preparation_Dialog>
 	<OCity_GameAttacker_Done>Terminé</OCity_GameAttacker_Done>
-	<OCity_GameAttacker_Settlement_TakenOver>Vous avez conquis cette colonie ! :) </OCity_GameAttacker_Settlement_TakenOver>
-	<OCity_GameAttacker_Defeated>Vous avez subi une défaite :(</OCity_GameAttacker_Defeated>
-	<OCity_GameAttacker_Colonist_Return>Les colons valides s'étant repliés vers les bords de la carte reviennent.</OCity_GameAttacker_Colonist_Return>
-
+	<OCity_GameAttacker_Settlement_TakenOver>Vous avez pris le contrôle de cette colonie ! :) </OCity_GameAttacker_Settlement_TakenOver>
+	<OCity_GameAttacker_Defeated>Vous avez été vaincu :(</OCity_GameAttacker_Defeated>
+	<OCity_GameAttacker_Colonist_Return>Les colons capables de se déplacer qui ont battu en retraite vers les bords de la carte sont de retour.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Attaque d'une caravane</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Vous avez vaincu la caravane ennemie ! Vos colons survivants et le butin ont été reformés en caravane sur la carte du monde.</OCity_GameAttacker_Caravan_TakenOver>
+	
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0} mène une attaque d'entraînement contre votre colonie</OCity_GameAttack_Host_Test_Attack>
-	<OCity_GameAttack_Host_Settlement_Attacking>Votre colonie est attaquée par {0}</OCity_GameAttack_Host_Settlement_Attacking>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Attendez que l'assaillant soit prêt. La vitesse passera ensuite automatiquement à x1 et ne pourra plus être modifiée.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>Si vous souhaitez capituler et abandonner la colonie, cliquez dans le menu principal sur</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> Si vous souhaitez terminer et annuler l'entraînement, cliquez dans le menu principal sur </OCity_GameAttack_Host_Cancel_Action>
+	<OCity_GameAttack_Host_Settlement_Attacking>{0} attaque votre colonie</OCity_GameAttack_Host_Settlement_Attacking>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Attendez que l'agresseur soit prêt. Ensuite, la vitesse passera automatiquement à x1 et ne pourra plus être modifiée.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>Dans le menu principal, vous pouvez capituler et perdre la colonie</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
 	<OCity_GameAttack_Host_Surrender>Capituler</OCity_GameAttack_Host_Surrender>
-	<OCity_GameAttack_Host_Error_Message_Attack>Erreur lors de l'attaque</OCity_GameAttack_Host_Error_Message_Attack>
+	<OCity_GameAttack_Host_Error_Message_Attack>Erreur d'attaque</OCity_GameAttack_Host_Error_Message_Attack>
 	<OCity_GameAttack_Host_Card_Restored>La carte va maintenant être restaurée, vous devrez vous reconnecter.</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>Vous avez repoussé cette attaque d'entraînement ! :)</OCity_GameAttack_Host_Training_Attack_Repulsed>
-	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>Vous avez été vaincu et la colonie passe aux mains d'un nouveau propriétaire :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
+	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>Vous avez été vaincu et la colonie passe au nouveau propriétaire :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
 	<OCity_GameAttack_Host_Atack_Repulsed>Vous avez repoussé cette attaque ! :) </OCity_GameAttack_Host_Atack_Repulsed>
-	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Les ennemis n'ayant pas réussi à fuir resteront sur la carte, mais perdront le contact avec leur commandant.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Les ennemis qui n'ont pas pu fuir resteront sur la carte, mais perdront le contact avec leur commandant.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} attaque votre caravane</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Votre caravane a été vaincue au combat.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Vous avez repoussé l'attaque contre la caravane ! Les colons survivants et le butin sont retournés sur la carte du monde.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>Chargement de la carte de combat</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>Si vous ne pouvez pas continuer le combat, vous pouvez capituler dans le menu principal et perdre cette caravane.</OCity_GameAttack_Host_Surrender_Caravan>
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>3 arguments requis : nom, titre, texte</OC_IncdidentMessadge_ArgErr>

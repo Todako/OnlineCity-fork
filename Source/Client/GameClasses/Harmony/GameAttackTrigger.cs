@@ -177,7 +177,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 1.1. Prevent vanilla edge map exit, premature Ambush map removal, and Pirate flee AI
+    // 1.1. Prevent vanilla edge map exit during active battle & return fleeing pawns after surrender
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn))]
@@ -187,15 +187,25 @@ namespace RimWorldOnlineCity.GameClasses
         [HarmonyPrefix]
         public static bool Prefix(Pawn __instance)
         {
-            if (!GameAttackTrigger_Patch.HasActiveAttack) return true;
-            var map = __instance?.Map;
-            if (map == null) return true;
+            if (__instance == null) return true;
+            var map = __instance.Map;
 
-            if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
-                || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map))
+            if (GameAttackTrigger_Patch.HasActiveAttack && map != null)
+            {
+                if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
+                    || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map))
+                {
+                    return false;
+                }
+            }
+
+            // If a stranded attacker pawn was fleeing under AI after surrender and reached the map edge,
+            // transfer them back to the attacker player!
+            if (GameAttackHost.TryHandleRetreatingPawnExit(__instance))
             {
                 return false;
             }
+
             return true;
         }
     }
@@ -220,7 +230,7 @@ namespace RimWorldOnlineCity.GameClasses
 
     /// <summary>
     /// Prevents remote-controlled pawns (spawned with Pirate faction) from running vanilla
-    /// JobGiver_ExitMapBest AI when idle, without overriding their active network jobs.
+    /// JobGiver_ExitMapBest AI during an active PvP battle, without overriding their active network jobs.
     /// </summary>
     [HarmonyPatch(typeof(Pawn_JobTracker))]
     [HarmonyPatch("DetermineNextJob")]

@@ -35,12 +35,7 @@
 	<OCity_Caravan_Attack>{0} 공격</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>정착지 {0}을(를) 공격하시겠습니까?</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>상단 {0}을(를) 공격하시겠습니까?</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>상단 공격</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>적 상단을 격파했습니다! 생존한 정착민과 전리품이 세계 지도에 상단으로 편성되었습니다.</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0}이(가) 당신의 상단을 공격하고 있습니다</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>상단이 전투에서 패배했습니다.</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>상단 습격을 격퇴했습니다! 생존한 정착민과 전리품이 세계 지도로 복귀했습니다.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>테스트</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>테스트플레이어이름</OCity_DevTest_NameTestPlayer>
@@ -387,29 +382,30 @@
 	<OCity_GameAttacker_Dialog_ErrorMessage>공격 오류</OCity_GameAttacker_Dialog_ErrorMessage>
 	<OCity_GameAttacker_Dialog_Settlement_Attack>정착지를 공격 중입니다</OCity_GameAttacker_Dialog_Settlement_Attack>
 	<OCity_GameAttacker_Withdraw>후퇴</OCity_GameAttacker_Withdraw>
-	<OCity_GameAttacker_Main_Dialog>이 모드에서는 게임이 일시 정지되어야 합니다. 그럼에도 불구하고 전투는 계속 진행되며 상황은 실시간으로 변화합니다. 공격을 중단하고 싶다면 가능한 모든 인원을 지도의 아무 가장자리로 이동시킨 뒤 메인 메뉴에서 후퇴를 클릭하세요.</OCity_GameAttacker_Main_Dialog>
-	<OCity_GameAttacker_Main_Preparation_Dialog>준비가 완료되었습니다. 공격이 시작되기 전 1분 동안 지도를 정찰할 수 있습니다.</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>모의 전투에서 승리했습니다! :)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>상단이 곧 복원됩니다. 다시 로그인해 주세요.</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>모의 전투에서 패배했습니다. :(</Ocity_GameAttacker_TrainingFight_Lost>
+	<OCity_GameAttacker_Main_Dialog>이 모드에서는 게임이 일시 정지 상태여야 합니다. 그럼에도 전투는 계속 진행되며 상황은 계속 변합니다. 공격을 종료하려면 가능한 모든 인원을 지도의 아무 가장자리로 이동시킨 후, 메인 메뉴에서 후퇴를 누르세요.</OCity_GameAttacker_Main_Dialog>
+	<OCity_GameAttacker_Main_Preparation_Dialog>준비가 완료되었습니다. 공격이 시작되기 전 지도를 살펴볼 수 있는 시간은 1분입니다.</OCity_GameAttacker_Main_Preparation_Dialog>
 	<OCity_GameAttacker_Done>완료</OCity_GameAttacker_Done>
-	<OCity_GameAttacker_Settlement_TakenOver>정착지를 점령했습니다! :) </OCity_GameAttacker_Settlement_TakenOver>
+	<OCity_GameAttacker_Settlement_TakenOver>이 정착지를 점령했습니다! :) </OCity_GameAttacker_Settlement_TakenOver>
 	<OCity_GameAttacker_Defeated>패배했습니다 :(</OCity_GameAttacker_Defeated>
-	<OCity_GameAttacker_Colonist_Return>지도 가장자리로 후퇴한 생존 정착민들이 복귀합니다.</OCity_GameAttacker_Colonist_Return>
-
+	<OCity_GameAttacker_Colonist_Return>지도 가장자리로 후퇴한 이동 가능한 정착민들이 복귀하고 있습니다.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>상단 공격</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>적 상단을 격파했습니다! 생존한 정착민들과 전리품이 세계 지도에 상단으로 편성되었습니다.</OCity_GameAttacker_Caravan_TakenOver>
+	
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0}이(가) 정착지에 모의 공격을 감행했습니다</OCity_GameAttack_Host_Test_Attack>
-	<OCity_GameAttack_Host_Settlement_Attacking>{0}이(가) 정착지를 공격하고 있습니다</OCity_GameAttack_Host_Settlement_Attacking>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>공격측의 준비가 끝날 때까지 기다려 주세요. 준비 완료 후 게임 속도는 1배속으로 고정되며 변경할 수 없습니다.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>항복하고 정착지를 양도하려면 메인 메뉴에서 다음을 클릭하세요: </OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> 모의 전투를 중단하고 취소하려면 메인 메뉴에서 다음을 클릭하세요: </OCity_GameAttack_Host_Cancel_Action>
+	<OCity_GameAttack_Host_Settlement_Attacking>{0}이(가) 당신의 정착지를 공격하고 있습니다</OCity_GameAttack_Host_Settlement_Attacking>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>공격자가 준비될 때까지 기다리세요. 준비가 완료되면 게임 속도가 자동으로 1배속으로 전환되며 변경할 수 없게 됩니다.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>메인 메뉴에서 항복하고 정착지를 포기할 수 있습니다</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
 	<OCity_GameAttack_Host_Surrender>항복</OCity_GameAttack_Host_Surrender>
 	<OCity_GameAttack_Host_Error_Message_Attack>공격 오류</OCity_GameAttack_Host_Error_Message_Attack>
-	<OCity_GameAttack_Host_Card_Restored>지도가 곧 복원됩니다. 다시 로그인해 주세요.</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>모의 공격을 성공적으로 격퇴했습니다! :)</OCity_GameAttack_Host_Training_Attack_Repulsed>
-	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>전투에서 패배하여 정착지가 새 소유자에게 넘어갑니다 :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
-	<OCity_GameAttack_Host_Atack_Repulsed>공격을 성공적으로 격퇴했습니다! :) </OCity_GameAttack_Host_Atack_Repulsed>
-	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>탈출하지 못한 적들은 지도에 잔류하지만, 지휘관과의 연결이 끊어집니다.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Card_Restored>곧 지도가 복구되며, 다시 로그인해야 합니다.</OCity_GameAttack_Host_Card_Restored>
+	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>패배하여 정착지가 새로운 주인에게 넘어갑니다 :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
+	<OCity_GameAttack_Host_Atack_Repulsed>이번 공격을 격퇴했습니다! :) </OCity_GameAttack_Host_Atack_Repulsed>
+	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>퇴각하지 못한 적들은 지도에 남게 되지만, 지휘관과의 연락이 끊어집니다.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0}이(가) 당신의 상단을 공격하고 있습니다</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>당신의 상단이 전투에서 패배했습니다.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>상단에 대한 공격을 격퇴했습니다! 생존한 정착민들과 전리품이 세계 지도로 복귀했습니다.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>전투 지도 불러오는 중</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>전투를 계속할 수 없다면 메인 메뉴에서 항복하고 이 상단을 포기할 수 있습니다.</OCity_GameAttack_Host_Surrender_Caravan>
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>이름, 제목, 내용 3개의 인수가 필요합니다</OC_IncdidentMessadge_ArgErr>

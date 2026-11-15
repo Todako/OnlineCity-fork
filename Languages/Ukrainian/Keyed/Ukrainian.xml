@@ -35,12 +35,7 @@
 	<OCity_Caravan_Attack>Атакувати {0}</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>Ви впевнені, що бажаєте напасти на поселення {0}?</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>Ви впевнені, що бажаєте напасти на караван {0}?</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>Напад на караван</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>Ви розгромили ворожий караван! Ваші вцілілі колоністи та трофеї сформовані в караван на карті світу.</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0} нападає на ваш караван</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>Ваш караван зазнав поразки в бою.</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Ви відбили напад на караван! Вцілілі колоністи та трофеї повернулися на карту світу.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Тест</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>НазваТестовогоГравця</OCity_DevTest_NameTestPlayer>
@@ -389,27 +384,30 @@
 	<OCity_GameAttacker_Withdraw>Відступити</OCity_GameAttacker_Withdraw>
 	<OCity_GameAttacker_Main_Dialog>У цьому режимі гра має бути на паузі. Попри це бій триватиме і ситуація змінюватиметься. Якщо ви хочете завершити напад, відведіть усіх, кого зможете, до будь-якого краю карти і в головному меню натисніть відступити.</OCity_GameAttacker_Main_Dialog>
 	<OCity_GameAttacker_Main_Preparation_Dialog>Підготовка завершена. У вас є одна хвилина, щоб оглянути мапу перед початком атаки.</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>Ви виграли цей тренувальний бій! :)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>Зараз караван буде відновлено, вам потрібно буде виконати вхід.</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>Ви зазнали поразки у цій тренувальній атаці. :(</Ocity_GameAttacker_TrainingFight_Lost>
 	<OCity_GameAttacker_Done>Готово</OCity_GameAttacker_Done>
 	<OCity_GameAttacker_Settlement_TakenOver>Ви захопили це поселення! :) </OCity_GameAttacker_Settlement_TakenOver>
 	<OCity_GameAttacker_Defeated>Ви зазнали поразки :(</OCity_GameAttacker_Defeated>
 	<OCity_GameAttacker_Colonist_Return>Здатні до пересування колоністи, які відступили до країв карти, повертаються.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Напад на караван</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>Ви розгромили ворожий караван! Ваші вцілілі колоністи та трофеї сформовані в караван на карті світу.</OCity_GameAttacker_Caravan_TakenOver>
+	
 
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0} проводить тестову атаку на Ваше поселення</OCity_GameAttack_Host_Test_Attack>
 	<OCity_GameAttack_Host_Settlement_Attacking>Ваше поселення атакує {0}</OCity_GameAttack_Host_Settlement_Attacking>
 	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Дочекайтеся, коли агресор буде готовий. Після цього швидкість автоматично увімкнеться на х1 і її не можна буде змінювати.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
-	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>Якщо ви хочете здатися і втратити поселення, то натисніть у головному меню</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> Якщо ви хочете закінчити і скасувати тренування, то натисніть у головному меню </OCity_GameAttack_Host_Cancel_Action>
+	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>У головному меню ви можете здатися і втратити поселення</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
 	<OCity_GameAttack_Host_Surrender>Здатися</OCity_GameAttack_Host_Surrender>
 	<OCity_GameAttack_Host_Error_Message_Attack>Помилка нападу</OCity_GameAttack_Host_Error_Message_Attack>
 	<OCity_GameAttack_Host_Card_Restored>Зараз карту буде відновлено, вам потрібно буде виконати вхід.</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>Ви відбили цю тренувальну атаку! :)</OCity_GameAttack_Host_Training_Attack_Repulsed>
 	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>Ви зазнали поразки і поселення переходить до нового власника :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
 	<OCity_GameAttack_Host_Atack_Repulsed>Ви відбили цю атаку! :) </OCity_GameAttack_Host_Atack_Repulsed>
 	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Вороги, які не зуміли піти, залишаться на карті, але втратять зв'язок зі своїм командиром.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} нападає на ваш караван</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Ваш караван зазнав поразки в бою.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>Ви відбили напад на караван! Вцілілі колоністи та трофеї повернулися на карту світу.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>Завантаження карти бою</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>Якщо ви не можете продовжувати бій, ви можете здатися в головному меню та втратити цей караван.</OCity_GameAttack_Host_Surrender_Caravan>
+
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>Необхідні 3 аргументи: ім'я, заголовок, текст</OC_IncdidentMessadge_ArgErr>

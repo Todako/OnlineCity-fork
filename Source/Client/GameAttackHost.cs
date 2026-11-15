@@ -7,8 +7,10 @@ using RimWorldOnlineCity.GameClasses;
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Verse;
 using Verse.AI;
+using Verse.AI.Group;
 
 namespace RimWorldOnlineCity
 {
@@ -18,6 +20,76 @@ namespace RimWorldOnlineCity
     /// </summary>
     public class GameAttackHost
     {
+        private class RetreatingPawnInfo
+        {
+            public string AttackerLogin;
+            public int Tile;
+        }
+
+        // Tracks stranded attacker pawns fleeing off the Host's colony map after surrender
+        private static readonly Dictionary<int, RetreatingPawnInfo> RetreatingPawnsToOwner =
+            new Dictionary<int, RetreatingPawnInfo>(16);
+
+        public static bool TryHandleRetreatingPawnExit(Pawn pawn)
+        {
+            if (pawn == null) return false;
+
+            RetreatingPawnInfo info;
+            lock (RetreatingPawnsToOwner)
+            {
+                if (!RetreatingPawnsToOwner.TryGetValue(pawn.thingIDNumber, out info))
+                {
+                    return false;
+                }
+                RetreatingPawnsToOwner.Remove(pawn.thingIDNumber);
+            }
+
+            try
+            {
+                if (pawn.Dead || pawn.Destroyed) return true;
+
+                if (pawn.carryTracker?.CarriedThing != null && pawn.inventory?.innerContainer != null)
+                {
+                    pawn.carryTracker.innerContainer.TryTransferAllToContainer(pawn.inventory.innerContainer);
+                }
+
+                var entry = ThingEntry.CreateEntry(pawn, 1);
+                entry.Affiliation = PawnAffiliation.Colonist;
+
+                GameUtils.PawnDestroy(pawn);
+
+                string targetLogin = info.AttackerLogin;
+                int targetTile = info.Tile;
+
+                if (!string.IsNullOrEmpty(targetLogin) && SessionClientController.My != null)
+                {
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            SessionClientController.CommandSafely((connect) =>
+                                connect.SendThings(
+                                    new List<ThingEntry>(1) { entry },
+                                    SessionClientController.My.Login,
+                                    targetLogin,
+                                    ExchengeUtils.RetreatingPawnMarkerId,
+                                    targetTile));
+                        }
+                        catch (Exception ex)
+                        {
+                            Loger.Log("TryHandleRetreatingPawnExit network error: " + ex.Message, Loger.LogLevel.WARNING);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("TryHandleRetreatingPawnExit Exception: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+
+            return true;
+        }
+
         public int AttackUpdateDelay { get; } = 50;
         public bool PlantNotSend { get; } = false;
         public int SendDelayedFillPawnsSeconds { get; } = 30;
@@ -133,15 +205,19 @@ namespace RimWorldOnlineCity
         {
             ModBaseData.RunMainThread(() =>
             {
+                string surrenderText = (_isTemporaryCaravanMap && "OCity_GameAttack_Host_Surrender_Caravan".CanTranslate())
+                    ? "OCity_GameAttack_Host_Surrender_Caravan".Translate().ToString()
+                    : "OCity_GameAttack_Host_Surrender".Translate().ToString();
+
                 GameUtils.ShowDialodOKCancel(
                     GetHostDialogTitle(),
                     TestMode
                         ? "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
                             + "OCity_GameAttack_Host_Cancel_Action".Translate() + Environment.NewLine
-                            + "OCity_GameAttack_Host_Surrender".Translate()
+                            + surrenderText
                         : "OCity_GameAttack_Host_GameSpeed_Lock_Dialog".Translate() + Environment.NewLine
                             + "OCity_GameAttack_Host_GameSpeed_Lock_Dialog2".Translate() + Environment.NewLine
-                            + "OCity_GameAttack_Host_Surrender".Translate(),
+                            + surrenderText,
                     () => { },
                     null
                 );
@@ -195,7 +271,6 @@ namespace RimWorldOnlineCity
                     _isTemporaryCaravanMap = true;
                     int caravanTile = hostCaravan.Tile;
 
-                    // Record all items originally belonging to the host's caravan so they are pre-selected after victory
                     var caravanPawns = hostCaravan.PawnsListForReading;
                     for (int i = 0; i < caravanPawns.Count; i++)
                     {
@@ -372,7 +447,7 @@ namespace RimWorldOnlineCity
 
                     TimerObj = SessionClientController.Timers.Add(AttackUpdateDelay, AttackUpdate);
                 });
-            }, "OCity_GameAttack_Host_Loading".Translate(), false, null);
+            }, "OCity_GameAttack_Host_Loading", false, null);
         }
 
         private void ErrorBreak(string msg)
@@ -399,8 +474,97 @@ namespace RimWorldOnlineCity
             GameAttackTrigger_Patch.ForceSpeed = -1f;
         }
 
+        /// <summary>
+        /// Assigns vanilla flee AI (LordJob_ExitMapBest + Goto exit spot) to any surviving attacker
+        /// pawns left inside the Host's colony after surrender, so they flee off the map and return to the attacker.
+        /// </summary>
+        private void StartStrandedAttackersFlee(List<Pawn> strandedPawns)
+        {
+            if (strandedPawns == null || strandedPawns.Count == 0 || GameMap == null) return;
+
+            try
+            {
+                Faction pirateFaction = strandedPawns[0].Faction
+                    ?? SessionClientController.Data?.FactionPirate
+                    ?? Find.FactionManager?.FirstFactionOfDef(FactionDefOf.Pirate);
+
+                Lord fleeLord = null;
+                if (pirateFaction != null)
+                {
+                    fleeLord = LordMaker.MakeNewLord(
+                        pirateFaction,
+                        new LordJob_ExitMapBest(LocomotionUrgency.Jog, canDig: false, canDefendSelf: true),
+                        GameMap);
+                }
+
+                for (int i = 0; i < strandedPawns.Count; i++)
+                {
+                    var p = strandedPawns[i];
+                    if (p == null || p.Dead || p.Destroyed || !p.Spawned) continue;
+
+                    lock (RetreatingPawnsToOwner)
+                    {
+                        RetreatingPawnsToOwner[p.thingIDNumber] = new RetreatingPawnInfo
+                        {
+                            AttackerLogin = AttackerLogin,
+                            Tile = GameMap.Tile
+                        };
+                    }
+
+                    if (p.drafter != null && p.drafter.Drafted)
+                    {
+                        p.drafter.Drafted = false;
+                    }
+
+                    var oldLord = p.GetLord();
+                    if (oldLord != null && oldLord != fleeLord)
+                    {
+                        oldLord.Notify_PawnLost(p, PawnLostCondition.ForcedToJoinOtherLord);
+                    }
+                    fleeLord?.AddPawn(p);
+
+                    p.jobs?.StopAll();
+
+                    if (!p.Downed && RCellFinder.TryFindBestExitSpot(p, out IntVec3 exitSpot))
+                    {
+                        var exitJob = JobMaker.MakeJob(JobDefOf.Goto, exitSpot);
+                        exitJob.exitMapOnArrival = true;
+                        exitJob.locomotionUrgency = LocomotionUrgency.Jog;
+                        exitJob.expiryInterval = 2000;
+                        exitJob.canBashDoors = true;
+                        p.jobs?.StartJob(exitJob, JobCondition.InterruptForced);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("StartStrandedAttackersFlee warning: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+        }
+
         public void Finish(bool victoryAttacker)
         {
+            // Ensure the server is notified if Finish() was called directly from the Main Menu surrender button
+            if (ConfirmedVictoryAttacker == null)
+            {
+                ConfirmedVictoryAttacker = victoryAttacker;
+                try
+                {
+                    SessionClientController.Command((connect) =>
+                    {
+                        connect.AttackOnlineHost(new AttackHostToSrv
+                        {
+                            State = 10,
+                            BattleSeed = _battleSeed,
+                            CurrentBattleTick = LockstepController.LocalBattleTick,
+                            HostReady = _localSceneReady,
+                            VictoryAttacker = victoryAttacker
+                        });
+                    });
+                }
+                catch { }
+            }
+
             ModBaseData.RunMainThreadSync(() =>
             {
                 if (SessionClientController.Data?.AttackUsModule != this) return;
@@ -462,7 +626,7 @@ namespace RimWorldOnlineCity
                 {
                     if (!victoryAttacker)
                     {
-                        // Host defended the caravan: remove retreating enemies and open vanilla Dialog_FormCaravan
+                        // Host defended the caravan: remove retreating enemies and open Dialog_CaravanLoot
                         if (AttackingPawns != null)
                         {
                             foreach (var enemy in AttackingPawns)
@@ -500,19 +664,32 @@ namespace RimWorldOnlineCity
                 else if (AttackingPawns != null && GameMap != null)
                 {
                     var pawnsToDestroy = new List<Pawn>();
+                    var strandedPawnsToFlee = new List<Pawn>();
+
                     foreach (var pawn in AttackingPawns)
                     {
-                        if (pawn != null && !pawn.Dead && !pawn.Downed &&
+                        if (pawn == null || pawn.Dead || pawn.Destroyed) continue;
+
+                        bool inRetreatBorder = !pawn.Downed &&
                             (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
-                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder))
+                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder);
+
+                        if (inRetreatBorder)
                         {
                             pawnsToDestroy.Add(pawn);
                         }
+                        else
+                        {
+                            strandedPawnsToFlee.Add(pawn);
+                        }
                     }
+
                     for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
                     {
                         GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
                     }
+
+                    StartStrandedAttackersFlee(strandedPawnsToFlee);
                     saveAndShowFinishDialog();
                 }
                 else
@@ -1442,7 +1619,6 @@ namespace RimWorldOnlineCity
                     }
                 }
 
-                // Synchronize movement and combat jobs for all host pawns and animals (including GotoWander)
                 if (!AttackingPawnDic.ContainsKey(pawnId) && job.def != null)
                 {
                     bool isIdleWait = job.def == JobDefOf.Wait_Combat

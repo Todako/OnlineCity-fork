@@ -17,6 +17,7 @@ using UnityEngine;
 using Util;
 using Verse;
 using Verse.AI;
+using Verse.Sound;
 
 namespace RimWorldOnlineCity
 {
@@ -36,9 +37,358 @@ namespace RimWorldOnlineCity
         }
     }
 
+    /// <summary>
+    /// Standalone loot selection window after a caravan PvP battle.
+    /// Uses vanilla TransferableOneWayWidget tables and mass capacity counters
+    /// without invoking WorldRoutePlanner, forming the caravan directly on the current tile.
+    /// </summary>
+    public class Dialog_CaravanLoot : Window
+    {
+        private enum Tab
+        {
+            Pawns,
+            Items
+        }
+
+        private readonly Map _map;
+        private readonly HashSet<int> _preselectedItemIds;
+        private readonly Action _onClosed;
+        private readonly List<TransferableOneWay> _transferables = new List<TransferableOneWay>();
+        private TransferableOneWayWidget _pawnsTransfer;
+        private TransferableOneWayWidget _itemsTransfer;
+        private Tab _curTab = Tab.Items;
+        private bool _caravanFormed = false;
+
+        private static readonly List<TabRecord> _tabsList = new List<TabRecord>(2);
+
+        public override Vector2 InitialSize => new Vector2(1024f, Verse.UI.screenHeight - 40);
+        protected override float Margin => 18f;
+
+        public Dialog_CaravanLoot(Map map, HashSet<int> preselectedItemIds, Action onClosed)
+        {
+            _map = map;
+            _preselectedItemIds = preselectedItemIds ?? new HashSet<int>();
+            _onClosed = onClosed;
+            forcePause = true;
+            absorbInputAroundWindow = true;
+            closeOnAccept = false;
+            closeOnCancel = false;
+            doCloseX = false;
+            doCloseButton = false;
+        }
+
+        public override void PostOpen()
+        {
+            base.PostOpen();
+            BuildTransferables();
+        }
+
+        public override void PostClose()
+        {
+            base.PostClose();
+            if (!_caravanFormed)
+            {
+                FormCaravanFromSelection(onlyPlayerPawnsFallback: true);
+            }
+            _onClosed?.Invoke();
+        }
+
+        private void BuildTransferables()
+        {
+            _transferables.Clear();
+            if (_map == null) return;
+
+            var allPawns = _map.mapPawns.AllPawnsSpawned;
+            for (int i = 0; i < allPawns.Count; i++)
+            {
+                var p = allPawns[i];
+                if (p == null || p.Destroyed || p.Dead) continue;
+                if (p.Faction == Faction.OfPlayer || p.IsPrisonerOfColony || (p.Downed && p.RaceProps.Humanlike))
+                {
+                    AddToTransferables(p, p.Faction == Faction.OfPlayer ? 1 : 0);
+                }
+            }
+
+            var allThings = _map.listerThings.AllThings;
+            for (int i = 0; i < allThings.Count; i++)
+            {
+                var th = allThings[i];
+                if (th == null || th.Destroyed || !th.Spawned) continue;
+                if (th is Pawn || th is Corpse || th is Filth || th is Mote || th is Plant || th is Building) continue;
+                if (th.def.category != ThingCategory.Item) continue;
+
+                int preselectCount = _preselectedItemIds.Contains(th.thingIDNumber) ? th.stackCount : 0;
+                AddToTransferables(th, preselectCount);
+            }
+
+            _pawnsTransfer = new TransferableOneWayWidget(
+                null, null, null,
+                "FormCaravanColonyThingCountTip".Translate(),
+                drawMass: true,
+                IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload,
+                includePawnsMassInMassUsage: true,
+                () => GetMassCapacity() - GetMassUsage(),
+                0f,
+                ignoreSpawnedCorpseGearAndInventoryMass: false,
+                _map.Tile,
+                drawMarketValue: true,
+                drawEquippedWeapon: true,
+                drawNutritionEatenPerDay: false,
+                drawItemNutrition: false,
+                drawForagedFoodPerDay: false);
+
+            CaravanUIUtility.AddPawnsSections(_pawnsTransfer, _transferables);
+
+            _itemsTransfer = new TransferableOneWayWidget(
+                _transferables.Where(t => t.ThingDef.category != ThingCategory.Pawn),
+                null, null,
+                "FormCaravanColonyThingCountTip".Translate(),
+                drawMass: true,
+                IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload,
+                includePawnsMassInMassUsage: true,
+                () => GetMassCapacity() - GetMassUsage(),
+                0f,
+                ignoreSpawnedCorpseGearAndInventoryMass: false,
+                _map.Tile,
+                drawMarketValue: true,
+                drawEquippedWeapon: false,
+                drawNutritionEatenPerDay: false,
+                drawItemNutrition: true,
+                drawForagedFoodPerDay: false,
+                drawDaysUntilRot: true);
+        }
+
+        private void AddToTransferables(Thing t, int toTransfer)
+        {
+            var tr = TransferableUtility.TransferableMatching(t, _transferables, TransferAsOneMode.PodsOrCaravanPacking);
+            if (tr == null)
+            {
+                tr = new TransferableOneWay();
+                _transferables.Add(tr);
+            }
+            if (!tr.things.Contains(t))
+            {
+                tr.things.Add(t);
+            }
+            if (toTransfer > 0)
+            {
+                tr.AdjustTo(Mathf.Clamp(tr.CountToTransfer + toTransfer, 0, tr.GetMaximumToTransfer()));
+            }
+        }
+
+        private float GetMassCapacity()
+        {
+            var pawns = new List<ThingCount>();
+            for (int i = 0; i < _transferables.Count; i++)
+            {
+                var tr = _transferables[i];
+                if (tr.HasAnyThing && tr.AnyThing is Pawn && tr.CountToTransfer > 0)
+                {
+                    for (int j = 0; j < tr.things.Count && j < tr.CountToTransfer; j++)
+                    {
+                        pawns.Add(new ThingCount(tr.things[j], 1));
+                    }
+                }
+            }
+            return CollectionsMassCalculator.Capacity(pawns);
+        }
+
+        private float GetMassUsage()
+        {
+            return CollectionsMassCalculator.MassUsageTransferables(
+                _transferables,
+                IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload,
+                false,
+                false);
+        }
+
+        public override void DoWindowContents(Rect inRect)
+        {
+            Rect titleRect = new Rect(0f, 0f, inRect.width, 35f);
+            Text.Font = GameFont.Medium;
+            Text.Anchor = TextAnchor.MiddleCenter;
+            Widgets.Label(titleRect, "ReformCaravan".Translate());
+            Text.Font = GameFont.Small;
+            Text.Anchor = TextAnchor.UpperLeft;
+
+            float massUsage = GetMassUsage();
+            float massCapacity = GetMassCapacity();
+            bool overCapacity = massUsage > massCapacity;
+
+            Rect massRect = new Rect(12f, 40f, inRect.width - 24f, 28f);
+            GUI.color = overCapacity ? Color.red : Color.white;
+            Widgets.Label(massRect, "Mass".Translate() + ": " + massUsage.ToString("F1") + " / " + massCapacity.ToString("F1") + " kg");
+            GUI.color = Color.white;
+
+            _tabsList.Clear();
+            _tabsList.Add(new TabRecord("PawnsTab".Translate(), () => _curTab = Tab.Pawns, _curTab == Tab.Pawns));
+            _tabsList.Add(new TabRecord("ItemsTab".Translate(), () => _curTab = Tab.Items, _curTab == Tab.Items));
+
+            inRect.yMin += 102f;
+            Widgets.DrawMenuSection(inRect);
+            TabDrawer.DrawTabs(inRect, _tabsList);
+            inRect = inRect.ContractedBy(17f);
+
+            Rect mainRect = new Rect(inRect.x, inRect.y, inRect.width, inRect.height - 52f);
+            bool anythingChanged = false;
+            if (_curTab == Tab.Pawns)
+            {
+                _pawnsTransfer?.OnGUI(mainRect, out anythingChanged);
+            }
+            else
+            {
+                _itemsTransfer?.OnGUI(mainRect, out anythingChanged);
+            }
+
+            Rect bottomRect = new Rect(inRect.x, inRect.yMax - 40f, inRect.width, 36f);
+            Rect acceptRect = new Rect(bottomRect.center.x - 100f, bottomRect.y, 200f, 36f);
+            if (Widgets.ButtonText(acceptRect, "AcceptButton".Translate()))
+            {
+                FormCaravanFromSelection(onlyPlayerPawnsFallback: false);
+                SoundDefOf.Tick_High.PlayOneShotOnCamera(null);
+                Close(false);
+            }
+        }
+
+        private void FormCaravanFromSelection(bool onlyPlayerPawnsFallback)
+        {
+            if (_caravanFormed || _map == null) return;
+            _caravanFormed = true;
+
+            try
+            {
+                var selectedPawns = new List<Pawn>();
+                var selectedItems = new List<Pair<Thing, int>>();
+
+                if (!onlyPlayerPawnsFallback)
+                {
+                    for (int i = 0; i < _transferables.Count; i++)
+                    {
+                        var tr = _transferables[i];
+                        if (tr == null || !tr.HasAnyThing || tr.CountToTransfer <= 0) continue;
+
+                        if (tr.AnyThing is Pawn)
+                        {
+                            for (int j = 0; j < tr.things.Count && j < tr.CountToTransfer; j++)
+                            {
+                                if (tr.things[j] is Pawn p && !p.Dead && !p.Destroyed)
+                                {
+                                    if (p.Faction != Faction.OfPlayer && p.RaceProps.Humanlike)
+                                    {
+                                        if (p.guest != null) p.guest.SetGuestStatus(Faction.OfPlayer, GuestStatus.Prisoner);
+                                    }
+                                    selectedPawns.Add(p);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            int left = tr.CountToTransfer;
+                            for (int j = 0; j < tr.things.Count && left > 0; j++)
+                            {
+                                var th = tr.things[j];
+                                if (th == null || th.Destroyed) continue;
+                                int take = Mathf.Min(left, th.stackCount);
+                                selectedItems.Add(new Pair<Thing, int>(th, take));
+                                left -= take;
+                            }
+                        }
+                    }
+                }
+
+                // Ensure at least all surviving player colonists are packed if none were selected
+                if (selectedPawns.Count == 0)
+                {
+                    var spawned = _map.mapPawns.AllPawnsSpawned;
+                    for (int i = 0; i < spawned.Count; i++)
+                    {
+                        var p = spawned[i];
+                        if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer)
+                        {
+                            selectedPawns.Add(p);
+                        }
+                    }
+                }
+
+                int tile = _map.Tile;
+                if (selectedPawns.Count > 0)
+                {
+                    for (int i = 0; i < selectedPawns.Count; i++)
+                    {
+                        var p = selectedPawns[i];
+                        if (p.Spawned) p.DeSpawn();
+                    }
+
+                    var newCaravan = CaravanMaker.MakeCaravan(selectedPawns, Faction.OfPlayer, tile, addToWorldPawnsIfNotAlready: true);
+
+                    for (int i = 0; i < selectedItems.Count; i++)
+                    {
+                        var thing = selectedItems[i].First;
+                        int count = selectedItems[i].Second;
+                        if (thing == null || thing.Destroyed || count <= 0) continue;
+
+                        Thing toAdd = thing.Spawned
+                            ? thing.SplitOff(count)
+                            : (count < thing.stackCount ? thing.SplitOff(count) : thing);
+
+                        var recipient = CaravanInventoryUtility.FindPawnToMoveInventoryTo(toAdd, newCaravan.PawnsListForReading, null);
+                        if (recipient?.inventory?.innerContainer != null)
+                        {
+                            recipient.inventory.innerContainer.TryAdd(toAdd, true);
+                        }
+                    }
+
+                    for (int i = 0; i < selectedPawns.Count; i++)
+                    {
+                        if (!selectedPawns[i].IsWorldPawn())
+                        {
+                            Find.WorldPawns.PassToWorld(selectedPawns[i], PawnDiscardDecideMode.Decide);
+                        }
+                    }
+                }
+
+                var leftoverPawns = new List<Pawn>(_map.mapPawns.AllPawns);
+                for (int i = 0; i < leftoverPawns.Count; i++)
+                {
+                    if (leftoverPawns[i] != null && !selectedPawns.Contains(leftoverPawns[i]))
+                    {
+                        GameUtils.PawnDestroy(leftoverPawns[i]);
+                    }
+                }
+
+                try { CameraJumper.TryShowWorld(); } catch { }
+                GameUtils.DeinitAndRemoveMapSafe(_map);
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("Dialog_CaravanLoot FormCaravan Exception: " + ex, Loger.LogLevel.ERROR);
+            }
+        }
+    }
+
     [StaticConstructorOnStartup]
     public static class GameUtils
     {
+        internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
+
+        private static readonly HashSet<ThingTrade> ExceptionDravLineThingTrade = new HashSet<ThingTrade>();
+        private static readonly HashSet<Thing> ExceptionDravLineThing = new HashSet<Thing>();
+
+        private static int BugNum = 0;
+
+        public static void GetBug()
+        {
+            var dir = Loger.PathLog.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fileName = $"Log_{DateTime.Now:yyyy-MM-dd}_*.txt";
+            var list = Directory.GetFiles(dir, fileName, SearchOption.TopDirectoryOnly);
+            var dataToSave = GZip.ZipMoreByteByte(list, name => File.ReadAllBytes(name.NormalizePath()));
+            var code = $"{DateTime.Now:yyyy-MM-dd}_{MainHelper.LockCode}_{BugNum++}";
+            var dataDir = Path.Combine(dir, "Log_" + code);
+            Directory.CreateDirectory(dataDir);
+            File.WriteAllBytes(Path.Combine(dataDir, $"BugReport_{code}.zip"), dataToSave);
+            Process.Start(dataDir);
+        }
+
         public static string TranslateAttackReason(string reason)
         {
             if (string.IsNullOrEmpty(reason)) return null;
@@ -89,26 +439,6 @@ namespace RimWorldOnlineCity
             }
 
             return reason.ServerTranslate();
-        }
-
-        internal static readonly Texture2D CircleFill = ContentFinder<Texture2D>.Get("circle-fill");
-
-        private static readonly HashSet<ThingTrade> ExceptionDravLineThingTrade = new HashSet<ThingTrade>();
-        private static readonly HashSet<Thing> ExceptionDravLineThing = new HashSet<Thing>();
-
-        private static int BugNum = 0;
-
-        public static void GetBug()
-        {
-            var dir = Loger.PathLog.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var fileName = $"Log_{DateTime.Now:yyyy-MM-dd}_*.txt";
-            var list = Directory.GetFiles(dir, fileName, SearchOption.TopDirectoryOnly);
-            var dataToSave = GZip.ZipMoreByteByte(list, name => File.ReadAllBytes(name.NormalizePath()));
-            var code = $"{DateTime.Now:yyyy-MM-dd}_{MainHelper.LockCode}_{BugNum++}";
-            var dataDir = Path.Combine(dir, "Log_" + code);
-            Directory.CreateDirectory(dataDir);
-            File.WriteAllBytes(Path.Combine(dataDir, $"BugReport_{code}.zip"), dataToSave);
-            Process.Start(dataDir);
         }
 
         public static Texture2D GetTextureFromSaveData(byte[] data)
@@ -764,10 +1094,6 @@ namespace RimWorldOnlineCity
             return new IntVec3(sumX / count, 0, sumZ / count);
         }
 
-        /// <summary>
-        /// Keeps spawn cells between minBorder (3..4) and maxBorder (8) from the nearest map edge
-        /// so pawns never trigger edge-exit but always remain well within the 15-cell retreat zone.
-        /// </summary>
         private static IntVec3 ClampSpawnBorderCell(IntVec3 cell, Map map, int minBorder = 3, int maxBorder = 8)
         {
             int x = Mathf.Clamp(cell.x, minBorder, map.Size.x - 1 - minBorder);
@@ -1013,8 +1339,8 @@ namespace RimWorldOnlineCity
         }
 
         /// <summary>
-        /// Prepares a temporary caravan battle map for loot selection and opens the vanilla
-        /// Dialog_FormCaravan window with the player's colonists, animals, and personal items pre-selected.
+        /// Prepares a temporary caravan battle map for loot selection and opens Dialog_CaravanLoot
+        /// with the player's colonists, animals, and personal items pre-selected.
         /// </summary>
         public static void OpenCaravanLootSelectionDialog(Map map, HashSet<int> preselectedItemIds, Action onFinished)
         {
@@ -1060,6 +1386,10 @@ namespace RimWorldOnlineCity
                         {
                             p.equipment.DropAllEquipment(p.Position, forbid: false);
                         }
+                        if (p.apparel != null && p.apparel.WornApparelCount > 0)
+                        {
+                            p.apparel.DropAll(p.Position, forbid: false);
+                        }
 
                         if (!p.Dead && !p.Downed)
                         {
@@ -1086,6 +1416,14 @@ namespace RimWorldOnlineCity
                         {
                             innerP.inventory.innerContainer.TryDropAll(corpse.Position, map, ThingPlaceMode.Near);
                         }
+                        if (innerP.equipment != null && innerP.equipment.HasAnything())
+                        {
+                            innerP.equipment.DropAllEquipment(corpse.Position, forbid: false);
+                        }
+                        if (innerP.apparel != null && innerP.apparel.WornApparelCount > 0)
+                        {
+                            innerP.apparel.DropAll(corpse.Position, forbid: false);
+                        }
                     }
                     if (allThings[i] != null && allThings[i].def.category == ThingCategory.Item)
                     {
@@ -1102,119 +1440,15 @@ namespace RimWorldOnlineCity
                 Loger.Log("OpenCaravanLootSelectionDialog prepare warning: " + ex.Message, Loger.LogLevel.WARNING);
             }
 
-            bool finishedCalled = false;
-            Action finalizeAndCloseMap = () =>
-            {
-                if (finishedCalled) return;
-                finishedCalled = true;
-
-                try
-                {
-                    if (map != null && Current.Game?.Maps != null && Current.Game.Maps.Contains(map))
-                    {
-                        var remainingPlayerPawns = new List<Pawn>();
-                        var spawned = map.mapPawns.AllPawnsSpawned;
-                        for (int i = 0; i < spawned.Count; i++)
-                        {
-                            var p = spawned[i];
-                            if (p != null && !p.Dead && !p.Destroyed && p.Faction == Faction.OfPlayer)
-                            {
-                                remainingPlayerPawns.Add(p);
-                            }
-                        }
-
-                        if (remainingPlayerPawns.Count > 0)
-                        {
-                            int tile = map.Tile;
-                            CaravanMaker.MakeCaravan(remainingPlayerPawns, Faction.OfPlayer, tile, false);
-                            for (int i = 0; i < remainingPlayerPawns.Count; i++)
-                            {
-                                if (!remainingPlayerPawns[i].IsWorldPawn())
-                                {
-                                    Find.WorldPawns.PassToWorld(remainingPlayerPawns[i], PawnDiscardDecideMode.Decide);
-                                }
-                            }
-                        }
-
-                        var leftoverPawns = new List<Pawn>(map.mapPawns.AllPawns);
-                        for (int i = 0; i < leftoverPawns.Count; i++)
-                        {
-                            if (leftoverPawns[i] != null && leftoverPawns[i].Faction != Faction.OfPlayer)
-                            {
-                                PawnDestroy(leftoverPawns[i]);
-                            }
-                        }
-
-                        try { CameraJumper.TryShowWorld(); } catch { }
-                        DeinitAndRemoveMapSafe(map);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Loger.Log("OpenCaravanLootSelectionDialog finalize warning: " + ex.Message, Loger.LogLevel.WARNING);
-                }
-
-                onFinished?.Invoke();
-            };
-
             try
             {
-                var dialog = new Dialog_FormCaravan(map, reform: true, onClosed: finalizeAndCloseMap, mapAboutToBeRemoved: true);
-
-                // Disable route selection so WorldRoutePlanner does not open and the caravan stays on map.Tile
-                AccessTools.Field(typeof(Dialog_FormCaravan), "canChooseRoute")?.SetValue(dialog, false);
-                AccessTools.Field(typeof(Dialog_FormCaravan), "mustChooseRoute")?.SetValue(dialog, false);
-
-                Find.WindowStack.Add(dialog);
-
-                AccessTools.Field(typeof(Dialog_FormCaravan), "canChooseRoute")?.SetValue(dialog, false);
-                AccessTools.Field(typeof(Dialog_FormCaravan), "mustChooseRoute")?.SetValue(dialog, false);
-                if (Find.WorldRoutePlanner != null && Find.WorldRoutePlanner.Active)
-                {
-                    Find.WorldRoutePlanner.Stop();
-                }
-                CameraJumper.TryHideWorld();
-
-                if (dialog.transferables != null)
-                {
-                    for (int i = 0; i < dialog.transferables.Count; i++)
-                    {
-                        var tr = dialog.transferables[i];
-                        if (tr == null || !tr.HasAnyThing) continue;
-
-                        if (tr.AnyThing is Pawn p)
-                        {
-                            if (p.Faction == Faction.OfPlayer && !p.Dead)
-                            {
-                                tr.AdjustTo(tr.GetMaximumToTransfer());
-                            }
-                            else
-                            {
-                                tr.AdjustTo(0);
-                            }
-                        }
-                        else
-                        {
-                            bool isPlayerItem = false;
-                            for (int t = 0; t < tr.things.Count; t++)
-                            {
-                                if (tr.things[t] != null && preselectedItemIds.Contains(tr.things[t].thingIDNumber))
-                                {
-                                    isPlayerItem = true;
-                                    break;
-                                }
-                            }
-                            tr.AdjustTo(isPlayerItem ? tr.GetMaximumToTransfer() : 0);
-                        }
-                    }
-
-                    AccessTools.Method(typeof(Dialog_FormCaravan), "CountToTransferChanged")?.Invoke(dialog, null);
-                }
+                CameraJumper.TryJump(new GlobalTargetInfo(map.Center, map));
+                Find.WindowStack.Add(new Dialog_CaravanLoot(map, preselectedItemIds, onFinished));
             }
             catch (Exception ex)
             {
                 Loger.Log("OpenCaravanLootSelectionDialog open warning: " + ex.Message, Loger.LogLevel.WARNING);
-                finalizeAndCloseMap();
+                onFinished?.Invoke();
             }
         }
 

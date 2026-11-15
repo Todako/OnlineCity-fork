@@ -35,12 +35,7 @@ Exchange wealth: {4}</OCity_Caravan_Other>
 	<OCity_Caravan_Attack>Attack {0}</OCity_Caravan_Attack>
 	<OCity_Caravan_Confirm_Attack_Settlement>Are you sure you want to attack the settlement {0}?</OCity_Caravan_Confirm_Attack_Settlement>
 	<OCity_Caravan_Confirm_Attack_Caravan>Are you sure you want to attack the caravan {0}?</OCity_Caravan_Confirm_Attack_Caravan>
-	<OCity_GameAttacker_Dialog_Caravan_Attack>Caravan attack</OCity_GameAttacker_Dialog_Caravan_Attack>
-	<OCity_GameAttacker_Caravan_TakenOver>You have defeated the enemy caravan! Surviving colonists and captured loot have been formed into a caravan.</OCity_GameAttacker_Caravan_TakenOver>
-	<OCity_GameAttack_Host_Caravan_Attacking>{0} is attacking your caravan</OCity_GameAttack_Host_Caravan_Attacking>
-	<OCity_GameAttack_Host_Caravan_Defeated>Your caravan was defeated in battle.</OCity_GameAttack_Host_Caravan_Defeated>
-	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>You have repelled the attack on your caravan! Your surviving colonists and loot have been packed back into the caravan.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
-
+	
 	<!-- DevelopTest.cs -->
 	<OCity_DevTest_Test>Test</OCity_DevTest_Test>
 	<OCity_DevTest_NameTestPlayer>TestPlayerName</OCity_DevTest_NameTestPlayer>
@@ -389,27 +384,29 @@ Decreasing the parameter returns resources, increasing it reserves more.</OCity_
 	<OCity_GameAttacker_Withdraw>Withdraw</OCity_GameAttacker_Withdraw>
 	<OCity_GameAttacker_Main_Dialog>In this mode, the game must be paused. Despite this, combat will continue and conditions will change. If you want to end the attack, move everyone you can to any edge of the map and click Withdraw in the main menu.</OCity_GameAttacker_Main_Dialog>
 	<OCity_GameAttacker_Main_Preparation_Dialog>Preparation complete. You have one minute to inspect the map before the attack begins.</OCity_GameAttacker_Main_Preparation_Dialog>
-	<Ocity_GameAttacker_TrainingFight_Won>You won this practice battle! :)</Ocity_GameAttacker_TrainingFight_Won>
-	<Ocity_GameAttacker_TrainingFight_Caravan_Restore>The caravan will now be restored; you will need to log in.</Ocity_GameAttacker_TrainingFight_Caravan_Restore>
-	<Ocity_GameAttacker_TrainingFight_Lost>You were defeated in this practice attack. :(</Ocity_GameAttacker_TrainingFight_Lost>
 	<OCity_GameAttacker_Done>Done</OCity_GameAttacker_Done>
 	<OCity_GameAttacker_Settlement_TakenOver>You have captured this settlement! :) </OCity_GameAttacker_Settlement_TakenOver>
 	<OCity_GameAttacker_Defeated>You were defeated :(</OCity_GameAttacker_Defeated>
 	<OCity_GameAttacker_Colonist_Return>Capable colonists who retreated to the edge of the map are returning.</OCity_GameAttacker_Colonist_Return>
+	<OCity_GameAttacker_Dialog_Caravan_Attack>Caravan attack</OCity_GameAttacker_Dialog_Caravan_Attack>
+	<OCity_GameAttacker_Caravan_TakenOver>You have defeated the enemy caravan! Surviving colonists and captured loot have been formed into a caravan.</OCity_GameAttacker_Caravan_TakenOver>
 
 	<!-- GameAttackHost.cs -->
-	<OCity_GameAttack_Host_Test_Attack>{0} is conducting a practice attack on your settlement</OCity_GameAttack_Host_Test_Attack>
 	<OCity_GameAttack_Host_Settlement_Attacking>Your settlement is being attacked by {0}</OCity_GameAttack_Host_Settlement_Attacking>
 	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog>Wait until the attacker is ready. After that, the game speed will automatically lock to 1x and cannot be changed.</OCity_GameAttack_Host_GameSpeed_Lock_Dialog>
 	<OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>If you want to surrender and forfeit the settlement, click in the main menu</OCity_GameAttack_Host_GameSpeed_Lock_Dialog2>
-	<OCity_GameAttack_Host_Cancel_Action> If you want to finish and cancel the practice battle, click in the main menu </OCity_GameAttack_Host_Cancel_Action>
 	<OCity_GameAttack_Host_Surrender>Surrender</OCity_GameAttack_Host_Surrender>
 	<OCity_GameAttack_Host_Error_Message_Attack>Attack error</OCity_GameAttack_Host_Error_Message_Attack>
 	<OCity_GameAttack_Host_Card_Restored>The map will now be restored; you will need to log in.</OCity_GameAttack_Host_Card_Restored>
-	<OCity_GameAttack_Host_Training_Attack_Repulsed>You repelled this practice attack! :)</OCity_GameAttack_Host_Training_Attack_Repulsed>
 	<OCity_GameAttack_Host_Caravan_TransferToNewOwner>You were defeated and the settlement passes to the new owner :(</OCity_GameAttack_Host_Caravan_TransferToNewOwner>
 	<OCity_GameAttack_Host_Atack_Repulsed>You repelled this attack! :) </OCity_GameAttack_Host_Atack_Repulsed>
 	<OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>Enemies who failed to escape will remain on the map, but will lose contact with their commander.</OCity_GameAttack_Host_Stranded_EnemiesLostCommander_Touch>
+	<OCity_GameAttack_Host_Caravan_Attacking>{0} is attacking your caravan</OCity_GameAttack_Host_Caravan_Attacking>
+	<OCity_GameAttack_Host_Caravan_Defeated>Your caravan was defeated in battle.</OCity_GameAttack_Host_Caravan_Defeated>
+	<OCity_GameAttack_Host_Caravan_Attack_Repulsed>You have repelled the attack on your caravan! Your surviving colonists and loot have been packed back into the caravan.</OCity_GameAttack_Host_Caravan_Attack_Repulsed>
+	<OCity_GameAttack_Host_Loading>Loading battle map</OCity_GameAttack_Host_Loading>
+	<OCity_GameAttack_Host_Surrender_Caravan>If you cannot continue the fight, you can surrender in the main menu and lose this caravan.</OCity_GameAttack_Host_Surrender_Caravan>
+
 
 	<!-- OCMessadge -->
 	<OC_IncdidentMessadge_ArgErr>3 arguments required: name, title, text</OC_IncdidentMessadge_ArgErr>

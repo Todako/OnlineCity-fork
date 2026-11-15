@@ -14,11 +14,13 @@ using Verse.Sound;
 namespace RimWorldOnlineCity
 {
     /// <summary>
-    /// Утиліти для обробки біржових операцій, переміщення предметів,
-    /// розрахунку логістики та взаємодії між караванами й поселеннями.
+    /// Utilities for exchange operations, item transfers, logistics calculations,
+    /// and interactions between caravans and settlements.
     /// </summary>
     public static class ExchengeUtils
     {
+        public const long RetreatingPawnMarkerId = 999999991L;
+
         private static string _cachedDistLabel;
         private static string _cachedCostLabel;
 
@@ -376,9 +378,6 @@ namespace RimWorldOnlineCity
             return freeThings;
         }
 
-        /// <summary>
-        /// Знищує список речей та пішаків за один прохід циклу.
-        /// </summary>
         public static void DestroyThings(List<Thing> things)
         {
             if (things == null) return;
@@ -425,10 +424,33 @@ namespace RimWorldOnlineCity
 
         public static WorldObject GetPlace(IModelPlace modelPlace, bool softSettlement = true, bool softNewCaravan = false)
         {
-            if (modelPlace.PlaceServerId <= 0)
+            if (modelPlace == null || modelPlace.PlaceServerId <= 0)
             {
                 Loger.Log("GetPlace fail: no data", Loger.LogLevel.ERROR);
                 return null;
+            }
+
+            // Special handling for retreating PvP colonists who escaped off the Host's map edge
+            if (modelPlace.PlaceServerId == RetreatingPawnMarkerId)
+            {
+                var all = Find.WorldObjects.AllWorldObjects;
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var o = all[i];
+                    if (o is Caravan && o.Tile == modelPlace.Tile && o.Faction == Faction.OfPlayer)
+                    {
+                        return o;
+                    }
+                }
+
+                // If the attacker has no caravan on that tile yet, create an empty player Caravan shell on modelPlace.Tile
+                // so SpawnToWorldObject will populate it with the escaped colonist!
+                var newCaravan = (Caravan)WorldObjectMaker.MakeWorldObject(WorldObjectDefOf.Caravan);
+                newCaravan.Tile = modelPlace.Tile > 0 ? modelPlace.Tile : 1;
+                newCaravan.SetFaction(Faction.OfPlayer);
+                newCaravan.Name = CaravanNameGenerator.GenerateCaravanName(newCaravan);
+                Find.WorldObjects.Add(newCaravan);
+                return newCaravan;
             }
 
             var placeId = UpdateWorldController.GetLocalIdByServerId(modelPlace.PlaceServerId);
@@ -500,6 +522,10 @@ namespace RimWorldOnlineCity
                 var thing = things[i];
                 if (thing is Pawn pawn)
                 {
+                    if (pawn.RaceProps != null && pawn.RaceProps.Humanlike && pawn.Faction != Faction.OfPlayer)
+                    {
+                        pawn.SetFaction(Faction.OfPlayer);
+                    }
                     GenSpawn.Spawn(pawn, cell, map);
                     if (pawn.Dead && !Find.WorldPawns.AllPawnsDead.Contains(pawn))
                     {
@@ -521,6 +547,14 @@ namespace RimWorldOnlineCity
                 var thing = things[i];
                 if (thing is Pawn pawn)
                 {
+                    if (pawn.Faction != Faction.OfPlayer)
+                    {
+                        pawn.SetFaction(Faction.OfPlayer);
+                    }
+                    if (pawn.drafter != null && pawn.drafter.Drafted)
+                    {
+                        pawn.drafter.Drafted = false;
+                    }
                     caravan.AddPawn(pawn, true);
                     GameUtils.SpawnSetupOnCaravan(pawn);
                     if (pawn.Dead && !Find.WorldPawns.AllPawnsDead.Contains(pawn))
@@ -551,7 +585,9 @@ namespace RimWorldOnlineCity
                     var toSpawn = new List<Thing>(things.Count);
                     for (int i = 0; i < things.Count; i++)
                     {
-                        toSpawn.Add(things[i].CreateThing());
+                        var th = things[i].CreateThing();
+                        if (th is Pawn p) GameUtils.ReassignUniquePawnSubIds(p);
+                        toSpawn.Add(th);
                     }
                     SpawnThings(toSpawn, map, cell);
                 }
@@ -560,7 +596,9 @@ namespace RimWorldOnlineCity
                     var toSpawn = new List<Thing>(things.Count);
                     for (int i = 0; i < things.Count; i++)
                     {
-                        toSpawn.Add(things[i].CreateThing());
+                        var th = things[i].CreateThing();
+                        if (th is Pawn p) GameUtils.ReassignUniquePawnSubIds(p);
+                        toSpawn.Add(th);
                     }
                     SpawnThings(toSpawn, caravan);
                 }
@@ -679,11 +717,6 @@ namespace RimWorldOnlineCity
         }
     }
 
-    /// <summary>
-    /// Гармоні-патч для перехоплення прямого ПКМ на карті світу по онлайн-каравану.
-    /// Дозволяє одразу правим кліком по прибулому онлайн-каравану відкрити меню торгівлі з домашньої колонії
-    /// БЕЗ попереднього виділення колонії або каравану.
-    /// </summary>
     [HarmonyPatch(typeof(WorldSelector), nameof(WorldSelector.WorldSelectorOnGUI))]
     internal static class WorldSelector_AutoOrder_DirectTrade_Patch
     {
@@ -693,10 +726,8 @@ namespace RimWorldOnlineCity
         [HarmonyPrefix]
         public static bool Prefix(WorldSelector __instance)
         {
-            // Перехоплюємо виключно подію кліку правою кнопкою миші (кнопка 1)
             if (Event.current.type != EventType.MouseDown || Event.current.button != 1) return true;
 
-            // Якщо у гравця вже виділено власний рухомий караван — залишаємо стандартну ванільну обробку наказів руху
             if (__instance.SingleSelectedObject is Caravan caravan && (caravan.Faction?.IsPlayer ?? false)) return true;
 
             int targetTile = GenWorld.MouseTile();
@@ -712,7 +743,6 @@ namespace RimWorldOnlineCity
 
             var myLogin = SessionClientController.My?.Login;
 
-            // Однопрохідний збір наших об'єктів та цільових онлайн-караванів на тайлі
             for (int i = 0; i < s_TileObjectsBuffer.Count; i++)
             {
                 var o = s_TileObjectsBuffer[i];
@@ -749,8 +779,8 @@ namespace RimWorldOnlineCity
             {
                 Find.WindowStack.Add(new FloatMenu(options));
                 SoundDefOf.FloatMenu_Open.PlayOneShotOnCamera(null);
-                Event.current.Use(); // Позначаємо подію миші в Unity GUI як спожиту
-                return false;        // Скасовуємо стандартний ванільний обробник
+                Event.current.Use();
+                return false;
             }
 
             return true;
