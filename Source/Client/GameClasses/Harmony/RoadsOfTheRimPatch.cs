@@ -512,7 +512,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 pct = Math.Max(0f, Math.Min(1f, (workCost - workLeft) / workCost));
             }
 
-            // Додатково опитуємо прямий геттер прогресу самого мода (наприклад percentageDone)
+            // Опитуємо прямий геттер прогресу самого мода без переривання
             if (_progressGetterMethods.Count > 0)
             {
                 _isExtractingLocalProgress = true;
@@ -561,6 +561,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             var sections = progressData.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
 
+            // Спочатку витягуємо фінальний відсоток прогресу з тегу __pct, не зупиняючи обробку інших секцій
             for (int s = 0; s < sections.Length; s++)
             {
                 if (sections[s].StartsWith("__pct:", StringComparison.Ordinal))
@@ -575,6 +576,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
             }
 
+            // Далі проходимо по всіх словниках вартості та залишків матеріалів
             for (int s = 0; s < sections.Length; s++)
             {
                 int colonIdx = sections[s].IndexOf(':');
@@ -662,7 +664,12 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                         else
                             parsedVal = Convert.ChangeType(rawVal, valType, CultureInfo.InvariantCulture);
                     }
-                    catch { continue; }
+                    catch
+                    {
+                        // Fallback для надійного збереження ключів у словниках Roads of the Rim
+                        parsedKey = kStr;
+                        parsedVal = rawVal;
+                    }
 
                     if (parsedKey != null && parsedVal != null)
                     {
@@ -810,7 +817,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
             }
 
-            // Примусово оновлюємо меш об'єктів планети, щоб прогрес-бар перемальовувався в реальному часі на глобальній карті
             if (anyVisualChange)
             {
                 SetWorldObjectsLayerDirty();

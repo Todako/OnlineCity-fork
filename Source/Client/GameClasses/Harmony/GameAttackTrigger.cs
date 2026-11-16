@@ -177,7 +177,7 @@ namespace RimWorldOnlineCity.GameClasses
     }
 
     // ====================================================================================
-    // 1.1. Prevent vanilla edge map exit during active battle & return fleeing pawns after surrender
+    // 1.1. Allow defender retreat via map edge while blocking attackers from walking off
     // ====================================================================================
 
     [HarmonyPatch(typeof(Pawn))]
@@ -192,10 +192,21 @@ namespace RimWorldOnlineCity.GameClasses
 
             if (GameAttackTrigger_Patch.HasActiveAttack && map != null)
             {
-                if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map)
-                    || GameAttackTrigger_Patch.ActiveAttackHost.ContainsKey(map))
+                // Attackers cannot walk off map to win
+                if (GameAttackTrigger_Patch.ActiveAttacker.ContainsKey(map))
                 {
                     return false;
+                }
+
+                // On host map, attacking pawns cannot walk off
+                if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var host))
+                {
+                    if (host.AttackingPawns != null && host.AttackingPawns.Contains(__instance))
+                    {
+                        return false;
+                    }
+                    // Host colonists, guests, and NPC caravans ARE allowed to retreat via map edge!
+                    return true;
                 }
             }
 
@@ -226,10 +237,6 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
-    /// <summary>
-    /// Prevents remote-controlled pawns (spawned with Pirate faction) from running vanilla
-    /// JobGiver_ExitMapBest AI during an active PvP battle, without overriding their active network jobs.
-    /// </summary>
     [HarmonyPatch(typeof(Pawn_JobTracker))]
     [HarmonyPatch("DetermineNextJob")]
     public static class Pawn_JobTracker_DetermineNextJob_Patch
@@ -282,10 +289,6 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
-    /// <summary>
-    /// Synchronizes all movement paths started on the Host (including animal wandering, grazing,
-    /// hauling, and AI paths) with the exact destination cell and locomotion urgency.
-    /// </summary>
     [HarmonyPatch(typeof(Pawn_PathFollower))]
     [HarmonyPatch("StartPath")]
     public static class Pawn_PathFollower_StartPath_Patch
@@ -302,6 +305,9 @@ namespace RimWorldOnlineCity.GameClasses
             var pawn = PatherPawnRef(__instance);
             var map = pawn?.Map;
             if (map == null || pawn.Dead || pawn.Downed) return;
+
+            // Skip undrafted animals to prevent constant micro-stutters and position snapping
+            if (pawn.RaceProps.Animal && !pawn.Drafted) return;
 
             if (GameAttackTrigger_Patch.ActiveAttackHost.TryGetValue(map, out var clientHost))
             {
@@ -565,9 +571,6 @@ namespace RimWorldOnlineCity.GameClasses
         }
     }
 
-    /// <summary>
-    /// Captures player-ordered jobs AFTER RimWorld sets job.playerForced = true.
-    /// </summary>
     [HarmonyPatch]
     public static class Pawn_JobTracker_TryTakeOrderedJob_Patch
     {

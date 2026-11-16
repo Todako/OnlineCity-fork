@@ -310,8 +310,6 @@ namespace RimWorldOnlineCity
                                         if (th is MinifiedThing minified && minified.InnerThing == null)
                                             continue;
 
-                                        // Assign Pirate faction to Host buildings and doors during battle so PathFinder
-                                        // treats closed Host doors identically on both Attacker and Host clients!
                                         if (th is Building && th.def.CanHaveFaction && hostileFac != null)
                                         {
                                             th.SetFaction(hostileFac);
@@ -354,7 +352,7 @@ namespace RimWorldOnlineCity
                         ErrorBreak(ex.Message);
                     }
                 });
-            }, "OCity_Dialog_Connecting", true, null);
+            }, "OCity_GameAttack_Host_Loading", true, null);
         }
 
         private Thing GetThingByHostId(int hostid)
@@ -684,7 +682,6 @@ namespace RimWorldOnlineCity
                     ? new Job(jobDef, targetA, targetB)
                     : (targetA.IsValid ? new Job(jobDef, targetA) : new Job(jobDef));
 
-                // Restore exact LocomotionUrgency encoded in HostilityMode
                 LocomotionUrgency syncedUrgency = (comm.HostilityMode > 0 && comm.HostilityMode <= (int)LocomotionUrgency.Sprint)
                     ? (LocomotionUrgency)comm.HostilityMode
                     : (jobDef == JobDefOf.GotoWander ? LocomotionUrgency.Walk : LocomotionUrgency.Jog);
@@ -1410,10 +1407,6 @@ namespace RimWorldOnlineCity
             }, "OCity_GameAttack_Host_Loading", false, null);
         }
 
-        /// <summary>
-        /// Converts the temporary Ambush MapParent into a permanent player Settlement
-        /// and transfers ownership of all buildings on the conquered map to Faction.OfPlayer.
-        /// </summary>
         private void ClaimConqueredSettlement()
         {
             if (GameMap == null) return;

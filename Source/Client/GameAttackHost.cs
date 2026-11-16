@@ -474,10 +474,6 @@ namespace RimWorldOnlineCity
             GameAttackTrigger_Patch.ForceSpeed = -1f;
         }
 
-        /// <summary>
-        /// Assigns vanilla flee AI (LordJob_ExitMapBest + Goto exit spot) to any surviving attacker
-        /// pawns left inside the Host's colony after surrender, so they flee off the map and return to the attacker.
-        /// </summary>
         private void StartStrandedAttackersFlee(List<Pawn> strandedPawns)
         {
             if (strandedPawns == null || strandedPawns.Count == 0 || GameMap == null) return;
@@ -539,6 +535,43 @@ namespace RimWorldOnlineCity
             catch (Exception ex)
             {
                 Loger.Log("StartStrandedAttackersFlee warning: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+        }
+
+        /// <summary>
+        /// Forces all visiting guests, traders, and NPC caravans on the host map to flee off the map immediately when host surrenders.
+        /// </summary>
+        private void StartVisitorsFlee()
+        {
+            if (GameMap == null) return;
+            try
+            {
+                var allPawns = GameMap.mapPawns.AllPawnsSpawned;
+                for (int i = 0; i < allPawns.Count; i++)
+                {
+                    var p = allPawns[i];
+                    if (p == null || p.Dead || p.Downed || !p.Spawned) continue;
+                    if (p.IsColonist || (AttackingPawns != null && AttackingPawns.Contains(p))) continue;
+
+                    // If NPC guest, visitor, or guest caravan member
+                    if (p.RaceProps != null && p.RaceProps.Humanlike && p.Faction != Faction.OfPlayer)
+                    {
+                        if (p.drafter != null && p.drafter.Drafted) p.drafter.Drafted = false;
+                        p.jobs?.StopAll();
+                        if (!p.Downed && RCellFinder.TryFindBestExitSpot(p, out IntVec3 exitSpot))
+                        {
+                            var exitJob = JobMaker.MakeJob(JobDefOf.Goto, exitSpot);
+                            exitJob.exitMapOnArrival = true;
+                            exitJob.locomotionUrgency = LocomotionUrgency.Jog;
+                            exitJob.expiryInterval = 2000;
+                            p.jobs?.StartJob(exitJob, JobCondition.InterruptForced);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Loger.Log("StartVisitorsFlee warning: " + ex.Message, Loger.LogLevel.WARNING);
             }
         }
 
@@ -625,8 +658,6 @@ namespace RimWorldOnlineCity
                 {
                     if (!victoryAttacker)
                     {
-                        // Host defended the caravan: remove retreating enemies in the border zone and open Dialog_CaravanLoot
-                        // (any surviving enemies outside the border zone can be captured as prisoners or returned if uncaptured)
                         if (AttackingPawns != null)
                         {
                             foreach (var enemy in AttackingPawns)
@@ -657,36 +688,21 @@ namespace RimWorldOnlineCity
                 }
                 else if (victoryAttacker)
                 {
+                    // Host surrendered settlement: make all visitors/caravans flee immediately
+                    StartVisitorsFlee();
+
                     try { CameraJumper.TryShowWorld(); } catch { }
                     GameUtils.DeinitAndRemoveMapSafe(GameMap);
                     saveAndShowFinishDialog();
                 }
                 else if (AttackingPawns != null && GameMap != null)
                 {
-                    var pawnsToDestroy = new List<Pawn>();
                     var strandedPawnsToFlee = new List<Pawn>();
 
                     foreach (var pawn in AttackingPawns)
                     {
                         if (pawn == null || pawn.Dead || pawn.Destroyed) continue;
-
-                        bool inRetreatBorder = !pawn.Downed &&
-                            (pawn.Position.x < MapBorder || pawn.Position.x > GameMap.Size.x - 1 - MapBorder
-                             || pawn.Position.z < MapBorder || pawn.Position.z > GameMap.Size.z - 1 - MapBorder);
-
-                        if (inRetreatBorder)
-                        {
-                            pawnsToDestroy.Add(pawn);
-                        }
-                        else
-                        {
-                            strandedPawnsToFlee.Add(pawn);
-                        }
-                    }
-
-                    for (int pIdx = 0; pIdx < pawnsToDestroy.Count; pIdx++)
-                    {
-                        GameUtils.PawnDestroy(pawnsToDestroy[pIdx]);
+                        strandedPawnsToFlee.Add(pawn);
                     }
 
                     StartStrandedAttackersFlee(strandedPawnsToFlee);
@@ -1580,10 +1596,6 @@ namespace RimWorldOnlineCity
 
         public bool UIEventNewJobDisable = false;
 
-        /// <summary>
-        /// Called by Pawn_PathFollower_StartPath_Patch whenever any Host pawn or animal starts moving
-        /// so the Attacker client immediately starts the exact same path at the exact same speed.
-        /// </summary>
         public void NotifyHostPawnStartedPath(Pawn pawn, IntVec3 destCell, LocomotionUrgency urgency)
         {
             if (UIEventNewJobDisable || pawn == null || !destCell.IsValid) return;
