@@ -8,13 +8,15 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
+using UnityEngine;
 using Verse;
 
 namespace RimWorldOnlineCity.GameClasses.Harmony
 {
     /// <summary>
-    /// Динамічний патч сумісності з модом Roads of the Rim (Continued) (Mlie.RoadsOfTheRim) для RimWorld 1.1–1.4.
+    /// Динамічний патч сумісності з модом Roads of the Rim (Continued) (Mlie.RoadsOfTheRim).
     /// Синхронізує заплановані маршрути (RoadConstructionLeg), активні будівельні майданчики (RoadConstructionSite),
     /// словники прогресу будівництва та прогрес-бар (WorldObjectComp_ConstructionSite) і побудовані дороги (WorldGrid).
     /// </summary>
@@ -27,13 +29,41 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         private static Type _siteCompType;
 
         private static FieldInfo _siteRoadToBuildField;
+        private static FieldInfo _siteProgressBarMatField;
+        private static MethodInfo _siteUpdateProgressBarMatMethod;
+        private static Action<WorldObject> _siteUpdateProgressBarMatAction;
+
         private static FieldInfo _legSiteField;
         private static FieldInfo _legPrevField;
         private static FieldInfo _legNextField;
 
         private static readonly List<FieldInfo> _compDictFields = new List<FieldInfo>();
-        private static readonly List<MethodInfo> _progressGetterMethods = new List<MethodInfo>();
+        private static readonly List<(MethodInfo Method, Func<object, float> FastGetter)> _progressGetters =
+            new List<(MethodInfo, Func<object, float>)>();
         private static MethodInfo _compSetCostsMethod;
+        private static Action<object> _compSetCostsAction;
+
+        private static Func<object, WorldObject> _getLegSite;
+        private static Func<object, WorldObject> _getLegPrev;
+        private static Func<object, WorldObject> _getLegNext;
+        private static Action<object, WorldObject> _setLegSite;
+        private static Action<object, WorldObject> _setLegPrev;
+        private static Action<object, WorldObject> _setLegNext;
+        private static Func<object, Def> _getSiteRoadToBuild;
+        private static Action<object, Def> _setSiteRoadToBuild;
+
+        private static readonly List<WorldObject> _mySitesBuffer = new List<WorldObject>(16);
+        private static readonly Dictionary<WorldObject, List<WorldObject>> _legsBySiteBuffer =
+            new Dictionary<WorldObject, List<WorldObject>>(16);
+        private static readonly Stack<List<WorldObject>> _legListPool = new Stack<List<WorldObject>>(16);
+        private static readonly HashSet<int> _currentMySiteIdsBuffer = new HashSet<int>();
+        private static readonly List<int> _orderedLegTilesBuffer = new List<int>(16);
+        private static readonly HashSet<WorldObject> _legSetBuffer = new HashSet<WorldObject>();
+        private static readonly HashSet<WorldObject> _visitedLegsBuffer = new HashSet<WorldObject>();
+        private static readonly StringBuilder _signatureSb = new StringBuilder(256);
+        private static readonly StringBuilder _progressSb = new StringBuilder(192);
+        private static readonly List<int> _watchedTilesListBuffer = new List<int>(32);
+        private static readonly List<int> _removedIdsBuffer = new List<int>(8);
 
         private static bool _isApplyingFromServer;
         private static bool _isExtractingLocalProgress;
@@ -87,7 +117,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
                 IsModActive = true;
 
-                _siteRoadToBuildField = AccessTools.Field(_siteType, "roadToBuild");
+                _siteRoadToBuildField = AccessTools.Field(_siteType, "roadDef")
+                    ?? AccessTools.Field(_siteType, "roadToBuild");
                 if (_siteRoadToBuildField == null)
                 {
                     foreach (var f in _siteType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
@@ -100,12 +131,34 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     }
                 }
 
+                _siteProgressBarMatField = AccessTools.Field(_siteType, "ProgressBarMaterial");
+                _siteUpdateProgressBarMatMethod = AccessTools.Method(_siteType, "UpdateProgressBarMaterial");
+                if (_siteUpdateProgressBarMatMethod != null && _siteUpdateProgressBarMatMethod.GetParameters().Length == 0)
+                {
+                    try
+                    {
+                        var del = AccessTools.MethodDelegate<Action<object>>(_siteUpdateProgressBarMatMethod);
+                        if (del != null) _siteUpdateProgressBarMatAction = del;
+                    }
+                    catch { _siteUpdateProgressBarMatAction = null; }
+                }
+
                 _legSiteField = AccessTools.Field(_legType, "site");
                 _legPrevField = AccessTools.Field(_legType, "previous");
                 _legNextField = AccessTools.Field(_legType, "next");
 
+                _getLegSite = BuildObjectGetter<WorldObject>(_legSiteField);
+                _getLegPrev = BuildObjectGetter<WorldObject>(_legPrevField);
+                _getLegNext = BuildObjectGetter<WorldObject>(_legNextField);
+                _setLegSite = BuildObjectSetter<WorldObject>(_legSiteField);
+                _setLegPrev = BuildObjectSetter<WorldObject>(_legPrevField);
+                _setLegNext = BuildObjectSetter<WorldObject>(_legNextField);
+                _getSiteRoadToBuild = BuildObjectGetter<Def>(_siteRoadToBuildField);
+                _setSiteRoadToBuild = BuildObjectSetter<Def>(_siteRoadToBuildField);
+
                 _compDictFields.Clear();
-                _progressGetterMethods.Clear();
+                _progressGetters.Clear();
+                _compSetCostsAction = null;
 
                 if (_siteCompType != null)
                 {
@@ -117,7 +170,17 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                         }
                     }
 
-                    _compSetCostsMethod = AccessTools.Method(_siteCompType, "setCosts");
+                    _compSetCostsMethod = AccessTools.Method(_siteCompType, "setCosts")
+                        ?? AccessTools.Method(_siteCompType, "SetCosts");
+                    if (_compSetCostsMethod != null && _compSetCostsMethod.GetParameters().Length == 0)
+                    {
+                        try
+                        {
+                            var del = AccessTools.MethodDelegate<Action<object>>(_compSetCostsMethod);
+                            if (del != null) _compSetCostsAction = del;
+                        }
+                        catch { _compSetCostsAction = null; }
+                    }
 
                     var progDescMethod = AccessTools.Method(_siteCompType, "ProgressDescription");
                     var progDescPrefix = AccessTools.Method(typeof(RoadsOfTheRimPatch), nameof(ProgressDescription_Prefix));
@@ -125,6 +188,13 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     {
                         harmony.Patch(progDescMethod, prefix: new HarmonyMethod(progDescPrefix));
                     }
+                }
+
+                var drawMethod = AccessTools.Method(_siteType, "Draw");
+                var drawPrefix = AccessTools.Method(typeof(RoadsOfTheRimPatch), nameof(SiteDraw_Prefix));
+                if (drawMethod != null && drawPrefix != null)
+                {
+                    harmony.Patch(drawMethod, prefix: new HarmonyMethod(drawPrefix));
                 }
 
                 var overlayMethod = AccessTools.Method(typeof(WorldGrid), nameof(WorldGrid.OverlayRoad));
@@ -147,11 +217,171 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     PatchProgressMethods(harmony, _siteCompType);
                 }
 
-                Loger.Log($"Client RoadsOfTheRim compatibility patch activated (roadField={_siteRoadToBuildField?.Name}, dictFields={_compDictFields.Count}, progressGetters={_progressGetterMethods.Count}).");
+                Loger.Log($"Client RoadsOfTheRim compatibility patch activated (roadField={_siteRoadToBuildField?.Name}, dictFields={_compDictFields.Count}, progressGetters={_progressGetters.Count}).");
             }
             catch (Exception ex)
             {
                 Loger.Log("RoadsOfTheRimPatch TryPatch Exception: " + ex.Message, Loger.LogLevel.WARNING);
+            }
+        }
+
+        public static void SiteDraw_Prefix(WorldObject __instance)
+        {
+            if (__instance != null && TryGetRemoteProxy(__instance, out var proxy))
+            {
+                RefreshProxyVisualMaterial(__instance, proxy);
+            }
+        }
+
+        private static void RefreshProxyVisualMaterial(WorldObject siteObj, RemoteSiteProxy proxy)
+        {
+            if (siteObj == null || proxy == null) return;
+            try
+            {
+                // Гарантуємо актуальність словників costs/left перед викликом UpdateProgressBarMaterial
+                if (_siteCompType != null)
+                {
+                    var comp = siteObj.GetComponent(_siteCompType);
+                    if (comp != null)
+                    {
+                        EnsureWorkEntriesInCompDictionaries(comp, proxy);
+                    }
+                }
+
+                if (_siteProgressBarMatField != null)
+                {
+                    _siteProgressBarMatField.SetValue(siteObj, null);
+                }
+
+                if (_siteUpdateProgressBarMatAction != null)
+                {
+                    _siteUpdateProgressBarMatAction(siteObj);
+                }
+                else if (_siteUpdateProgressBarMatMethod != null && _siteUpdateProgressBarMatMethod.GetParameters().Length == 0)
+                {
+                    _siteUpdateProgressBarMatMethod.Invoke(siteObj, null);
+                }
+            }
+            catch { }
+        }
+
+        private static void EnsureWorkEntriesInCompDictionaries(object comp, RemoteSiteProxy proxy)
+        {
+            if (comp == null || proxy == null || _compDictFields.Count == 0) return;
+
+            float total = proxy.WorkTotal > 0f ? proxy.WorkTotal : 100f;
+            float leftVal = Math.Max(0f, total - Math.Max(0f, Math.Min(total, proxy.ProgressPct * total)));
+
+            for (int f = 0; f < _compDictFields.Count; f++)
+            {
+                var field = _compDictFields[f];
+                var dict = field.GetValue(comp) as IDictionary;
+                if (dict == null) continue;
+
+                Type valType = typeof(float);
+                if (field.FieldType.IsGenericType)
+                {
+                    var args = field.FieldType.GetGenericArguments();
+                    if (args.Length >= 2) valType = args[1];
+                }
+
+                bool isCost = field.Name.IndexOf("cost", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isLeft = field.Name.IndexOf("left", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (isCost)
+                {
+                    dict["Work"] = valType == typeof(int) ? (object)(int)Math.Round(total) : total;
+                }
+                else if (isLeft)
+                {
+                    dict["Work"] = valType == typeof(int) ? (object)(int)Math.Round(leftVal) : leftVal;
+                }
+            }
+        }
+
+        private static Func<object, T> BuildObjectGetter<T>(FieldInfo field)
+        {
+            if (field == null) return null;
+            try
+            {
+                var method = new DynamicMethod(
+                    "OC_Get_" + field.DeclaringType.Name + "_" + field.Name,
+                    typeof(T),
+                    new[] { typeof(object) },
+                    field.DeclaringType,
+                    true);
+                var il = method.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, field.DeclaringType);
+                il.Emit(OpCodes.Ldfld, field);
+                if (field.FieldType.IsValueType && typeof(T) == typeof(object))
+                {
+                    il.Emit(OpCodes.Box, field.FieldType);
+                }
+                il.Emit(OpCodes.Ret);
+                return (Func<object, T>)method.CreateDelegate(typeof(Func<object, T>));
+            }
+            catch
+            {
+                return target => target != null ? (T)field.GetValue(target) : default;
+            }
+        }
+
+        private static Action<object, T> BuildObjectSetter<T>(FieldInfo field)
+        {
+            if (field == null || field.IsInitOnly) return null;
+            try
+            {
+                var method = new DynamicMethod(
+                    "OC_Set_" + field.DeclaringType.Name + "_" + field.Name,
+                    null,
+                    new[] { typeof(object), typeof(T) },
+                    field.DeclaringType,
+                    true);
+                var il = method.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, field.DeclaringType);
+                il.Emit(OpCodes.Ldarg_1);
+                if (typeof(T) == typeof(object) && field.FieldType.IsValueType)
+                {
+                    il.Emit(OpCodes.Unbox_Any, field.FieldType);
+                }
+                else if (typeof(T) != field.FieldType && !field.FieldType.IsAssignableFrom(typeof(T)))
+                {
+                    il.Emit(OpCodes.Castclass, field.FieldType);
+                }
+                il.Emit(OpCodes.Stfld, field);
+                il.Emit(OpCodes.Ret);
+                return (Action<object, T>)method.CreateDelegate(typeof(Action<object, T>));
+            }
+            catch
+            {
+                return (target, val) => { if (target != null) field.SetValue(target, val); };
+            }
+        }
+
+        private static Func<object, float> BuildFloatGetter(MethodInfo method)
+        {
+            if (method == null || method.ReturnType != typeof(float) || method.GetParameters().Length != 0)
+                return null;
+            try
+            {
+                var dm = new DynamicMethod(
+                    "OC_CallFloat_" + method.DeclaringType.Name + "_" + method.Name,
+                    typeof(float),
+                    new[] { typeof(object) },
+                    method.DeclaringType,
+                    true);
+                var il = dm.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, method.DeclaringType);
+                il.Emit(OpCodes.Callvirt, method);
+                il.Emit(OpCodes.Ret);
+                return (Func<object, float>)dm.CreateDelegate(typeof(Func<object, float>));
+            }
+            catch
+            {
+                return target => target != null ? (float)method.Invoke(target, null) : 0f;
             }
         }
 
@@ -177,7 +407,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                             harmony.Patch(m, postfix: new HarmonyMethod(postfix));
                             if (m.GetParameters().Length == 0)
                             {
-                                _progressGetterMethods.Add(m);
+                                _progressGetters.Add((m, BuildFloatGetter(m)));
                             }
                             Loger.Log($"RoadsOfTheRimPatch hooked progress method: {targetType.Name}.{m.Name}");
                         }
@@ -208,7 +438,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             var wo = __instance?.parent;
             if (wo != null && TryGetRemoteProxy(wo, out var proxy))
             {
-                var sb = new StringBuilder();
+                var sb = new StringBuilder(64);
                 if (!string.IsNullOrEmpty(proxy.Owner))
                 {
                     sb.AppendLine($"Будівельник: {proxy.Owner}");
@@ -296,14 +526,38 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             }
         }
 
+        private static List<WorldObject> RentLegList()
+        {
+            if (_legListPool.Count > 0)
+            {
+                var list = _legListPool.Pop();
+                list.Clear();
+                return list;
+            }
+            return new List<WorldObject>(8);
+        }
+
+        private static void ReturnAllLegLists()
+        {
+            foreach (var kvp in _legsBySiteBuffer)
+            {
+                if (kvp.Value != null)
+                {
+                    kvp.Value.Clear();
+                    _legListPool.Push(kvp.Value);
+                }
+            }
+            _legsBySiteBuffer.Clear();
+        }
+
         public static void TrackConstructionObjectsOnMainThread(List<WorldObject> allWorldObjects)
         {
             if (!IsModActive || allWorldObjects == null || Find.WorldGrid == null) return;
 
             try
             {
-                var mySites = new List<WorldObject>();
-                var legsBySite = new Dictionary<WorldObject, List<WorldObject>>();
+                _mySitesBuffer.Clear();
+                ReturnAllLegLists();
 
                 for (int i = 0; i < allWorldObjects.Count; i++)
                 {
@@ -313,7 +567,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     var type = wo.GetType();
                     if (type == _siteType)
                     {
-                        mySites.Add(wo);
+                        _mySitesBuffer.Add(wo);
                         if (wo.Tile >= 0 && WatchedConstructionTiles.Add(wo.Tile))
                         {
                             SnapshotTileRoads(wo.Tile, queueDiff: false);
@@ -326,38 +580,47 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                             SnapshotTileRoads(wo.Tile, queueDiff: false);
                         }
 
-                        var parentSite = _legSiteField?.GetValue(wo) as WorldObject;
+                        var parentSite = _getLegSite != null ? _getLegSite(wo) : _legSiteField?.GetValue(wo) as WorldObject;
                         if (parentSite != null && !IsRemoteProxyObject(parentSite))
                         {
-                            if (!legsBySite.TryGetValue(parentSite, out var list))
+                            if (!_legsBySiteBuffer.TryGetValue(parentSite, out var list))
                             {
-                                list = new List<WorldObject>();
-                                legsBySite[parentSite] = list;
+                                list = RentLegList();
+                                _legsBySiteBuffer[parentSite] = list;
                             }
                             list.Add(wo);
                         }
                     }
                 }
 
-                var currentMySiteIds = new HashSet<int>();
+                _currentMySiteIdsBuffer.Clear();
 
-                for (int i = 0; i < mySites.Count; i++)
+                for (int i = 0; i < _mySitesBuffer.Count; i++)
                 {
-                    var site = mySites[i];
+                    var site = _mySitesBuffer[i];
                     int siteId = site.ID;
-                    currentMySiteIds.Add(siteId);
+                    _currentMySiteIdsBuffer.Add(siteId);
 
-                    var roadDefObj = _siteRoadToBuildField?.GetValue(site) as Def;
-                    string roadDefName = roadDefObj?.defName ?? "";
+                    var roadDefObj = _getSiteRoadToBuild != null ? _getSiteRoadToBuild(site) : _siteRoadToBuildField?.GetValue(site) as Def;
+                    string roadDefName = roadDefObj?.defName ?? string.Empty;
 
-                    legsBySite.TryGetValue(site, out var rawLegs);
-                    var orderedLegTiles = ExtractOrderedLegTiles(rawLegs);
+                    _legsBySiteBuffer.TryGetValue(site, out var rawLegs);
+                    FillOrderedLegTiles(rawLegs, _orderedLegTilesBuffer);
 
-                    if (orderedLegTiles.Count == 0 && string.IsNullOrEmpty(roadDefName))
+                    if (_orderedLegTilesBuffer.Count == 0 && string.IsNullOrEmpty(roadDefName))
                         continue;
 
                     string progressData = ExtractSiteCompProgress(site);
-                    string signature = $"{site.Tile}|{roadDefName}|{string.Join(",", orderedLegTiles)}|{progressData}";
+
+                    _signatureSb.Clear();
+                    _signatureSb.Append(site.Tile).Append('|').Append(roadDefName).Append('|');
+                    for (int t = 0; t < _orderedLegTilesBuffer.Count; t++)
+                    {
+                        if (t > 0) _signatureSb.Append(',');
+                        _signatureSb.Append(_orderedLegTilesBuffer[t]);
+                    }
+                    _signatureSb.Append('|').Append(progressData);
+                    string signature = _signatureSb.ToString();
 
                     lock (SyncLock)
                     {
@@ -369,7 +632,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                                 LocalSiteId = siteId,
                                 Tile = site.Tile,
                                 RoadDefName = roadDefName,
-                                LegTiles = orderedLegTiles,
+                                LegTiles = new List<int>(_orderedLegTilesBuffer),
                                 CompProgressData = progressData,
                                 IsDeleted = false
                             });
@@ -379,30 +642,26 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
                 lock (SyncLock)
                 {
-                    List<int> removedIds = null;
+                    _removedIdsBuffer.Clear();
                     foreach (var oldId in KnownMySitesSnapshot.Keys)
                     {
-                        if (!currentMySiteIds.Contains(oldId))
+                        if (!_currentMySiteIdsBuffer.Contains(oldId))
                         {
-                            if (removedIds == null) removedIds = new List<int>();
-                            removedIds.Add(oldId);
+                            _removedIdsBuffer.Add(oldId);
                         }
                     }
 
-                    if (removedIds != null)
+                    for (int i = 0; i < _removedIdsBuffer.Count; i++)
                     {
-                        for (int i = 0; i < removedIds.Count; i++)
+                        int delId = _removedIdsBuffer[i];
+                        int oldTile = KnownMySitesSnapshot[delId].Tile;
+                        KnownMySitesSnapshot.Remove(delId);
+                        PendingSitesToSync.Add(new WorldRoadSiteOnline
                         {
-                            int delId = removedIds[i];
-                            int oldTile = KnownMySitesSnapshot[delId].Tile;
-                            KnownMySitesSnapshot.Remove(delId);
-                            PendingSitesToSync.Add(new WorldRoadSiteOnline
-                            {
-                                LocalSiteId = delId,
-                                Tile = oldTile,
-                                IsDeleted = true
-                            });
-                        }
+                            LocalSiteId = delId,
+                            Tile = oldTile,
+                            IsDeleted = true
+                        });
                     }
                 }
 
@@ -415,28 +674,38 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             {
                 Loger.Log("RoadsOfTheRimPatch TrackConstructionObjects Exception: " + ex.Message, Loger.LogLevel.WARNING);
             }
+            finally
+            {
+                _mySitesBuffer.Clear();
+                ReturnAllLegLists();
+            }
         }
 
-        private static List<int> ExtractOrderedLegTiles(List<WorldObject> rawLegs)
+        private static void FillOrderedLegTiles(List<WorldObject> rawLegs, List<int> outTiles)
         {
-            var result = new List<int>();
-            if (rawLegs == null || rawLegs.Count == 0) return result;
+            outTiles.Clear();
+            if (rawLegs == null || rawLegs.Count == 0) return;
 
             if (_legPrevField == null || _legNextField == null)
             {
                 for (int i = 0; i < rawLegs.Count; i++)
                 {
-                    result.Add(rawLegs[i].Tile);
+                    outTiles.Add(rawLegs[i].Tile);
                 }
-                return result;
+                return;
             }
 
             WorldObject head = null;
-            var legSet = new HashSet<WorldObject>(rawLegs);
+            _legSetBuffer.Clear();
             for (int i = 0; i < rawLegs.Count; i++)
             {
-                var prev = _legPrevField.GetValue(rawLegs[i]) as WorldObject;
-                if (prev == null || !legSet.Contains(prev))
+                _legSetBuffer.Add(rawLegs[i]);
+            }
+
+            for (int i = 0; i < rawLegs.Count; i++)
+            {
+                var prev = _getLegPrev != null ? _getLegPrev(rawLegs[i]) : _legPrevField.GetValue(rawLegs[i]) as WorldObject;
+                if (prev == null || !_legSetBuffer.Contains(prev))
                 {
                     head = rawLegs[i];
                     break;
@@ -445,23 +714,21 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             if (head == null) head = rawLegs[0];
 
-            var visited = new HashSet<WorldObject>();
+            _visitedLegsBuffer.Clear();
             var cur = head;
-            while (cur != null && visited.Add(cur))
+            while (cur != null && _visitedLegsBuffer.Add(cur))
             {
-                result.Add(cur.Tile);
-                cur = _legNextField.GetValue(cur) as WorldObject;
+                outTiles.Add(cur.Tile);
+                cur = _getLegNext != null ? _getLegNext(cur) : _legNextField.GetValue(cur) as WorldObject;
             }
 
             for (int i = 0; i < rawLegs.Count; i++)
             {
-                if (visited.Add(rawLegs[i]))
+                if (_visitedLegsBuffer.Add(rawLegs[i]))
                 {
-                    result.Add(rawLegs[i].Tile);
+                    outTiles.Add(rawLegs[i].Tile);
                 }
             }
-
-            return result;
         }
 
         private static string ExtractSiteCompProgress(WorldObject site)
@@ -471,7 +738,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
             var comp = site.GetComponent(_siteCompType);
             if (comp == null) return string.Empty;
 
-            var sb = new StringBuilder(160);
+            _progressSb.Clear();
             float workCost = 0f;
             float workLeft = -1f;
 
@@ -480,8 +747,8 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 var field = _compDictFields[i];
                 if (field.GetValue(comp) is IDictionary dict && dict.Count > 0)
                 {
-                    if (sb.Length > 0) sb.Append(';');
-                    sb.Append(field.Name).Append(':');
+                    if (_progressSb.Length > 0) _progressSb.Append(';');
+                    _progressSb.Append(field.Name).Append(':');
                     bool firstPair = true;
 
                     bool isCostDict = field.Name.IndexOf("cost", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -493,9 +760,9 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                         string kStr = (entry.Key as Def)?.defName ?? entry.Key.ToString();
                         float val = Convert.ToSingle(entry.Value, CultureInfo.InvariantCulture);
 
-                        if (!firstPair) sb.Append(',');
+                        if (!firstPair) _progressSb.Append(',');
                         firstPair = false;
-                        sb.Append(kStr).Append('=').Append(val.ToString("G", CultureInfo.InvariantCulture));
+                        _progressSb.Append(kStr).Append('=').Append(val.ToString("G", CultureInfo.InvariantCulture));
 
                         if (string.Equals(kStr, "Work", StringComparison.OrdinalIgnoreCase))
                         {
@@ -512,22 +779,22 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 pct = Math.Max(0f, Math.Min(1f, (workCost - workLeft) / workCost));
             }
 
-            // Опитуємо прямий геттер прогресу самого мода без переривання
-            if (_progressGetterMethods.Count > 0)
+            if (_progressGetters.Count > 0)
             {
                 _isExtractingLocalProgress = true;
                 try
                 {
-                    for (int i = 0; i < _progressGetterMethods.Count; i++)
+                    for (int i = 0; i < _progressGetters.Count; i++)
                     {
-                        var m = _progressGetterMethods[i];
-                        object target = m.DeclaringType == _siteType ? (object)site : comp;
-                        if (target != null && m.DeclaringType.IsInstanceOfType(target))
+                        var entry = _progressGetters[i];
+                        object target = entry.Method.DeclaringType == _siteType ? (object)site : comp;
+                        if (target != null && entry.Method.DeclaringType.IsInstanceOfType(target))
                         {
-                            float val = (float)m.Invoke(target, null);
-                            if (val > 0f && val <= 1f && val > pct)
+                            float val = entry.FastGetter != null ? entry.FastGetter(target) : (float)entry.Method.Invoke(target, null);
+                            if (val >= 0f && val <= 1f)
                             {
                                 pct = val;
+                                break;
                             }
                         }
                     }
@@ -539,10 +806,10 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
             }
 
-            if (sb.Length > 0) sb.Append(';');
-            sb.Append("__pct:").Append(pct.ToString("F3", CultureInfo.InvariantCulture));
+            if (_progressSb.Length > 0) _progressSb.Append(';');
+            _progressSb.Append("__pct:").Append(pct.ToString("F3", CultureInfo.InvariantCulture));
 
-            return sb.ToString();
+            return _progressSb.ToString();
         }
 
         private static void ApplySiteCompProgress(WorldObject site, string progressData, out float parsedPct, out float workDone, out float workTotal)
@@ -561,7 +828,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
 
             var sections = progressData.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
 
-            // Спочатку витягуємо фінальний відсоток прогресу з тегу __pct, не зупиняючи обробку інших секцій
             for (int s = 0; s < sections.Length; s++)
             {
                 if (sections[s].StartsWith("__pct:", StringComparison.Ordinal))
@@ -576,7 +842,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 }
             }
 
-            // Далі проходимо по всіх словниках вартості та залишків матеріалів
             for (int s = 0; s < sections.Length; s++)
             {
                 int colonIdx = sections[s].IndexOf(':');
@@ -607,6 +872,10 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                         targetField.SetValue(comp, dict);
                     }
                     catch { continue; }
+                }
+                else
+                {
+                    dict.Clear();
                 }
 
                 Type keyType = typeof(string);
@@ -666,7 +935,6 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     }
                     catch
                     {
-                        // Fallback для надійного збереження ключів у словниках Roads of the Rim
                         parsedKey = kStr;
                         parsedVal = rawVal;
                     }
@@ -693,7 +961,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 workTotal = workCost;
                 workDone = Math.Max(0f, workCost - workLeft);
                 float calcPct = Math.Max(0f, Math.Min(1f, workDone / workCost));
-                if (calcPct > parsedPct) parsedPct = calcPct;
+                if (!hasExplicitPct) parsedPct = calcPct;
             }
             else if (!hasExplicitPct)
             {
@@ -781,21 +1049,24 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                         SetSiteRoadToBuild(proxy.SiteObject, info.RoadDefName);
                     }
 
-                    string legSig = info.LegTiles != null ? string.Join(",", info.LegTiles) : "";
+                    string legSig = info.LegTiles != null ? string.Join(",", info.LegTiles) : string.Empty;
                     if (isNewSite || !string.Equals(proxy.LastLegSignature, legSig, StringComparison.Ordinal))
                     {
                         proxy.LastLegSignature = legSig;
                         RebuildProxyLegs(proxy, legDef, info.LegTiles);
                         anyVisualChange = true;
 
-                        if (_siteCompType != null && _compSetCostsMethod != null)
+                        if (_siteCompType != null && (_compSetCostsAction != null || _compSetCostsMethod != null))
                         {
                             try
                             {
                                 var comp = proxy.SiteObject.GetComponent(_siteCompType);
-                                if (comp != null && _compSetCostsMethod.GetParameters().Length == 0)
+                                if (comp != null)
                                 {
-                                    _compSetCostsMethod.Invoke(comp, null);
+                                    if (_compSetCostsAction != null)
+                                        _compSetCostsAction(comp);
+                                    else if (_compSetCostsMethod.GetParameters().Length == 0)
+                                        _compSetCostsMethod.Invoke(comp, null);
                                 }
                             }
                             catch { }
@@ -810,6 +1081,7 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     proxy.ProgressPct = pct;
                     proxy.WorkDone = workDone;
                     proxy.WorkTotal = workTotal;
+                    RefreshProxyVisualMaterial(proxy.SiteObject, proxy);
                 }
                 catch (Exception ex)
                 {
@@ -835,7 +1107,10 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     var roadDef = GenDefDatabase.GetDefSilentFail(fieldType, roadDefName, false);
                     if (roadDef != null)
                     {
-                        _siteRoadToBuildField.SetValue(siteObj, roadDef);
+                        if (_setSiteRoadToBuild != null)
+                            _setSiteRoadToBuild(siteObj, roadDef);
+                        else
+                            _siteRoadToBuildField.SetValue(siteObj, roadDef);
                     }
                 }
             }
@@ -879,13 +1154,19 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                     try { legObj.SetFaction(Faction.OfPlayer); } catch { }
                 }
 
-                _legSiteField?.SetValue(legObj, proxy.SiteObject);
-                _legPrevField?.SetValue(legObj, prevLeg);
-                _legNextField?.SetValue(legObj, null);
+                if (_setLegSite != null) _setLegSite(legObj, proxy.SiteObject);
+                else _legSiteField?.SetValue(legObj, proxy.SiteObject);
+
+                if (_setLegPrev != null) _setLegPrev(legObj, prevLeg);
+                else _legPrevField?.SetValue(legObj, prevLeg);
+
+                if (_setLegNext != null) _setLegNext(legObj, null);
+                else _legNextField?.SetValue(legObj, null);
 
                 if (prevLeg != null)
                 {
-                    _legNextField?.SetValue(prevLeg, legObj);
+                    if (_setLegNext != null) _setLegNext(prevLeg, legObj);
+                    else _legNextField?.SetValue(prevLeg, legObj);
                 }
 
                 Find.WorldObjects.Add(legObj);
@@ -1057,9 +1338,15 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
         {
             if (WatchedConstructionTiles.Count == 0 || Find.WorldGrid == null) return;
 
+            _watchedTilesListBuffer.Clear();
             foreach (int tileId in WatchedConstructionTiles)
             {
-                SnapshotTileRoads(tileId, queueDiff: true);
+                _watchedTilesListBuffer.Add(tileId);
+            }
+
+            for (int i = 0; i < _watchedTilesListBuffer.Count; i++)
+            {
+                SnapshotTileRoads(_watchedTilesListBuffer[i], queueDiff: true);
             }
         }
 
@@ -1234,6 +1521,15 @@ namespace RimWorldOnlineCity.GameClasses.Harmony
                 RemoteProxies.Clear();
                 RemoteProxyByWorldObjectId.Clear();
                 DetachedBeforeSave.Clear();
+
+                _mySitesBuffer.Clear();
+                ReturnAllLegLists();
+                _currentMySiteIdsBuffer.Clear();
+                _orderedLegTilesBuffer.Clear();
+                _legSetBuffer.Clear();
+                _visitedLegsBuffer.Clear();
+                _watchedTilesListBuffer.Clear();
+                _removedIdsBuffer.Clear();
             }
         }
     }
